@@ -92,7 +92,7 @@ export const MONITORED_WORKFLOWS = Object.freeze([
     skipProofPath: null,
     triggerPaths: Object.freeze([
       'workers/api-cors-preflight/**',
-      'server/routes/_bootstrap-public-tier.js',
+      'api/_bootstrap-public-tier.js',
       '.github/workflows/deploy-worker.yml',
     ]),
     // Same dormant reasoning as the reconcile Worker: a healthy run can be

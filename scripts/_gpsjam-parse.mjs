@@ -82,14 +82,14 @@ export function processHexes(csv, minAircraft = 3) {
       lon,
       level,
       region: classifyRegion(lat, lon),
-      // Web-UI fields (server/routes/gpsjam.js → gps-interference.ts): the honest gpsjam.org metric.
+      // Web-UI fields (api/gpsjam.js → gps-interference.ts): the honest gpsjam.org metric.
       pct,
       affectedAircraft: bad,
       totalAircraft: total,
       // Public-API compat: list-gps-interference.ts + gps_jamming.proto still expose
       // np_avg/sample_count/aircraft_count. Keep that contract stable (no proto regen)
       // by carrying them here. np_avg has no gpsjam.org equivalent, so it's a pct-bucketed
-      // proxy — same mapping server/routes/gpsjam.js already uses for the v1 fallback.
+      // proxy — same mapping api/gpsjam.js already uses for the v1 fallback.
       npAvg: pctRaw > 10 ? 0.3 : pctRaw >= 2 ? 0.8 : 1.5,
       sampleCount: bad,
       aircraftCount: total,

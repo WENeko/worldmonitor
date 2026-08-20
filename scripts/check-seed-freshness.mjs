@@ -6,7 +6,7 @@ import { parseArgs } from 'node:util';
 
 const DEFAULT_HEALTH_URL = 'https://api.worldmonitor.app/api/health?compact=1';
 const BASELINE_URL = new URL('./seed-freshness-baseline.json', import.meta.url);
-// server/routes/health.js only serves a cached verdict for 60 seconds. Allow its maximum
+// api/health.js only serves a cached verdict for 60 seconds. Allow its maximum
 // 20-second request timeout too, so a valid snapshot cannot be rejected solely
 // because the response arrived at the end of the monitor's fetch window.
 export const MAX_HEALTH_OBSERVATION_AGE_MS = 80 * 1000;
@@ -30,7 +30,7 @@ export function validateCompactHealthPayload(payload) {
 // Everything else must stay strict even for an on-demand source. `SEED_ERROR`
 // means the producer ran and failed; a long `STALE_SEED` means it stopped
 // running. Neither is explained by "nobody asked for it yet", and softening
-// them is a known-bad trade: server/routes/health.js's ON_DEMAND_KEYS policy block
+// them is a known-bad trade: api/health.js's ON_DEMAND_KEYS policy block
 // records `marketImplications` sitting at 8.2x its staleness budget for 16+
 // hours undetected for exactly this reason, which is why that key was removed
 // from the set. Do not widen this list to cover fault statuses — a genuinely
@@ -39,7 +39,7 @@ export function validateCompactHealthPayload(payload) {
 const ON_DEMAND_SOFT_STATUSES = new Set(['EMPTY_ON_DEMAND', 'EMPTY', 'EMPTY_DATA']);
 
 // `/api/health` marks on-demand sources with `onDemand: true` on every status
-// (server/routes/health.js classifyKey). The status-suffix test is retained as a fallback
+// (api/health.js classifyKey). The status-suffix test is retained as a fallback
 // for compact snapshots cached before that marker shipped, and is self-limiting:
 // `EMPTY_ON_DEMAND` is the only `_ON_DEMAND` status, so it covers only the
 // absent/zero-record branches — the same set the marker path allows.
@@ -312,7 +312,7 @@ function readAcceptanceBaseline() {
  *   no content fields at all health also reaches STALE_CONTENT via
  *                            requireContentFreshness — a per-country verdict
  *                            (portwatchPortActivity). That detail names WHICH
- *                            country is stale, so server/routes/health.js strips it from
+ *                            country is stale, so api/health.js strips it from
  *                            the public compact shape (#6060) that this monitor
  *                            reads. The numbers are operator-only by design and
  *                            are not coming; say so and point at where they live.

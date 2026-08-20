@@ -1,12 +1,12 @@
 /**
  * Shared Upstash pipeline helper for scripts/lib/* modules.
  *
- * The canonical helper for api/* code is server/routes/_upstash-json.js:redisPipeline.
+ * The canonical helper for api/* code is api/_upstash-json.js:redisPipeline.
  * scripts/lib/* modules historically avoid importing from api/, so this
  * file exposes the same behaviour (single POST to /pipeline, 10s timeout,
  * returns null on failure) without the cross-dir import.
  *
- * Keep the shape identical to server/routes/_upstash-json.js:redisPipeline so
+ * Keep the shape identical to api/_upstash-json.js:redisPipeline so
  * callers can be swapped if we ever relax the boundary.
  */
 

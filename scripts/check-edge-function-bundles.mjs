@@ -43,7 +43,7 @@ function listTrackedApiFiles(root) {
     .sort();
 }
 
-const LEGACY_CI_TOP_LEVEL_TS_ALLOWLIST = new Set(['server/routes/mcp.ts']);
+const LEGACY_CI_TOP_LEVEL_TS_ALLOWLIST = new Set(['api/mcp.ts']);
 
 function normalizeCallerOptions({
   caller = 'default',

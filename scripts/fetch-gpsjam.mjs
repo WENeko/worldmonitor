@@ -195,7 +195,7 @@ main()
     // failure must not blow away yesterday's hexes. Extend the existing TTLs and
     // exit 0 (graceful), matching the seeder convention. seed-meta.fetchedAt is
     // intentionally NOT refreshed, so a persistent outage still surfaces via the
-    // age-based STALE_SEED alarm (server/routes/health.js gpsjam maxStaleMin=1440).
+    // age-based STALE_SEED alarm (api/health.js gpsjam maxStaleMin=1440).
     console.error(`[gpsjam] Fetch failed: ${err.message} — extending TTL on stale data`);
     await extendExistingTtl([REDIS_KEY_V2, REDIS_KEY_V1, 'seed-meta:intelligence:gpsjam'], REDIS_TTL)
       .catch(e => console.error(`[gpsjam] TTL extend failed: ${e.message}`));

@@ -32,7 +32,7 @@ import {
   makeProDeps,
   proReq,
 } from './helpers/mcp-pro-deps.mjs';
-import { UI_RESOURCE_REGISTRY } from '../server/routes/mcp/ui/registry.ts';
+import { UI_RESOURCE_REGISTRY } from '../api/mcp/ui/registry.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const originalFetch = globalThis.fetch;

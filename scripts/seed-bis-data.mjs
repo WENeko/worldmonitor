@@ -47,7 +47,7 @@ const KEYS = {
 // all 3 canonical GETs returned nil from Upstash because the bundle ran
 // ~13.7h after the last successful tick instead of exactly 12h). 36h
 // covers cron drift + one degraded-to-24h cycle (matches the rationale
-// already applied to bisDsr/bisProperty* maxStaleMin in server/routes/health.js
+// already applied to bisDsr/bisProperty* maxStaleMin in api/health.js
 // circa 2026-04-27, just on the canonical-key-TTL side instead of the
 // health-threshold side).
 //

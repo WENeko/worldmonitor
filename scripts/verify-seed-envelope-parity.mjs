@@ -3,7 +3,7 @@
 //
 // The source of truth is scripts/_seed-envelope-source.mjs. Two mirrored copies
 // live at:
-//   - server/routes/_seed-envelope.js            (edge-safe, for api/*.js)
+//   - api/_seed-envelope.js            (edge-safe, for api/*.js)
 //   - server/_shared/seed-envelope.ts  (TypeScript, for server/ and scripts/)
 //
 // The TypeScript copy carries additional type declarations, so the check is
@@ -22,7 +22,7 @@ const repoRoot = resolve(here, '..');
 // Parity scope.
 //
 // Source of truth: scripts/_seed-envelope-source.mjs (plain JS, hand-authored).
-// Must-match copy:  server/routes/_seed-envelope.js           (plain JS, hand-authored).
+// Must-match copy:  api/_seed-envelope.js           (plain JS, hand-authored).
 //
 // The TypeScript copy at server/_shared/seed-envelope.ts is type-checked by
 // `tsc` and reviewed manually. It is NOT diffed here because TS-specific casts
@@ -32,7 +32,7 @@ const repoRoot = resolve(here, '..');
 // (c) code review. If we ever need stricter enforcement, a separate AST-aware
 // comparator can run over the TS file.
 const SOURCE = resolve(repoRoot, 'scripts/_seed-envelope-source.mjs');
-const EDGE = resolve(repoRoot, 'server/routes/_seed-envelope.js');
+const EDGE = resolve(repoRoot, 'api/_seed-envelope.js');
 
 /**
  * Extract bare function bodies from a source file, keyed by name.
@@ -148,7 +148,7 @@ async function main() {
 
   for (const name of EXPECTED_EXPORTS) {
     if (!sourceFns.has(name)) errors.push(`source missing export: ${name}`);
-    if (!edgeFns.has(name)) errors.push(`server/routes/_seed-envelope.js missing export: ${name}`);
+    if (!edgeFns.has(name)) errors.push(`api/_seed-envelope.js missing export: ${name}`);
   }
 
   if (errors.length) {
@@ -161,7 +161,7 @@ async function main() {
     const src = sourceFns.get(name);
     const edge = edgeFns.get(name);
     if (src !== edge) {
-      errors.push(`drift: server/routes/_seed-envelope.js::${name} differs from source.\n  source: ${src}\n  edge:   ${edge}`);
+      errors.push(`drift: api/_seed-envelope.js::${name} differs from source.\n  source: ${src}\n  edge:   ${edge}`);
     }
   }
 

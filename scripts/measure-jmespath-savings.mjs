@@ -25,7 +25,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { applyJmespath, utf8ByteLength } from '../server/routes/mcp.ts';
+import { applyJmespath, utf8ByteLength } from '../api/mcp.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');

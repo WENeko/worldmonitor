@@ -16920,7 +16920,7 @@ async function runDeepForecastWorker({ once = false, runId = '' } = {}) {
 // ---------------------------------------------------------------------------
 
 const MARKET_IMPLICATIONS_KEY = 'intelligence:market-implications:v1';
-// 180min = 3× the ~60min cron cadence (server/routes/health.js:416 sets
+// 180min = 3× the ~60min cron cadence (api/health.js:416 sets
 // maxStaleMin=120 = 2× cron). Pre-fix at 75min the canonical TTL was only
 // 1.25× cron, so any cron drift or LLM-call slowness left canonical
 // TTL'd-out before the next write — seed-meta survived (rc=3, 78min old)
@@ -17232,7 +17232,7 @@ function marketImplicationsMetaErrorReason(reason) {
 }
 
 // Closed failure vocabulary surfaced to /api/health as
-// seed-meta.lastSynthesisFailureCode. server/routes/health.js validates against a
+// seed-meta.lastSynthesisFailureCode. api/health.js validates against a
 // matching pattern, so a code added here needs the pattern widened there.
 // Exported so that coupling is enforced by a test rather than by this comment
 // (see tests/market-implications-seed-health.test.mjs).
@@ -17242,7 +17242,7 @@ export const MARKET_IMPLICATIONS_FAILURE_CODES = Object.freeze({
   all_cards_failed_validation: 'MARKET_IMPLICATIONS_VALIDATION',
 });
 export const MARKET_IMPLICATIONS_UNKNOWN_FAILURE_CODE = 'MARKET_IMPLICATIONS_UNKNOWN';
-// Matches INSIGHTS_MAX_CONSECUTIVE_FAILURES and server/routes/health.js's own clamp: the
+// Matches INSIGHTS_MAX_CONSECUTIVE_FAILURES and api/health.js's own clamp: the
 // streak is a signal, not a counter anyone reads past the warn threshold.
 const MARKET_IMPLICATIONS_MAX_CONSECUTIVE_FAILURES = 100;
 
@@ -17260,7 +17260,7 @@ const MARKET_IMPLICATIONS_MAX_CONSECUTIVE_FAILURES = 100;
  * So a miss with usable last-good becomes a BOUNDED degraded state: the
  * content clock holds at the served vintage (age escalation still works), the
  * record count describes what is actually being served, and the miss is
- * recorded as a streak + reason for server/routes/health.js's synthesisFailure contract
+ * recorded as a streak + reason for api/health.js's synthesisFailure contract
  * to escalate on the second consecutive miss. A miss with nothing servable
  * keeps the immediate `status:'error'` — there the panel really is broken.
  */

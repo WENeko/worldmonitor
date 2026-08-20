@@ -59,7 +59,7 @@ const TIMELINE_TTL = 7 * 86_400;
 const STATE_TTL = 14 * 86_400;
 const CONFLICT_TTL = 6 * 60 * 60;
 const UNREST_TTL = 4.5 * 60 * 60;
-// 3h, NOT 45min: server/routes/health.js gates positiveGeoEvents at maxStaleMin 60 AND
+// 3h, NOT 45min: api/health.js gates positiveGeoEvents at maxStaleMin 60 AND
 // treats a missing payload as a hard failure, so a TTL under that window makes a
 // merely-late materializer page as EMPTY/crit before STALE_SEED can warn — the
 // #5309 ACLED_TTL zero-headroom class. The old warm relay masked this with a

@@ -1031,7 +1031,7 @@ export async function writeSeedMeta(dataKey, recordCount, metaKeyOverride, metaT
   const meta = { fetchedAt: Date.now(), recordCount: recordCount ?? 0 };
   if (coverage) meta.coverage = coverage;
   // Optional producer diagnostics, copied verbatim onto the meta record.
-  // server/routes/health.js decides which fields it trusts (see readSeedMeta), so callers
+  // api/health.js decides which fields it trusts (see readSeedMeta), so callers
   // must keep `extra` safe for a public endpoint; the consumer-prices
   // `coverage` block is deliberately NOT merged here (health parses it with a
   // separate retailer schema — see fetchTradeFlows in seed-supply-chain-trade).

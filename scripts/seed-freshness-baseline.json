@@ -20,7 +20,7 @@
     "a merged PR closes, and a suppression pointing at a closed PR has no owner.",
     "",
     "Softening fault statuses is the marketImplications blind spot the ON_DEMAND_KEYS policy",
-    "block in server/routes/health.js exists to prevent."
+    "block in api/health.js exists to prevent."
   ],
   "expiresAt": "2026-08-27",
   "acknowledged": [

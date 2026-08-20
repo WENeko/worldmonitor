@@ -32,10 +32,10 @@
  * `classify-event`).
  *
  * Cross-reference: every extracted cache key is checked against
- * `server/routes/mcp.ts::TOOL_REGISTRY` `_cacheKeys` / `_coverageKeys` to emit
+ * `api/mcp.ts::TOOL_REGISTRY` `_cacheKeys` / `_coverageKeys` to emit
  * `covered by <toolName>` hints. The hand-maintained
  * `EXECUTE_PASSTHROUGH_FETCHES` map at the top of the file mirrors the
- * `_execute` body fetch URLs in `server/routes/mcp.ts` so passthrough-fetch tools
+ * `_execute` body fetch URLs in `api/mcp.ts` so passthrough-fetch tools
  * (`get_country_risk`, `get_airspace`, `get_news_intelligence`, ...) get
  * their own coverage hint.
  *
@@ -69,11 +69,11 @@ const HTTP_METHODS = new Set([
 ]);
 
 // -----------------------------------------------------------------------------
-// `_execute` passthrough-fetch map — hand-maintained from `server/routes/mcp.ts`.
+// `_execute` passthrough-fetch map — hand-maintained from `api/mcp.ts`.
 // Each entry lists the API paths a given MCP tool fetches inside its
-// `_execute` body. Regenerate by grepping `server/routes/mcp.ts` for
+// `_execute` body. Regenerate by grepping `api/mcp.ts` for
 // `\${base}/api/` callsites and grouping them under each tool's `name`.
-// Mirror entries here when a new `_execute` tool is added in `server/routes/mcp.ts`.
+// Mirror entries here when a new `_execute` tool is added in `api/mcp.ts`.
 // -----------------------------------------------------------------------------
 
 const EXECUTE_PASSTHROUGH_FETCHES = {
@@ -83,7 +83,7 @@ const EXECUTE_PASSTHROUGH_FETCHES = {
   ],
   get_country_brief: [
     'GET /api/news/v1/list-feed-digest',
-    // NOTE: server/routes/mcp.ts:660 POSTs to this URL even though the OpenAPI spec
+    // NOTE: api/mcp.ts:660 POSTs to this URL even though the OpenAPI spec
     // declares it as GET (IntelligenceService.openapi.json). Listed here
     // as GET to match the live OpenAPI surface — the implementer should
     // reconcile the method drift in a follow-up before locking U3's
@@ -122,7 +122,7 @@ const EXECUTE_PASSTHROUGH_FETCHES = {
   get_similar_events: [
     'GET /api/intelligence/v1/get-similar-events',
   ],
-  // `get_news_intelligence` is a cache tool in server/routes/mcp.ts (uses
+  // `get_news_intelligence` is a cache tool in api/mcp.ts (uses
   // _cacheKeys), NOT an _execute tool. Listed here in plan prose for
   // historical context but covered by the cache-key cross-reference,
   // not by this map.
@@ -378,7 +378,7 @@ function extractCacheKeys(handlerSource, handlerDir) {
 }
 
 // -----------------------------------------------------------------------------
-// Parse `server/routes/mcp.ts::TOOL_REGISTRY` for every tool's `_cacheKeys` / `_coverageKeys`.
+// Parse `api/mcp.ts::TOOL_REGISTRY` for every tool's `_cacheKeys` / `_coverageKeys`.
 // Source-level regex — no TypeScript parse — but tolerant of:
 //   - multi-line array literals
 //   - `// comments` inside the array
@@ -637,7 +637,7 @@ function categorize(row) {
   // The CASCADE_MIRROR_EXEMPT set is the audit-author's contract that the
   // tool's stale-variant read is structurally equivalent to the API's
   // live+stale+backup cascade fallback. Documented inline at the tool's
-  // _apiPaths declaration in server/routes/mcp.ts.
+  // _apiPaths declaration in api/mcp.ts.
   if (row.partiallyCoveredByCacheKey.length > 0 && CASCADE_MIRROR_EXEMPT.has(row.methodPath)) {
     return 'covered-via-cache-key';
   }

@@ -13,7 +13,7 @@
  *     → utf8ByteLength(...)
  *
  * This is the same chain `dispatchToolsCall` measures against
- * `_outputBudgetBytes` at runtime (server/routes/mcp.ts — search `textBytes > budget`),
+ * `_outputBudgetBytes` at runtime (api/mcp.ts — search `textBytes > budget`),
  * restricted to the default-args identity path (no JMESPath projection, no
  * `summary: true`).
  *

@@ -24,7 +24,7 @@ const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 /**
  * Inventory facts are a boot artifact. A stale attribution ledger is a
  * `sources:check` / `docs:check` failure, not a reason to skip writing
- * `server/routes/_inventory-facts.generated.js`.
+ * `api/_inventory-facts.generated.js`.
  */
 export function loadStatsForInventoryFacts({
   compute = computeStats,
@@ -91,7 +91,7 @@ function expectedInventoryOutputs({ loadStats = loadStatsForInventoryFacts } = {
   return new Map([
     ['public/product-facts.json', json(publicFacts)],
     ['scripts/shared/inventory-facts.generated.json', json(inventoryFacts)],
-    ['server/routes/_inventory-facts.generated.js', edgeModule],
+    ['api/_inventory-facts.generated.js', edgeModule],
     ['docs/generated/stats.json', json(stats)],
   ]);
 }

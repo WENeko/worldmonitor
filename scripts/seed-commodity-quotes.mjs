@@ -275,7 +275,7 @@ async function writeRequiredCompanionKeys(data) {
 /**
  * Optional gold-extended write — Yahoo cross-currency XAU + drivers. Has its
  * own seed-meta:market:gold-extended key with independent maxStaleMin in
- * server/routes/health.js, so a Yahoo outage here degrades only the gold panel; the
+ * api/health.js, so a Yahoo outage here degrades only the gold panel; the
  * canonical commodity publish stays healthy. Errors are caught and logged so
  * Yahoo flakiness does NOT poison runSeed's success path.
  */

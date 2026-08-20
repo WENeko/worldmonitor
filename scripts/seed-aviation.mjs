@@ -59,7 +59,7 @@ const INTL_KEY         = 'aviation:delays:intl:v3';
 const FAA_KEY          = 'aviation:delays:faa:v1';
 const NOTAM_KEY        = 'aviation:notam:closures:v2';
 const NEWS_KEY         = 'aviation:news::24:v1';
-// Page-load hydration aggregate. Health (server/routes/health.js BOOTSTRAP_KEYS.flightDelays)
+// Page-load hydration aggregate. Health (api/health.js BOOTSTRAP_KEYS.flightDelays)
 // reads STRLEN here, and its record count from BOOTSTRAP_META_KEY below — which
 // must be written from THIS payload, not from a contributing source's own count
 // (#6987). Historically only written as a 1800s RPC side-effect inside
@@ -105,7 +105,7 @@ function nonNegativeEnv(name, fallback, max = Number.POSITIVE_INFINITY) {
 const MAX_INTL_MIN_REFRESH_MIN = 60;
 const INTL_MIN_REFRESH_MIN = nonNegativeEnv('AVIATIONSTACK_MIN_REFRESH_MIN', 55, MAX_INTL_MIN_REFRESH_MIN);
 
-// health.js expects these exact meta keys (server/routes/health.js:222,223,269)
+// health.js expects these exact meta keys (api/health.js:222,223,269)
 const INTL_META_KEY  = 'seed-meta:aviation:intl';
 const FAA_META_KEY   = 'seed-meta:aviation:faa';
 const NOTAM_META_KEY = 'seed-meta:aviation:notam';
@@ -1229,7 +1229,7 @@ async function writeDelaysBootstrap(intlOverride) {
 // ─── Orchestration ───────────────────────────────────────────────────────────
 // runSeed's primary key = INTL (largest spend, most-consumed). FAA + NOTAM +
 // News are written as "extra keys" after the primary publish. Each has its own
-// seed-meta override that matches server/routes/health.js expectations.
+// seed-meta override that matches api/health.js expectations.
 
 // ─── Side-car seed runners ───────────────────────────────────────────────────
 // Each secondary data source (FAA, NOTAM, news) seeds INDEPENDENTLY of the
@@ -1284,7 +1284,7 @@ async function runNotamSideCar() {
       if (notam.quotaExhausted) {
         // ICAO quota exhausted ("Reach call limit") — preserve the last known
         // closure list by refreshing the data-key TTL + writing fresh meta
-        // with quotaExhausted=true. Keeps server/routes/health.js (maxStaleMin: 240)
+        // with quotaExhausted=true. Keeps api/health.js (maxStaleMin: 240)
         // green through the 24h backoff window. Matches pre-strip
         // ais-relay.cjs:2805-2808 byte-for-byte.
         try { await extendExistingTtl([NOTAM_KEY], NOTAM_TTL); } catch {}
@@ -1356,28 +1356,51 @@ export async function intlIsFresh() {
   }
 }
 
-// Monthly AviationStack budget backstop. Mirrors reserveAviationStackCalls() in
-// server/worldmonitor/aviation/v1/_avstack-budget.ts — SAME Redis key + env
-// names so the seeder and the request-time RPCs share one counter and one hard
-// ceiling. Keep the two in lockstep. 'seed' kind reserves against the full
-// AVIATIONSTACK_MONTHLY_BUDGET; request-time stops earlier (see
-// _avstack-budget.ts), reserving headroom for this curated feed.
+// Billing-cycle AviationStack budget backstop. Mirrors
+// reserveAviationStackCalls() in server/worldmonitor/aviation/v1/_avstack-budget.ts
+// — SAME Redis key + env names so the seeder and the request-time RPCs share
+// one counter and one hard ceiling. Keep the two in lockstep. 'seed' kind
+// reserves against the full AVIATIONSTACK_MONTHLY_BUDGET; request-time stops
+// earlier (see _avstack-budget.ts), reserving headroom for this curated feed.
+//
+// This seeder is the bulk spender: AVIATIONSTACK_LIST.length (56) paid calls
+// per sweep, ~24 sweeps/day under the 55min freshness gate — ~40.3k of the 48k
+// default over a 30-day cycle, ~41.7k over a 31-day one. If that stops fitting
+// the plan, the sweep cadence is the lever, not this ceiling.
 export function avstackMonthlyBudget() {
-  return nonNegativeEnv('AVIATIONSTACK_MONTHLY_BUDGET', 130_000);
+  return nonNegativeEnv('AVIATIONSTACK_MONTHLY_BUDGET', 48_000);
+}
+
+const DEFAULT_CYCLE_RESET_DAY = 25;
+
+// Clamped to 1..28 so a cycle opens in every month — an anniversary of 29-31
+// would silently skip February and hand out a double-length allowance.
+function cycleResetDay() {
+  const raw = Number(process.env.AVIATIONSTACK_CYCLE_RESET_DAY?.trim());
+  if (!Number.isInteger(raw) || raw < 1 || raw > 28) return DEFAULT_CYCLE_RESET_DAY;
+  return raw;
 }
 
 /**
- * Redis counter key for the current UTC billing month.
+ * Redis counter key for the current UTC BILLING CYCLE, named by its start date.
+ *
+ * The window is the invoice's, not the calendar's — AviationStack bills from an
+ * anniversary day (the 25th on this account), so a `<YYYY-MM>` key kept the cap
+ * refusing calls into a fresh allowance and zeroing itself mid-cycle.
  *
  * The server-side reserver in server/worldmonitor/aviation/v1/_avstack-budget.ts
- * builds the SAME key; if the two ever drift, the shared monthly ceiling splits
- * into two independent counters and silently doubles AviationStack spend.
- * Exported so that agreement can be asserted by comparing the two functions'
- * output rather than by grepping both files for `getUTCMonth()`.
+ * builds the SAME key; if the two ever drift, the shared ceiling splits into two
+ * independent counters and silently doubles AviationStack spend. Exported so
+ * that agreement can be asserted by comparing the two functions' output rather
+ * than by grepping both files for `getUTCMonth()`.
  */
 export function avstackBudgetKey(now = new Date()) {
-  const ym = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-  return `aviation:avstack:calls:${ym}`;
+  const resetDay = cycleResetDay();
+  const monthOffset = now.getUTCDate() >= resetDay ? 0 : -1;
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + monthOffset, resetDay));
+  const pad = (n) => String(n).padStart(2, '0');
+  const cycle = `${start.getUTCFullYear()}-${pad(start.getUTCMonth() + 1)}-${pad(start.getUTCDate())}`;
+  return `aviation:avstack:calls:${cycle}`;
 }
 
 export async function reserveAviationStackBudget(count) {

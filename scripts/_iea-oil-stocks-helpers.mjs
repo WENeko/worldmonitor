@@ -43,7 +43,7 @@ export function dataMonthToEndOfMonthMs(dataMonth) {
  *
  * Single-snapshot seeder: every member shares one dataMonth, so newest ===
  * oldest. We mirror the disease-outbreaks/climate-news return shape for
- * Sprint 1 mirror parity (server/routes/_seed-envelope.js + server/_shared/seed-envelope.ts
+ * Sprint 1 mirror parity (api/_seed-envelope.js + server/_shared/seed-envelope.ts
  * expect both fields).
  *
  * Returns null when:

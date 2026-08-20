@@ -9,7 +9,7 @@ import {
 } from './check-seed-freshness.mjs';
 
 const BASELINE_URL = new URL('./seed-freshness-baseline.json', import.meta.url);
-const HEALTH_URL = new URL('../server/routes/health.js', import.meta.url);
+const HEALTH_URL = new URL('../api/health.js', import.meta.url);
 
 type JsonRecord = Record<string, unknown>;
 
@@ -154,7 +154,7 @@ function resolveCommit(ref: string): string {
  */
 async function readBaseSeedMeta(ref: string) {
   const commit = resolveCommit(ref);
-  const source = execFileSync('git', ['show', `${commit}:server/routes/health.js`], {
+  const source = execFileSync('git', ['show', `${commit}:api/health.js`], {
     encoding: 'utf8',
     maxBuffer: 10 * 1024 * 1024,
   });
@@ -163,7 +163,7 @@ async function readBaseSeedMeta(ref: string) {
   try {
     const module = await import(temporaryUrl.href);
     if (!isRecord(module.__testing__) || !isRecord(module.__testing__.SEED_META)) {
-      throw new Error(`server/routes/health.js at ${commit} does not export __testing__.SEED_META`);
+      throw new Error(`api/health.js at ${commit} does not export __testing__.SEED_META`);
     }
     return { commit, seedMeta: module.__testing__.SEED_META };
   } finally {
@@ -178,7 +178,7 @@ async function main() {
     import(HEALTH_URL.href),
   ]);
   if (!isRecord(headModule.__testing__) || !isRecord(headModule.__testing__.SEED_META)) {
-    throw new Error('Current server/routes/health.js does not export __testing__.SEED_META');
+    throw new Error('Current api/health.js does not export __testing__.SEED_META');
   }
   const baseline = JSON.parse(readFileSync(BASELINE_URL, 'utf8'));
   const changed = validateHealthProbeCutovers({

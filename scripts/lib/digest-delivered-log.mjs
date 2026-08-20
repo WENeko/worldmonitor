@@ -66,7 +66,7 @@ const TTL_JITTER_SECONDS = 3 * 24 * 60 * 60;    // 3d uniform random spread
 
 // Keep in lockstep with the cron's deliverable-channels filter in
 // scripts/seed-digest-notifications.mjs (the channel.channelType check).
-// Adding a new channel type → also add it here AND in server/routes/health.js's
+// Adding a new channel type → also add it here AND in api/health.js's
 // seed-meta SEED_META configuration if that channel needs separate
 // monitoring.
 export const ALLOWED_CHANNELS = Object.freeze(

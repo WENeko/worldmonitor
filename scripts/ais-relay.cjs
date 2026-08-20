@@ -615,7 +615,7 @@ function upstashReleaseLockIfOwner(key, owner) {
 // ─────────────────────────────────────────────────────────────
 // Seed envelope — canonical { _seed, data } shape. Mirrored from
 // scripts/_seed-envelope-source.mjs (ESM; can't be require()'d from CJS).
-// Source of truth lives there + server/routes/_seed-envelope.js + server/_shared/seed-envelope.ts.
+// Source of truth lives there + api/_seed-envelope.js + server/_shared/seed-envelope.ts.
 // Parity enforced by scripts/verify-seed-envelope-parity.mjs.
 // ─────────────────────────────────────────────────────────────
 function buildEnvelope({ fetchedAt, recordCount, sourceVersion, schemaVersion, state, failedDatasets, errorReason, groupId, data }) {
@@ -1543,7 +1543,7 @@ async function orefPersistHistory() {
     // Companion seed-meta:* write — the OREF payload only carries `persistedAt`
     // (an ISO string not in extractTimestamp's recognised set), so without this
     // key the regional-snapshot freshness classifier would flag the input as
-    // STALE on every run (#3781). Tracked by server/routes/health.js for staleness alerts.
+    // STALE on every run (#3781). Tracked by api/health.js for staleness alerts.
     //
     // Gate on `ok`: if the envelope write failed (Upstash 5xx / network blip),
     // a successful meta write alone would tell the freshness classifier the
@@ -1937,7 +1937,7 @@ async function seedUcdpEvents() {
 
     const payload = { events: capped, fetchedAt: Date.now(), version, candidateVersion, candidateComplete, annualFailedPages: failedPages, totalRaw: allEvents.length, filteredCount: capped.length };
     const ok = await envelopeWrite(UCDP_REDIS_KEY, payload, UCDP_TTL_SECONDS, { recordCount: capped.length, sourceVersion: 'ucdp' });
-    // Content-age trio: server/routes/health.js treats the presence of maxContentAgeMin as
+    // Content-age trio: api/health.js treats the presence of maxContentAgeMin as
     // the opt-in signal and reports STALE_CONTENT once the newest event outruns
     // the budget. Without it a silently dead candidate merge is invisible —
     // fetchedAt stays fresh and recordCount stays full while the data itself
@@ -6300,7 +6300,7 @@ const SOCIAL_VELOCITY_SEED_META_KEY = 'seed-meta:intelligence:social-reddit';
 // ScrapeCreators (not Reddit directly) the IP-rate-limit driver is gone, so the
 // interval is set purely by freshness need: velocity decays over ~6h, so 3h is
 // ample. See SOCIAL_VELOCITY_INTERVAL_MS / _TTL below.
-const SOCIAL_VELOCITY_TTL = 43200; // 12h — STRICTLY > health maxStaleMin=540min (9h) so a dead relay surfaces STALE_SEED (warn) for the 9h–12h window while the key is still present, BEFORE it expires and escalates to EMPTY (crit). TTL==maxStaleMin would skip STALE_SEED entirely: classifyKey checks !hasData before seedStale (server/routes/health.js). On failure cycles the relay re-extends this TTL (upstashExpire below), so a live-but-failing relay keeps last-good present.
+const SOCIAL_VELOCITY_TTL = 43200; // 12h — STRICTLY > health maxStaleMin=540min (9h) so a dead relay surfaces STALE_SEED (warn) for the 9h–12h window while the key is still present, BEFORE it expires and escalates to EMPTY (crit). TTL==maxStaleMin would skip STALE_SEED entirely: classifyKey checks !hasData before seedStale (api/health.js). On failure cycles the relay re-extends this TTL (upstashExpire below), so a live-but-failing relay keeps last-good present.
 const SOCIAL_VELOCITY_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3h — velocity decays over ~6h; hourly was a Reddit-rate-limit leftover, not a freshness need
 const REDDIT_SUBREDDITS = ['worldnews', 'geopolitics'];
 
@@ -8527,7 +8527,7 @@ async function seedTransitSummaries() {
 
   const ok = await envelopeWrite(TRANSIT_SUMMARY_REDIS_KEY, { summaries, fetchedAt: now }, TRANSIT_SUMMARY_TTL, { recordCount: pwCovered, sourceVersion: 'transit-summaries' });
   // seed-meta recordCount = pwCovered (actual upstream coverage), not the
-  // canonical-shape key count. Lets server/routes/health.js detect a coverage shortfall
+  // canonical-shape key count. Lets api/health.js detect a coverage shortfall
   // as a freshness anomaly rather than being masked by the always-13 shape.
   await upstashSet('seed-meta:supply_chain:transit-summaries', { fetchedAt: now, recordCount: pwCovered }, 604800);
   console.log(`[TransitSummary] Seeded ${pwCovered}/${CANONICAL_IDS.length} from portwatch + per-id history (redis: ${ok ? 'OK' : 'FAIL'})`);
@@ -9367,7 +9367,7 @@ function handleWorldBankRequest(req, res) {
   const action = wbParams.get('action');
 
   if (action === 'indicators') {
-    // Static response — return indicator list directly (same as server/routes/worldbank.js)
+    // Static response — return indicator list directly (same as api/worldbank.js)
     const indicators = {
       'IT.NET.USER.ZS': 'Internet Users (% of population)',
       'IT.CEL.SETS.P2': 'Mobile Subscriptions (per 100 people)',

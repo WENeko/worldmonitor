@@ -8,7 +8,7 @@
  * DriveBC Open511 is paced at one request per second. A 60-token minute bucket
  * would permit a 60-request burst and would not enforce that pacing.
  *
- * Do not reuse inbound server/routes/_rate-limit.js / the `rl:` Redis prefix — this is
+ * Do not reuse inbound api/_rate-limit.js / the `rl:` Redis prefix — this is
  * an egress limiter inside the seeder process, not the public API limiter.
  *
  * Issue #6618 v1 / #6667.
