@@ -1,5 +1,5 @@
 {
-  "buildCommand": "npm run inventory:facts && npm run sources:generate && npm run prepare:vercel && npm run build:vercel",
+  "buildCommand": "npm run inventory:facts && npm run prepare:vercel && npm run sources:generate && npm run build:vercel",
   "ignoreCommand": "bash scripts/vercel-ignore.sh",
   "crons": [],
   "redirects": [
