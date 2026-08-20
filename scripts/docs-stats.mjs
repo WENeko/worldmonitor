@@ -1012,7 +1012,7 @@ function computeStats() {
     const f = e.name;
     if (f.startsWith('_') || f.startsWith('.')) return false;
     if (/\.test\./.test(f) || /\.d\.ts$/.test(f) || /\.json$/.test(f)) return false;
-    if (e.isDirectory()) return dirHasFiles(`api/${f}`);
+    if (e.isDirectory()) return dirHasFiles(`server/routes/${f}`);
     return e.isFile();
   }).length;
 
