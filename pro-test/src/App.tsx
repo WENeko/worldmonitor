@@ -36,6 +36,9 @@ import {
   DASHBOARD_URL,
 } from './routes';
 import { appendStoredContentAttributionToUrl } from '../../shared/content-attribution';
+import { isInternalSourceTag } from '../../shared/referral-namespaces';
+import { readMcpAttributionFromSearch } from '../../shared/mcp-attribution';
+import { LegalFooterNav } from './components/LegalFooterNav';
 
 const API_BASE = 'https://api.worldmonitor.app/api';
 const TURNSTILE_SITE_KEY = '0x4AAAAAACnaYgHIyxclu8Tj';
@@ -68,9 +71,29 @@ export function renderTurnstileWidgets(): number {
   return count;
 }
 
+/**
+ * The single entry point for this page's inbound referral code. Every
+ * consumer goes through it — the dashboard CTAs via appendRefToUrl and
+ * PricingSection, which hands the value to startCheckout and from there to
+ * Dodo as `affonso_referral`.
+ *
+ * Internal source tags are rejected here rather than at each consumer: an
+ * internal tag is not an affiliate code on this surface either, and this page
+ * reaches checkout without ever passing through the dashboard's
+ * referral-capture guard (#6493).
+ */
 function getRefCode(): string | undefined {
   const params = new URLSearchParams(window.location.search);
-  return params.get('ref') || undefined;
+  const code = params.get('ref') || undefined;
+  if (!code || isInternalSourceTag(code)) return undefined;
+  return code;
+}
+
+function getMcpAttributionSource(): string | undefined {
+  // Uses the shared allowlist rather than an inline literal so the /pro page,
+  // the checkout edge function, and the Convex webhook reader can never disagree
+  // about what the campaign marker is (#6716).
+  return readMcpAttributionFromSearch(window.location.search);
 }
 
 /**
@@ -260,7 +283,7 @@ function ClerkUserButton({ user }: { user: UserResource | null }): ReactElement 
   }, [user]);
 
   return (
-    <div ref={ref} className="flex h-8 w-8 items-center justify-center">
+    <div ref={ref} translate="no" className="flex h-8 w-8 items-center justify-center">
       {!user && (
         <span
           className="block h-8 w-8 rounded-full border border-wm-border bg-wm-card shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)]"
@@ -1340,6 +1363,10 @@ const EnterprisePage = () => (
         </div>
         <span className="text-[10px] opacity-40 mt-4 md:mt-0">&copy; {new Date().getFullYear()} WorldMonitor</span>
       </div>
+      {/* This is the pricing page — the footer a buyer sees on the way to
+          checkout — so the documents they are agreeing to have to be one click
+          from here, not one FAQ answer deep (#6976). */}
+      <LegalFooterNav />
     </footer>
   </div>
 );
@@ -1417,7 +1444,7 @@ export default function App() {
           <AudiencePersonas />
           <SocialProof />
           <LivePreview />
-          <PricingSection refCode={getRefCode()} />
+          <PricingSection refCode={getRefCode()} attributionSource={getMcpAttributionSource()} />
           <PricingTable />
           <ApiSection />
           <EnterpriseShowcase />

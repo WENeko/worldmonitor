@@ -2,6 +2,8 @@ import type { AppContext, AppModule, CountryBriefSignals } from '@/app/app-conte
 import { getSignalAggregator } from '@/app/lazy-services';
 import type { CountrySignalCluster } from '@/services/signal-aggregator';
 import { getRpcBaseUrl } from '@/services/rpc-client';
+import { getCountryDefenseIndustrialBase } from '@/services/defense-industrial';
+import { publicRpcFetch } from '@/services/public-rpc-fetch';
 import { premiumFetch } from '@/services/premium-fetch';
 import { IS_EMBEDDED_PREVIEW } from '@/utils/embedded-preview';
 import type { TimelineEvent } from '@/components/CountryTimeline';
@@ -60,7 +62,7 @@ import { getActiveFrameworkForPanel, subscribeFrameworkChange } from '@/services
 import { fetchMultiSectorExposure, fetchCountryProducts, fetchMultiSectorCostShock } from '@/services/supply-chain';
 import { getImfCountryBundle, buildImfEconomicIndicators, type ImfCountryBundle } from '@/services/imf-country-data';
 import { getChinaDecisionSignalsData } from '@/services/china-decision-signals';
-import { EconomicServiceClient, IntelligenceServiceClient, MarketServiceClient, TradeServiceClient } from '@/services/generated-rpc-clients';
+import { EconomicServiceClient, IntelligenceServiceClient, MarketServiceClient, MilitaryServiceClient, TradeServiceClient } from '@/services/generated-rpc-clients';
 import { CHINA_DECISION_SIGNAL_GROUP_IDS } from '../../shared/china-decision-signals';
 
 // Iran-events domain sunset (war ended 2026-07). Default OFF: no strikes in the
@@ -280,7 +282,16 @@ export class CountryIntelManager implements AppModule {
     await this.openCountryBriefByCode(geo.code, geo.country);
   }
 
-  async openCountryBriefByCode(code: string, country: string, opts?: { maximize?: boolean }): Promise<void> {
+  async openCountryBriefByCode(
+    code: string,
+    country: string,
+    opts?: {
+      maximize?: boolean;
+      trackAnalytics?: boolean;
+      /** Acknowledges that the requested country page is visibly presented. */
+      onPresented?: () => void;
+    },
+  ): Promise<void> {
     const token = ++this.briefRequestToken;
     let pageShown = false;
     let showedLoading = false;
@@ -295,7 +306,7 @@ export class CountryIntelManager implements AppModule {
         showedLoading = true;
       }
       this.ctx.map?.setRenderPaused(true);
-      trackCountryBriefOpened(code);
+      if (opts?.trackAnalytics !== false) trackCountryBriefOpened(code);
 
       const canonicalName = TIER1_COUNTRIES[code] || CountryIntelManager.resolveCountryName(code);
       if (canonicalName !== code) country = canonicalName;
@@ -309,6 +320,15 @@ export class CountryIntelManager implements AppModule {
 
       page.show(country, code, score, signals);
       pageShown = true;
+      // Agent selection needs to acknowledge the visible UI transition, not
+      // wait for the slower background intelligence/LLM enrichment below.
+      // Keep the callback observational so a consumer cannot break the human
+      // country-open path by throwing from its acknowledgement handler.
+      try {
+        opts?.onPresented?.();
+      } catch {
+        // The page is already visible; enrichment should continue normally.
+      }
       const updateChinaSummary = (data: ChinaCountrySummaryData): void => {
         if (!isChina || token !== this.briefRequestToken || this.ctx.countryBriefPage?.getCode()?.toUpperCase() !== 'CN') return;
         this.ctx.countryBriefPage.updateChinaCountrySummary?.(data);
@@ -462,6 +482,20 @@ export class CountryIntelManager implements AppModule {
       const intelClient = new IntelligenceServiceClient(getRpcBaseUrl(), {
         fetch: (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args),
       });
+      const militaryClient = new MilitaryServiceClient(getRpcBaseUrl(), {
+        fetch: publicRpcFetch,
+      });
+      void getCountryDefenseIndustrialBase(code, militaryClient)
+        .then((industrial) => {
+          if (token === this.briefRequestToken && this.ctx.countryBriefPage?.getCode() === code) {
+            this.ctx.countryBriefPage.updateDefenseIndustrialBase?.(industrial.available ? industrial : null);
+          }
+        })
+        .catch(() => {
+          if (token === this.briefRequestToken && this.ctx.countryBriefPage?.getCode() === code) {
+            this.ctx.countryBriefPage.updateDefenseIndustrialBase?.(null);
+          }
+        });
       intelClient.getCountryFacts({ countryCode: code })
         .then((facts) => {
           if (this.ctx.countryBriefPage?.getCode() !== code) return;
