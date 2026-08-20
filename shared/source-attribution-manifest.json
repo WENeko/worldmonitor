@@ -282,7 +282,10 @@
       "status": "terms-review",
       "references": [
         {
-          "path": "api/skills/fetch-agentskills.ts"
+          "path": "server/routes/_lib/_lib_temp/skills/fetch-agentskills.ts"
+        },
+        {
+          "path": "server/routes/skills/fetch-agentskills.ts"
         }
       ]
     },
@@ -531,9 +534,6 @@
       "status": "excluded",
       "references": [
         {
-          "path": "api/_usage-telemetry.js"
-        },
-        {
           "path": "scripts/lib/llm-telemetry.cjs"
         },
         {
@@ -541,6 +541,9 @@
         },
         {
           "path": "server/_shared/usage.ts"
+        },
+        {
+          "path": "server/routes/_usage-telemetry.js"
         }
       ]
     },
@@ -804,9 +807,6 @@
       "status": "terms-review",
       "references": [
         {
-          "path": "api/_github-release.js"
-        },
-        {
           "path": "scripts/dispatch-stale-railway-reconcile.mjs"
         },
         {
@@ -814,6 +814,9 @@
         },
         {
           "path": "scripts/seed-research.mjs"
+        },
+        {
+          "path": "server/routes/_github-release.js"
         }
       ]
     },
@@ -1321,15 +1324,6 @@
       "status": "excluded",
       "references": [
         {
-          "path": "api/a2a.ts"
-        },
-        {
-          "path": "api/internal/mcp-grant-mint.ts"
-        },
-        {
-          "path": "api/mcp/downstream.ts"
-        },
-        {
           "path": "scripts/ais-relay.cjs"
         },
         {
@@ -1373,6 +1367,18 @@
         },
         {
           "path": "scripts/verify-import-hhi-coverage.mjs"
+        },
+        {
+          "path": "server/routes/_lib/_lib_temp/internal/mcp-grant-mint.ts"
+        },
+        {
+          "path": "server/routes/a2a.ts"
+        },
+        {
+          "path": "server/routes/internal/mcp-grant-mint.ts"
+        },
+        {
+          "path": "server/routes/mcp/downstream.ts"
         },
         {
           "path": "src/app/desktop-updater.ts"
@@ -2289,13 +2295,13 @@
       "status": "excluded",
       "references": [
         {
-          "path": "api/_notification-webhook-ssrf.ts"
-        },
-        {
-          "path": "api/mcp-proxy.ts"
-        },
-        {
           "path": "server/_shared/email-validation.ts"
+        },
+        {
+          "path": "server/routes/_notification-webhook-ssrf.ts"
+        },
+        {
+          "path": "server/routes/mcp-proxy.ts"
         },
         {
           "path": "server/worldmonitor/shipping/v2/webhook-shared.ts"
@@ -3025,10 +3031,10 @@
       "status": "excluded",
       "references": [
         {
-          "path": "api/discord/oauth/callback.ts"
+          "path": "server/routes/discord/oauth/callback.ts"
         },
         {
-          "path": "api/discord/oauth/start.ts"
+          "path": "server/routes/discord/oauth/start.ts"
         }
       ]
     },
@@ -4154,9 +4160,6 @@
       "status": "terms-review",
       "references": [
         {
-          "path": "api/symbol-search.ts"
-        },
-        {
           "path": "scripts/ais-relay.cjs"
         },
         {
@@ -4167,6 +4170,9 @@
         },
         {
           "path": "scripts/shared/market-quote-provider.mjs"
+        },
+        {
+          "path": "server/routes/symbol-search.ts"
         },
         {
           "path": "server/worldmonitor/intelligence/v1/_company-shared.ts"
@@ -4454,13 +4460,13 @@
       "status": "excluded",
       "references": [
         {
-          "path": "api/download.js"
-        },
-        {
           "path": "scripts/generate-airline-codes.mjs"
         },
         {
           "path": "scripts/seed-research.mjs"
+        },
+        {
+          "path": "server/routes/download.js"
         },
         {
           "path": "src/app/desktop-updater.ts"
@@ -5019,7 +5025,7 @@
       "status": "excluded",
       "references": [
         {
-          "path": "api/notification-channels.ts"
+          "path": "server/routes/notification-channels.ts"
         }
       ]
     },
@@ -5247,7 +5253,7 @@
       "status": "excluded",
       "references": [
         {
-          "path": "api/mcp/constants.ts"
+          "path": "server/routes/mcp/constants.ts"
         }
       ]
     },
@@ -5608,10 +5614,10 @@
       "status": "excluded",
       "references": [
         {
-          "path": "api/product-catalog.js"
+          "path": "scripts/ais-relay.cjs"
         },
         {
-          "path": "scripts/ais-relay.cjs"
+          "path": "server/routes/product-catalog.js"
         }
       ]
     },
@@ -6425,7 +6431,7 @@
       "status": "terms-review",
       "references": [
         {
-          "path": "api/reverse-geocode.js"
+          "path": "server/routes/reverse-geocode.js"
         },
         {
           "path": "server/worldmonitor/infrastructure/v1/reverse-geocode.ts"
@@ -7122,10 +7128,10 @@
       "status": "excluded",
       "references": [
         {
-          "path": "api/widget-agent.ts"
+          "path": "scripts/seed-security-advisories.mjs"
         },
         {
-          "path": "scripts/seed-security-advisories.mjs"
+          "path": "server/routes/widget-agent.ts"
         },
         {
           "path": "src/utils/proxy.ts"
@@ -7781,10 +7787,10 @@
       "status": "terms-review",
       "references": [
         {
-          "path": "api/ask.ts"
+          "path": "scripts/build-crawlable-corpus.mjs"
         },
         {
-          "path": "scripts/build-crawlable-corpus.mjs"
+          "path": "server/routes/ask.ts"
         }
       ]
     },
@@ -8159,10 +8165,10 @@
       "status": "excluded",
       "references": [
         {
-          "path": "api/slack/oauth/callback.ts"
+          "path": "server/routes/slack/oauth/callback.ts"
         },
         {
-          "path": "api/slack/oauth/start.ts"
+          "path": "server/routes/slack/oauth/start.ts"
         }
       ]
     },
@@ -8800,10 +8806,10 @@
       "status": "excluded",
       "references": [
         {
-          "path": "api/product-catalog.js"
+          "path": "scripts/ais-relay.cjs"
         },
         {
-          "path": "scripts/ais-relay.cjs"
+          "path": "server/routes/product-catalog.js"
         }
       ]
     },
@@ -9820,7 +9826,7 @@
       "status": "excluded",
       "references": [
         {
-          "path": "api/oauth-authorization-server.ts"
+          "path": "server/routes/oauth-authorization-server.ts"
         }
       ]
     },
@@ -9833,39 +9839,6 @@
       "attribution": "Excluded from the external-provider count: first-party web origin.",
       "status": "excluded",
       "references": [
-        {
-          "path": "api/_agent-metadata.ts"
-        },
-        {
-          "path": "api/a2a.ts"
-        },
-        {
-          "path": "api/ask.ts"
-        },
-        {
-          "path": "api/fwdstart.js"
-        },
-        {
-          "path": "api/not-found.ts"
-        },
-        {
-          "path": "api/oauth/authorize.js"
-        },
-        {
-          "path": "api/og-story.js"
-        },
-        {
-          "path": "api/opensky.js"
-        },
-        {
-          "path": "api/referral/me.ts"
-        },
-        {
-          "path": "api/reverse-geocode.js"
-        },
-        {
-          "path": "api/story.js"
-        },
         {
           "path": "scripts/_upstash-rest.mjs"
         },
@@ -9939,6 +9912,39 @@
           "path": "server/gateway.ts"
         },
         {
+          "path": "server/routes/_agent-metadata.ts"
+        },
+        {
+          "path": "server/routes/a2a.ts"
+        },
+        {
+          "path": "server/routes/ask.ts"
+        },
+        {
+          "path": "server/routes/fwdstart.js"
+        },
+        {
+          "path": "server/routes/not-found.ts"
+        },
+        {
+          "path": "server/routes/oauth/authorize.js"
+        },
+        {
+          "path": "server/routes/og-story.js"
+        },
+        {
+          "path": "server/routes/opensky.js"
+        },
+        {
+          "path": "server/routes/referral/me.ts"
+        },
+        {
+          "path": "server/routes/reverse-geocode.js"
+        },
+        {
+          "path": "server/routes/story.js"
+        },
+        {
           "path": "server/worldmonitor/infrastructure/v1/reverse-geocode.ts"
         },
         {
@@ -9988,7 +9994,7 @@
       "status": "excluded",
       "references": [
         {
-          "path": "api/docs-mcp.ts"
+          "path": "server/routes/docs-mcp.ts"
         }
       ]
     },
@@ -11410,7 +11416,7 @@
       "status": "terms-review",
       "references": [
         {
-          "path": "api/fwdstart.js"
+          "path": "server/routes/fwdstart.js"
         }
       ]
     },
@@ -13722,7 +13728,7 @@
       "status": "excluded",
       "references": [
         {
-          "path": "api/fwdstart.js"
+          "path": "server/routes/fwdstart.js"
         },
         {
           "path": "src/embed/panels/fear-greed.ts"
@@ -13875,15 +13881,6 @@
       "status": "excluded",
       "references": [
         {
-          "path": "api/a2a.ts"
-        },
-        {
-          "path": "api/ask.ts"
-        },
-        {
-          "path": "api/not-found.ts"
-        },
-        {
           "path": "scripts/build-crawlable-corpus.mjs"
         },
         {
@@ -13921,6 +13918,15 @@
         },
         {
           "path": "scripts/verify-sitemaps.mjs"
+        },
+        {
+          "path": "server/routes/a2a.ts"
+        },
+        {
+          "path": "server/routes/ask.ts"
+        },
+        {
+          "path": "server/routes/not-found.ts"
         },
         {
           "path": "src/components/RuntimeConfigPanel.ts"
@@ -14014,13 +14020,13 @@
       "status": "excluded",
       "references": [
         {
-          "path": "api/youtube/embed.js"
-        },
-        {
-          "path": "api/youtube/live.js"
-        },
-        {
           "path": "scripts/ais-relay.cjs"
+        },
+        {
+          "path": "server/routes/youtube/embed.js"
+        },
+        {
+          "path": "server/routes/youtube/live.js"
         },
         {
           "path": "server/worldmonitor/aviation/v1/get-youtube-live-stream-info.ts"

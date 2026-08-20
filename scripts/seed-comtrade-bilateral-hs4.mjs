@@ -82,7 +82,7 @@ export const SEED_META_TTL_SECONDS = Math.max(
 // 110 of the 197 country-port-clusters entries (~56%). Deliberately loose: the
 // true healthy count is unmeasured, and a floor above it would warn forever —
 // the trap that makes operators ignore a signal. Sized to catch a collapse,
-// not to certify full coverage. Keep in step with api/health.js + seed-health.js.
+// not to certify full coverage. Keep in step with server/routes/health.js + seed-health.js.
 export const MIN_COUNTRY_COVERAGE = 110;
 
 /**

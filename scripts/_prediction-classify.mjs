@@ -318,7 +318,7 @@ export function formatIntegrityViolations(violations, limit = 10) {
 // is therefore publishable; a genuinely empty fetch is already caught upstream by runSeed's
 // contract mode (declareRecords === 0 -> RETRY, which preserves last-good
 // without ever reaching validateFn). Detecting a partial-volume collapse is a
-// coverage-floor job (api/health.js minRecordCount), not this gate's.
+// coverage-floor job (server/routes/health.js minRecordCount), not this gate's.
 export function validateBootstrapPayload(data, { log = console.error } = {}) {
   const total = CATEGORIES.reduce(
     (sum, category) => sum + (Array.isArray(data?.[category]) ? data[category].length : 0),

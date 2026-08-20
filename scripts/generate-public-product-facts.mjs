@@ -4,7 +4,7 @@
  *
  * Source chain:
  *   convex/config/productCatalog.ts (lifecycle, plans, prices, public copy)
- *   api/mcp/registry/index.ts        (machine-readable MCP server card)
+ *   server/routes/mcp/registry/index.ts        (machine-readable MCP server card)
  *
  * These outputs are committed because lifecycle, prices, entitlements, and
  * catalog identities are reviewed product contracts. Extensible inventory
@@ -19,7 +19,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PRODUCT_CATALOG, PUBLIC_PRODUCT_METADATA } from '../convex/config/productCatalog.ts';
-import { TOOL_REGISTRY, toolAccess } from '../api/mcp/registry/index.ts';
+import { TOOL_REGISTRY, toolAccess } from '../server/routes/mcp/registry/index.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CHECK = process.argv.includes('--check');

@@ -10,17 +10,17 @@
  * multiselect-hash expression that exercises the duplication-capable
  * grammar driving the runtime output cap.
  *
- * Tier B — integration check: same flags against `api/mcp.ts` itself
+ * Tier B — integration check: same flags against `server/routes/mcp.ts` itself
  * (the actual edge entry that will end up importing jmespath after U2).
  * Mirrors the CI esbuild loop at `.github/workflows/test.yml:46-51`
- * exactly — pure bundle build check, no in-VM load. Loading `api/mcp.ts`
+ * exactly — pure bundle build check, no in-VM load. Loading `server/routes/mcp.ts`
  * inside `@edge-runtime/vm` fails on a pre-existing baseline issue
  * (something in the dependency graph accesses `crypto.subtle` at module
  * init, which @edge-runtime/vm doesn't shim the same way Vercel's actual
  * edge runtime does) — so this script doesn't attempt that load.
  * Tier A's in-VM check still proves jmespath itself is edge-runtime safe.
  *
- * Records raw + gzipped bundle sizes for `api/mcp.ts` and prints the
+ * Records raw + gzipped bundle sizes for `server/routes/mcp.ts` and prints the
  * delta vs a previously-saved baseline (if `/tmp/mcp.baseline.bundle.js`
  * exists). Plan flags re-evaluation if raw delta > 50 KB.
  *
@@ -107,8 +107,8 @@ async function tierA() {
 }
 
 async function tierB() {
-  log('--- Tier B: bundle + edge-vm load of api/mcp.ts ---');
-  const entry = resolve(ROOT, 'api/mcp.ts');
+  log('--- Tier B: bundle + edge-vm load of server/routes/mcp.ts ---');
+  const entry = resolve(ROOT, 'server/routes/mcp.ts');
   let result;
   try {
     result = await build({
@@ -116,7 +116,7 @@ async function tierB() {
       entryPoints: [entry],
     });
   } catch (e) {
-    fail(`Tier B esbuild bundle of api/mcp.ts failed: ${e.message}`);
+    fail(`Tier B esbuild bundle of server/routes/mcp.ts failed: ${e.message}`);
   }
   const code = result.outputFiles[0].text;
   const raw = code.length;
@@ -138,7 +138,7 @@ async function tierB() {
   // Bundle build-only check. We intentionally do NOT load the bundle
   // inside @edge-runtime/vm — see the module-doc explanation for why.
   // The build itself is the authoritative signal that jmespath does not
-  // break api/mcp.ts's edge bundle.
+  // break server/routes/mcp.ts's edge bundle.
   log(`Tier B: bundle built successfully (build-only check; see module doc)`);
 }
 

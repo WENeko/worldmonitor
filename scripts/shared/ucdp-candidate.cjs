@@ -141,7 +141,7 @@ function capWithAnnualFloor(sortedNewestFirst, isCandidate, maxEvents, annualFlo
   return picked.sort((a, b) => b.dateStart - a.dateStart);
 }
 
-// Content-age trio for seed-meta (api/health.js reads maxContentAgeMin's
+// Content-age trio for seed-meta (server/routes/health.js reads maxContentAgeMin's
 // presence as the opt-in signal and reports STALE_CONTENT when the newest event
 // is older than the budget).
 function candidateContentMeta(cappedNewestFirst) {

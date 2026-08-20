@@ -290,7 +290,7 @@ if (process.argv[1]?.endsWith('seed-recovery-fiscal-space.mjs')) {
     // 90d = 3× the 30-day cron interval per the health-maxstalemin-write-cadence
     // skill (rule: maxStaleMin = write_interval × 2-3). Bumped from 86400 (2×, at
     // project floor) to give extra margin against month-2 cron hiccups. Must also
-    // be mirrored in api/health.js for the alarm threshold to track.
+    // be mirrored in server/routes/health.js for the alarm threshold to track.
     maxStaleMin: 129600,
   }).catch((err) => {
     const _cause = err.cause ? ` (cause: ${err.cause.message || err.cause.code || err.cause})` : '';

@@ -39,7 +39,7 @@ const { fetchUserPreferences, extractUserContext, formatUserProfile } = require(
 const { fetchFollowedCountries } = require('./lib/followed-countries-fetch.cjs');
 const { Resend } = require('resend');
 const { normalizeResendSender } = require('./lib/resend-from.cjs');
-import { readRawJsonFromUpstash, redisPipeline } from '../api/_upstash-json.js';
+import { readRawJsonFromUpstash, redisPipeline } from '../server/routes/_upstash-json.js';
 import { classifyFeelGood } from '../server/_shared/feelgood-classifier.js';
 import { classifyEphemeralLiveCoverage } from '../shared/ephemeral-live-classifier.js';
 import { shouldDropOpinionTrack } from './lib/digest-opinion-track-filter.mjs';

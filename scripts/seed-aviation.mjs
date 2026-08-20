@@ -59,7 +59,7 @@ const INTL_KEY         = 'aviation:delays:intl:v3';
 const FAA_KEY          = 'aviation:delays:faa:v1';
 const NOTAM_KEY        = 'aviation:notam:closures:v2';
 const NEWS_KEY         = 'aviation:news::24:v1';
-// Page-load hydration aggregate. Health (api/health.js BOOTSTRAP_KEYS.flightDelays)
+// Page-load hydration aggregate. Health (server/routes/health.js BOOTSTRAP_KEYS.flightDelays)
 // reads STRLEN here, and its record count from BOOTSTRAP_META_KEY below — which
 // must be written from THIS payload, not from a contributing source's own count
 // (#6987). Historically only written as a 1800s RPC side-effect inside
@@ -105,7 +105,7 @@ function nonNegativeEnv(name, fallback, max = Number.POSITIVE_INFINITY) {
 const MAX_INTL_MIN_REFRESH_MIN = 60;
 const INTL_MIN_REFRESH_MIN = nonNegativeEnv('AVIATIONSTACK_MIN_REFRESH_MIN', 55, MAX_INTL_MIN_REFRESH_MIN);
 
-// health.js expects these exact meta keys (api/health.js:222,223,269)
+// health.js expects these exact meta keys (server/routes/health.js:222,223,269)
 const INTL_META_KEY  = 'seed-meta:aviation:intl';
 const FAA_META_KEY   = 'seed-meta:aviation:faa';
 const NOTAM_META_KEY = 'seed-meta:aviation:notam';
@@ -1229,7 +1229,7 @@ async function writeDelaysBootstrap(intlOverride) {
 // ─── Orchestration ───────────────────────────────────────────────────────────
 // runSeed's primary key = INTL (largest spend, most-consumed). FAA + NOTAM +
 // News are written as "extra keys" after the primary publish. Each has its own
-// seed-meta override that matches api/health.js expectations.
+// seed-meta override that matches server/routes/health.js expectations.
 
 // ─── Side-car seed runners ───────────────────────────────────────────────────
 // Each secondary data source (FAA, NOTAM, news) seeds INDEPENDENTLY of the
@@ -1284,7 +1284,7 @@ async function runNotamSideCar() {
       if (notam.quotaExhausted) {
         // ICAO quota exhausted ("Reach call limit") — preserve the last known
         // closure list by refreshing the data-key TTL + writing fresh meta
-        // with quotaExhausted=true. Keeps api/health.js (maxStaleMin: 240)
+        // with quotaExhausted=true. Keeps server/routes/health.js (maxStaleMin: 240)
         // green through the 24h backoff window. Matches pre-strip
         // ais-relay.cjs:2805-2808 byte-for-byte.
         try { await extendExistingTtl([NOTAM_KEY], NOTAM_TTL); } catch {}

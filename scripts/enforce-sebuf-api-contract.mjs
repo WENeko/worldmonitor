@@ -5,7 +5,7 @@
  * Every file under api/ must be one of:
  *   1. A sebuf gateway — api/<kebab-domain>/v<N>/[rpc].ts paired with a
  *      generated service_server under src/generated/server/worldmonitor/<snake_domain>/v<N>/.
- *   2. A listed entry in api/api-route-exceptions.json with category, reason,
+ *   2. A listed entry in server/routes/api-route-exceptions.json with category, reason,
  *      owner, and (for temporary categories) a removal_issue.
  *
  * Also checks the reverse: every generated service has a gateway unless it is
@@ -241,7 +241,7 @@ for (const absolute of candidateFiles) {
   const rel = relative(ROOT, absolute).split(sep).join('/');
 
   // Skip the manifest itself — it isn't an endpoint.
-  if (rel === 'api/api-route-exceptions.json') continue;
+  if (rel === 'server/routes/api-route-exceptions.json') continue;
 
   const gatewayMatch = rel.match(GATEWAY_RE);
   if (gatewayMatch) {
@@ -274,7 +274,7 @@ for (const absolute of candidateFiles) {
   violation(
     rel,
     'file under api/ is neither a sebuf gateway nor a listed exception',
-    'New JSON data APIs must be sebuf RPCs (proto → buf generate → handler). See docs/adding-endpoints.mdx. If this endpoint genuinely cannot be proto (external protocol, binary response, upstream proxy, ops plumbing), add an entry to api/api-route-exceptions.json — expect reviewer pushback.',
+    'New JSON data APIs must be sebuf RPCs (proto → buf generate → handler). See docs/adding-endpoints.mdx. If this endpoint genuinely cannot be proto (external protocol, binary response, upstream proxy, ops plumbing), add an entry to server/routes/api-route-exceptions.json — expect reviewer pushback.',
   );
 }
 

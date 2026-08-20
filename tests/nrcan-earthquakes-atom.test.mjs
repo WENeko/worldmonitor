@@ -486,7 +486,7 @@ describe('proto source/category fields (P1)', () => {
   });
 
   it('resticks MCP-Apps / stats so the natural-disasters shell is not USGS-only', () => {
-    const registry = readFileSync(resolve(here, '../api/mcp/ui/registry.ts'), 'utf8');
+    const registry = readFileSync(resolve(here, '../server/routes/mcp/ui/registry.ts'), 'utf8');
     assert.match(registry, /Earthquakes Canada \/ NRCan/);
     assert.doesNotMatch(registry, /groups recent earthquakes \(USGS magnitude, place, time\)/);
 

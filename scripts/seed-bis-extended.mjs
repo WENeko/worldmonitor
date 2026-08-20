@@ -20,7 +20,7 @@
  *   - TTL = 3 days ≥ 3× 12h cron interval
  *   - atomic publish + extras written via writeExtraKey
  *   - seed-meta written under seed-meta:economic:bis-extended (runSeed)
- *   - health maxStaleMin = 24h = 2× interval (see api/health.js)
+ *   - health maxStaleMin = 24h = 2× interval (see server/routes/health.js)
  */
 
 import { loadEnvFile, CHROME_UA, runSeed, writeExtraKey, extendExistingTtl, writeSeedMeta } from './_seed-utils.mjs';
@@ -96,7 +96,7 @@ export const KEYS = {
 // published fresh entries — so a DSR-only outage cleanly stales bisDsr in
 // health.js while leaving bisPropertyResidential / bisPropertyCommercial green.
 // The aggregate seed-meta:economic:bis-extended (written by runSeed) is kept
-// as a "seeder ran at all" signal in api/seed-health.js.
+// as a "seeder ran at all" signal in server/routes/seed-health.js.
 export const META_KEYS = {
   dsr: 'seed-meta:economic:bis-dsr',
   spp: 'seed-meta:economic:bis-property-residential',
@@ -435,7 +435,7 @@ export async function publishDatasetIndependently(key, payload, metaKey) {
       await writeExtraKey(key, payload, TTL);
       // Per-dataset seed-meta is written ONLY on a successful fresh write.
       // On the extend-TTL branch we deliberately do NOT refresh seed-meta —
-      // that is what lets api/health.js flag a stale per-dataset outage.
+      // that is what lets server/routes/health.js flag a stale per-dataset outage.
       if (metaKey) {
         await writeSeedMeta(key, payload.entries.length, metaKey).catch(() => {});
       }

@@ -8,7 +8,7 @@ import { monthIndex, monthPeriodEnd } from './jodi-demand-change.mjs';
  * runSeed's content-age hook passes `startMs`, a number
  * (`contentMeta(data, startMs)`, scripts/_seed-utils.mjs). Accepting only
  * `instanceof Date` made `jodiDatasetContentMeta` return null for every
- * runSeed-driven call, and api/health.js reads a null newestItemAt as
+ * runSeed-driven call, and server/routes/health.js reads a null newestItemAt as
  * STALE_CONTENT — so jodiGas and lngVulnerability were permanently stale
  * regardless of how current the file was (#6799).
  *

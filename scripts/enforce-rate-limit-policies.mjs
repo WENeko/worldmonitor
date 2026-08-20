@@ -13,11 +13,11 @@
  * (#3278) — the previous regex-parse implementation would silently break if
  * the source object literal was reformatted.
  *
- * PR #3821 r2: also resolves keys against api/api-route-exceptions.json so
- * top-level Vercel Edge Functions (e.g. /api/mcp-proxy, an external-protocol
+ * PR #3821 r2: also resolves keys against server/routes/api-route-exceptions.json so
+ * top-level Vercel Edge Functions (e.g. /server/routes/mcp-proxy, an external-protocol
  * exception that can't flow through the gateway) can register a policy and
  * enforce it in-handler via `checkScopedRateLimit` without becoming invisible
- * to this audit. Without this branch, /api/mcp-proxy would silently slip
+ * to this audit. Without this branch, /server/routes/mcp-proxy would silently slip
  * through future endpoint-coverage checks even though it has a live limit.
  *
  * Also validates three decision registries exported from rate-limit.ts:
@@ -44,7 +44,7 @@ import { parse as parseYaml } from 'yaml';
 const ROOT = new URL('..', import.meta.url).pathname;
 const OPENAPI_DIR = join(ROOT, 'docs/api');
 const RATE_LIMIT_SRC = join(ROOT, 'server/_shared/rate-limit.ts');
-const API_EXCEPTIONS = join(ROOT, 'api/api-route-exceptions.json');
+const API_EXCEPTIONS = join(ROOT, 'server/routes/api-route-exceptions.json');
 const RUNTIME_RATE_LIMIT_DIRS = ['server', 'api'].map((dir) => join(ROOT, dir));
 const RUNTIME_SOURCE_EXTENSIONS = new Set(['.js', '.cjs', '.mjs', '.ts', '.tsx']);
 
@@ -105,11 +105,11 @@ function extractRoutesFromOpenApi() {
 
 function extractEdgeFunctionRoutes() {
   // Top-level Vercel Edge Functions registered as non-proto exceptions in
-  // api/api-route-exceptions.json don't appear in docs/api/*.openapi.yaml
+  // server/routes/api-route-exceptions.json don't appear in docs/api/*.openapi.yaml
   // (no proto → no generated path). They can still register a rate-limit
   // policy that's enforced in-handler via `checkScopedRateLimit` — most
-  // notably /api/mcp-proxy (PR #3821 / #3805 review). Convert each exception
-  // file path (e.g. "api/mcp-proxy.ts") to its URL path ("/api/mcp-proxy")
+  // notably /server/routes/mcp-proxy (PR #3821 / #3805 review). Convert each exception
+  // file path (e.g. "server/routes/mcp-proxy.ts") to its URL path ("/server/routes/mcp-proxy")
   // and accept it as a legitimate policy target.
   const routes = new Set();
   let doc;
@@ -126,7 +126,7 @@ function extractEdgeFunctionRoutes() {
   for (const entry of exceptions) {
     const filePath = typeof entry?.path === 'string' ? entry.path : null;
     if (!filePath?.startsWith('api/')) continue;
-    // api/mcp-proxy.ts → /api/mcp-proxy ; api/oauth/token.ts → /api/oauth/token
+    // server/routes/mcp-proxy.ts → /server/routes/mcp-proxy ; api/oauth/token.ts → /api/oauth/token
     const urlPath = `/${filePath.replace(/\.(ts|js|tsx|jsx|mjs|cjs)$/i, '')}`;
     routes.add(urlPath);
   }
@@ -197,10 +197,10 @@ async function main() {
     console.error('  (a) a proto-generated RPC path that appears in docs/api/<Service>.openapi.yaml');
     console.error('      (gateway-enforced via checkEndpointRateLimit), OR');
     console.error('  (b) a top-level Vercel Edge Function registered in');
-    console.error('      api/api-route-exceptions.json (enforced in-handler via checkScopedRateLimit).');
+    console.error('      server/routes/api-route-exceptions.json (enforced in-handler via checkScopedRateLimit).');
     console.error('\nChecklist:');
     console.error('  1. The key matches the path in docs/api/<Service>.openapi.yaml exactly, OR');
-    console.error('     api/<that-key>.ts (or .js) is listed in api/api-route-exceptions.json.');
+    console.error('     api/<that-key>.ts (or .js) is listed in server/routes/api-route-exceptions.json.');
     console.error('  2. If you renamed the RPC in proto, update the policy key to match.');
     console.error('  3. If the policy is for a non-proto legacy route, remove it once that route is migrated.\n');
     console.error('Similar issues in history: review of #3242 flagged the sanctions-entity-search');

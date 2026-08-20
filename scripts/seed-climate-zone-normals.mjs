@@ -155,7 +155,7 @@ if (isMain) {
     sourceVersion: 'open-meteo-wmo-1991-2020-v1',
     declareRecords,
     schemaVersion: 1,
-    maxStaleMin: 89280, // matches api/health.js SEED_META (monthly cron on 1st; 62d window)
+    maxStaleMin: 89280, // matches server/routes/health.js SEED_META (monthly cron on 1st; 62d window)
   }).catch((err) => {
     const cause = err.cause ? ` (cause: ${err.cause.message || err.cause.code || err.cause})` : '';
     console.error('FATAL:', (err.message || err) + cause);

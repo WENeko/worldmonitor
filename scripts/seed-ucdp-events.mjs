@@ -369,7 +369,7 @@ async function main() {
 
   // Write seed-meta for health endpoint freshness tracking.
   // The content-age trio (newestItemAt/oldestItemAt/maxContentAgeMin) is the
-  // opt-in signal api/health.js reads to report STALE_CONTENT. Without it a
+  // opt-in signal server/routes/health.js reads to report STALE_CONTENT. Without it a
   // silently dead candidate merge is invisible: fetchedAt stays fresh and
   // recordCount stays full while the data itself falls back to the annual
   // release's ~7-month lag.

@@ -248,7 +248,7 @@
       "removal_issue": null
     },
     {
-      "path": "api/mcp/ui/registry.ts",
+      "path": "server/routes/mcp/ui/registry.ts",
       "category": "external-protocol",
       "reason": "MCP Apps (extension io.modelcontextprotocol/ui) ui:// resource registry + buildUiResourceRead + resources/list public-shape projection. Serves static, data-free HTML app shells whose shape is dictated by the MCP Apps spec (mimeType text/html;profile=mcp-app); linked from tools via _meta.ui.resourceUri. Same external-protocol constraint as the sibling resources/index.ts.",
       "owner": "@SebastienMelki",

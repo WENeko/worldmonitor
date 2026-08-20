@@ -41,7 +41,7 @@ const SOURCE_KEYS = [
 ];
 
 // Reject preserved contract envelopes after the same age budgets used by
-// api/health.js. runSeed deliberately extends last-good keys on an upstream
+// server/routes/health.js. runSeed deliberately extends last-good keys on an upstream
 // failure without advancing _seed.fetchedAt; without this gate, unwrapping the
 // envelope can revive stale observations and stamp them as new signals.
 const SOURCE_MAX_AGE_MIN = Object.freeze({

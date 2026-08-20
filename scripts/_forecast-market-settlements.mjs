@@ -15,7 +15,7 @@ const SETTLEMENT_TTL_SECONDS = 45 * 24 * 60 * 60;
 const SETTLEMENT_FETCH_CAP_PER_RUN = 10;
 
 // Health-monitoring companion for the settlement feed (AGENTS.md: Redis seed
-// scripts MUST write seed-meta:<key>). Registered in api/health.js SEED_META.
+// scripts MUST write seed-meta:<key>). Registered in server/routes/health.js SEED_META.
 export const MARKET_SETTLEMENT_META_KEY = 'seed-meta:prediction:markets-resolution';
 
 // Pure: extract a settled yesPrice (0-100) from a Gamma events-by-slug reply.

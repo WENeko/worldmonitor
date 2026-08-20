@@ -11,7 +11,7 @@ loadEnvFile(import.meta.url);
 
 const CANONICAL_KEY = 'climate:anomalies:v2';
 // 9h = 3× the 3h bundle cron cadence (seed-bundle-climate fires every 3h).
-// Co-pinned to api/health.js's `climateAnomalies.maxStaleMin: 540` so the
+// Co-pinned to server/routes/health.js's `climateAnomalies.maxStaleMin: 540` so the
 // data key survives at least until the alarm fires — no silent-EMPTY window
 // between TTL_DATA expiry and STALE_SEED trigger. The previous 10800 (3h)
 // equalled cron cadence exactly, so any cron jitter (1-3min normal Railway

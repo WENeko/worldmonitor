@@ -2,7 +2,7 @@
 //
 // This file is hand-authored but its PUBLIC SHAPE is mirrored verbatim in:
 //   - server/_shared/seed-envelope.ts  (imported from server/**/*.ts and scripts/**/*.mjs)
-//   - api/_seed-envelope.js            (imported from api/*.js — edge-safe, per AGENTS.md
+//   - server/routes/_seed-envelope.js            (imported from api/*.js — edge-safe, per AGENTS.md
 //                                       forbidding api/ → server/ imports)
 //
 // Parity is enforced by scripts/verify-seed-envelope-parity.mjs and covered by a

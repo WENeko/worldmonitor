@@ -424,7 +424,7 @@ if (process.argv[1]?.endsWith('seed-education-attainment.mjs')) {
     emptyDataIsFailure: true,
     declareRecords,
     schemaVersion: 1,
-    // 8 days, matching the api/health.js budget for this key and sitting well
+    // 8 days, matching the server/routes/health.js budget for this key and sitting well
     // inside the 35-day CACHE_TTL. The invariant (enforced by
     // tests/seed-ttl-outlives-staleness-fleet.test.mjs) is that the data key
     // must OUTLIVE its staleness gate: if the gate is longer than the TTL,

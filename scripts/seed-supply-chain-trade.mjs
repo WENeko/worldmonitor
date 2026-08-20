@@ -782,7 +782,7 @@ export async function fetchTradeFlows() {
     flows,
     //
     // The run counters ride here rather than in seed-meta's `coverage` field.
-    // api/health.js parses that field with the consumer-prices page/retailer
+    // server/routes/health.js parses that field with the consumer-prices page/retailer
     // schema, so a differently-shaped object is published as an all-zero
     // completedPages/failedPages block — a misleading operator signal, which is
     // the failure class this issue exists to remove. Health gets the number it
@@ -920,7 +920,7 @@ export async function publishTradeFlows({ flows, manifest }) {
     }
   }
   // recordCount is the number of pairs actually IN Redis, which is what
-  // api/health.js compares against its minRecordCount floor. Deliberately no
+  // server/routes/health.js compares against its minRecordCount floor. Deliberately no
   // `coverage` argument — see the manifest comment in fetchTradeFlows.
   //
   // A run that landed NOTHING must not stamp a fresh timestamp over the last

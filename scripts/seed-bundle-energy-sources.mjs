@@ -11,7 +11,7 @@ await runBundle('energy-sources', [
   { label: 'EIA-Petroleum', script: 'seed-eia-petroleum.mjs', seedMetaKey: 'energy:eia-petroleum', canonicalKey: 'energy:eia-petroleum:v1', intervalMs: DAY, timeoutMs: 90_000 },
   { label: 'IEA-Crisis-Policies', script: 'seed-energy-crisis-policies.mjs', seedMetaKey: 'energy:crisis-policies', canonicalKey: 'energy:crisis-policies:v1', intervalMs: 7 * DAY, timeoutMs: 120_000 },
   // SPR-Policies: static registry (data lives in scripts/data/spr-policies.json), TTL 400d
-  // in api/health.js (maxStaleMin: 576000). Weekly cadence is generous — only needs to run
+  // in server/routes/health.js (maxStaleMin: 576000). Weekly cadence is generous — only needs to run
   // once after deploys + restarts to populate energy:spr-policies:v1. No prior Railway
   // service exists for it, so health has been EMPTY (seedAgeMin: null) since the seeder
   // was added.

@@ -29,7 +29,7 @@ const FSI_EU_KEY = 'economic:fsi-eu:v1';
 const FSI_EU_TTL = 259200;
 // Health staleness budgets:
 //  - maxStaleMin 5760 (96h) tracks SEEDER liveness — covers an Easter Wed→Mon
-//    gap on the daily cron. Mirrored in api/health.js SEED_META.euFsi.
+//    gap on the daily cron. Mirrored in server/routes/health.js SEED_META.euFsi.
 //  - CISS_MAX_CONTENT_AGE_MIN (14 days) tracks DATA freshness via the
 //    content-age contract: if the NEW series ever freezes the way SS_CI did,
 //    /api/health flips to STALE_CONTENT instead of staying green for a year.
@@ -156,7 +156,7 @@ if (isMain) {
     sourceVersion: 'ecb-ciss-sdmx-v1',
     declareRecords,
     schemaVersion: 1,
-    maxStaleMin: 5760, // 4 days — matches api/health.js SEED_META threshold
+    maxStaleMin: 5760, // 4 days — matches server/routes/health.js SEED_META threshold
     contentMeta: cissContentMeta,
     maxContentAgeMin: CISS_MAX_CONTENT_AGE_MIN,
   }).catch((err) => {

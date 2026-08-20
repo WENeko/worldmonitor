@@ -167,8 +167,8 @@
     "watchPatterns": [
       ".dockerignore",
       "Dockerfile.digest-notifications",
-      "api/_seed-envelope.js",
-      "api/_upstash-json.js",
+      "server/routes/_seed-envelope.js",
+      "server/routes/_upstash-json.js",
       "scripts/_digest-markdown.mjs",
       "scripts/clear-delivered-entry.mjs",
       "scripts/lib/_upstash-pipeline.mjs",

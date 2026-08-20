@@ -291,7 +291,7 @@ async function main() {
   //   1. persisted > 0 && failed === 0: write the fresh summary + seed-meta.
   //   2. persisted === 0 && failed === 0: all regions dedup-skipped (e.g., a
   //      retry within the 15min idempotency bucket). Preserve the prior good
-  //      summary by skipping the write entirely. api/health.js classifies an
+  //      summary by skipping the write entirely. server/routes/health.js classifies an
   //      empty `regions: []` + `recordCount: 0` as EMPTY_DATA which flips the
   //      overall health to red, so overwriting on a no-op retry is actively
   //      harmful. The 12h maxStaleMin budget lets the next full run refresh

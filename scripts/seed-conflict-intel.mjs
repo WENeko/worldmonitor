@@ -63,7 +63,7 @@ const ACLED_API_URL = 'https://acleddata.com/api/acled/read';
 const ACLED_CACHE_KEY = 'conflict:acled:v1:all:0:0';
 const ACLED_RESOLUTION_CACHE_KEY = 'conflict:acled-resolution:v1:all:0:0';
 // Data TTL for the conflict-events key. MUST outlive health's staleness threshold
-// for acledIntel (maxStaleMin 38 in api/health.js), or the key expires BEFORE
+// for acledIntel (maxStaleMin 38 in server/routes/health.js), or the key expires BEFORE
 // STALE_SEED can fire and a merely-late seeder reports as an EMPTY crit — while
 // consumers of the forecast EMA input get nothing at all.
 //
@@ -83,7 +83,7 @@ const ACLED_RESOLUTION_MAX_PAGES = 20;
 const ACLED_PAGE_DELAY_MS = 250;
 const HAPI_CACHE_KEY_PREFIX = 'conflict:humanitarian:v1';
 const HAPI_TTL = 21600;
-// api/health.js's SEED_META entry for this family reads ONE aggregate key
+// server/routes/health.js's SEED_META entry for this family reads ONE aggregate key
 // (seed-meta:conflict:humanitarian), not the per-country seed-meta keys
 // writeExtraKeyWithMeta derives per HAPI_CACHE_KEY_PREFIX write below — those
 // don't share a common non-country-specific prefix writeSeedMeta could roll up
@@ -1065,7 +1065,7 @@ export async function fetchAll({
   // (runSeed calls process.exit after primary write).
   if (ha && Object.keys(ha).length > 0) {
     for (const [cc, data] of Object.entries(ha)) await writeExtraKeyWithMeta(`${HAPI_CACHE_KEY_PREFIX}:${cc}`, data, HAPI_TTL, 1);
-    // Aggregate marker for api/health.js — STANDALONE_KEYS.humanitarianSummary STRLENs
+    // Aggregate marker for server/routes/health.js — STANDALONE_KEYS.humanitarianSummary STRLENs
     // this exact bare key (no country suffix) and SEED_META.humanitarianSummary reads
     // its seed-meta; the per-country writes above don't give either check anything to
     // read (they're all suffixed :<CC>, and writeExtraKeyWithMeta's auto-derived

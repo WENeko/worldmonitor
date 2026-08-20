@@ -51,7 +51,7 @@ export const INVENTORY_CONTRACTS = Object.freeze([
     surface('tests/mcp.test.mjs', ['body.result.tools', 'TOOL_REGISTRY']),
     surface('tests/mcp-resources.test.mjs', ['uiUris', 'listedUiUris']),
   ]),
-  contract('llms-mcp-tools', 'api/mcp/registry tool names and public discovery citations', ['named-member', 'parity'], 'replace', 'Registry-to-citation parity plus named critical tools replaces an arbitrary floor.', [
+  contract('llms-mcp-tools', 'server/routes/mcp/registry tool names and public discovery citations', ['named-member', 'parity'], 'replace', 'Registry-to-citation parity plus named critical tools replaces an arbitrary floor.', [
     surface('tests/llms-txt-mcp-tools.test.mjs', ['registry']),
   ]),
   contract('openapi-server-specs', 'generated per-service OpenAPI JSON/YAML files', ['parity'], 'replace', 'Exact JSON/YAML sibling and per-spec server coverage protects the full discovered universe.', [

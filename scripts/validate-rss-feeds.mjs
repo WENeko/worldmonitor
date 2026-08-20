@@ -4,8 +4,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { XMLParser } from 'fast-xml-parser';
-import { isAllowedDomain } from '../api/_rss-allowed-domain-match.js';
-import { RSS_BROWSER_UA, RSS_ACCEPT } from '../api/_rss-fetch-headers.js';
+import { isAllowedDomain } from '../server/routes/_rss-allowed-domain-match.js';
+import { RSS_BROWSER_UA, RSS_ACCEPT } from '../server/routes/_rss-fetch-headers.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FEEDS_PATH = join(__dirname, '..', 'src', 'config', 'feeds.ts');
@@ -37,7 +37,7 @@ const CONFIG_DRIFT_REASONS = Object.freeze({
 // because PR contributors can rewrite feeds.ts to make GitHub runners hit
 // arbitrary URLs (SSRF surface). In CI mode:
 //   1. Reject non-https schemes (no plaintext, no file:// etc.)
-//   2. Reject hosts that don't pass api/_rss-allowed-domain-match.js
+//   2. Reject hosts that don't pass server/routes/_rss-allowed-domain-match.js
 //      isAllowedDomain (same www-normalized check the Edge proxy enforces)
 //   3. Refuse to follow cross-host redirects (manual redirect handling per
 //      hop with allowlist re-check)
@@ -165,7 +165,7 @@ function assertCiAllowed(rawUrl) {
 async function fetchFeed(url) {
   if (CI_MODE) {
     // Manual per-hop redirect handling: every hop must satisfy the same
-    // https + allowlist gates. Mirrors api/rss-proxy.js redirect re-check.
+    // https + allowlist gates. Mirrors server/routes/rss-proxy.js redirect re-check.
     // Per-hop timer (NOT a shared budget across hops) — each hop gets the
     // full FETCH_TIMEOUT so "Timeout (15s)" in the report means a real
     // 15s on a single network call, not 17s+ aggregated across a chain.
@@ -389,8 +389,8 @@ async function main() {
       `(allowlist drift or plaintext URL). Fix src/config/feeds.ts and/or the 4 ` +
       `allowlist mirrors (shared/rss-allowed-domains.json, .cjs, ` +
       `scripts/shared/rss-allowed-domains.json, ` +
-      `api/_rss-allowed-domains.js). vite.config.ts now imports isAllowedDomain ` +
-      `from api/_rss-allowed-domain-match.js — no separate dev mirror to sync.`
+      `server/routes/_rss-allowed-domains.js). vite.config.ts now imports isAllowedDomain ` +
+      `from server/routes/_rss-allowed-domain-match.js — no separate dev mirror to sync.`
     );
     process.exit(1);
   }

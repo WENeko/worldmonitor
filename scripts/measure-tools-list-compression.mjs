@@ -24,7 +24,7 @@ import {
   TOOL_DESCRIPTION_MAX_BYTES,
   utf8ByteLength,
   buildPublicTool,
-} from '../api/mcp.ts';
+} from '../server/routes/mcp.ts';
 
 // Re-import the module to reach TOOL_REGISTRY indirectly via the public
 // tools/list call. We don't export TOOL_REGISTRY; the round-trip through
@@ -36,7 +36,7 @@ process.env.WORLDMONITOR_VALID_KEYS = 'wm_measure_key';
 delete process.env.UPSTASH_REDIS_REST_URL;
 delete process.env.UPSTASH_REDIS_REST_TOKEN;
 
-const mcpMod = await import('../api/mcp.ts');
+const mcpMod = await import('../server/routes/mcp.ts');
 
 async function fetchToolsList() {
   const req = new Request('https://worldmonitor.app/mcp', {
@@ -101,7 +101,7 @@ const out = [
   `| **Total tools/list envelope** | ${fmt(v14Bytes)} | ${fmt(v15Bytes)} | **${reduction}%** |`,
   `| Tool descriptions (38 / 39) | ${fmt(v14ToolDescBytes)} | ${fmt(v15ToolDescBytes)} | ${Math.round(((v14ToolDescBytes - v15ToolDescBytes) / v14ToolDescBytes) * 100)}% |`,
   '',
-  `Measurement: \`utf8ByteLength(JSON.stringify(envelope))\` — same helper that gates JMESPath output (api/mcp.ts:utf8ByteLength), so reported numbers match the runtime contract.`,
+  `Measurement: \`utf8ByteLength(JSON.stringify(envelope))\` — same helper that gates JMESPath output (server/routes/mcp.ts:utf8ByteLength), so reported numbers match the runtime contract.`,
   '',
   `Cap: \`TOOL_DESCRIPTION_MAX_BYTES = ${TOOL_DESCRIPTION_MAX_BYTES}\`. Property descriptions intentionally NOT compressed in v1.5.0 (audit found 53% encode contract details).`,
 ];
