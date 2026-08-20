@@ -1,4 +1,4 @@
-import { cp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -119,7 +119,7 @@ function routeMatches(pattern, pathname) {
 }
 
 function findRoute(pathname) {
-  const apiPath = pathname.replace(/^\\/api(?=\\/|$)/, '') || '/';
+  const apiPath = pathname.replace(/^\\/api(?=\\/$|\\/)/, '') || '/';
   return routePatterns.find(({ pattern }) => routeMatches(pattern, apiPath));
 }
 
@@ -225,11 +225,20 @@ async function main() {
     throw new Error(`${relative(root, stagingDir)} already exists; refusing to overwrite a previous staging tree`);
   }
 
-  await cp(apiDir, stagingDir, { recursive: true });
-  for (const entry of await readdir(apiDir, { withFileTypes: true })) {
-    if (entry.name === 'index.ts' || entry.name.startsWith('_')) continue;
-    await rm(join(apiDir, entry.name), { recursive: true, force: true });
+  // Only move actual route files to .vercel-api-routes/, leaving non-route
+  // library files (api/mcp/, api/internal/, api/skills/, etc.) in place
+  // so build scripts can still import them directly.
+  await mkdir(stagingDir, { recursive: true });
+
+  for (const { relativePath } of routes) {
+    const src = join(apiDir, relativePath);
+    const dest = join(stagingDir, relativePath);
+    const destDir = dirname(dest);
+    await mkdir(destDir, { recursive: true });
+    await cp(src, dest);
+    await rm(src, { recursive: true, force: true });
   }
+
   await writeFile(generatedIndex, renderIndex(routes));
 
   console.log(`[prepare-vercel] staged ${routes.length} routes behind api/index.ts`);
