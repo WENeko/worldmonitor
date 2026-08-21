@@ -254,8 +254,15 @@ async function main() {
   if (!(await stat(apiDir).catch(() => null))) {
     throw new Error('api/ directory is missing; the canonical repository layout is required');
   }
+  // --force regenerates an existing deployment branch in place: drop the
+  // previous generated entry point and staging tree first so the transform is
+  // idempotent (upstream itself ships an api/index.ts dynamic router that the
+  // generated static import map must replace).
   if (await stat(generatedIndex).catch(() => null)) {
-    throw new Error('api/index.ts already exists; remove the generated deployment artifact before preparing again');
+    if (!force) {
+      throw new Error('api/index.ts already exists; remove the generated deployment artifact before preparing again (or use --force)');
+    }
+    await rm(generatedIndex, { force: true });
   }
 
   const files = await collectFiles(apiDir);
@@ -274,7 +281,10 @@ async function main() {
   }
 
   if (await stat(stagingDir).catch(() => null)) {
-    throw new Error(`${relative(root, stagingDir)} already exists; refusing to overwrite a previous staging tree`);
+    if (!force) {
+      throw new Error(`${relative(root, stagingDir)} already exists; refusing to overwrite a previous staging tree (or use --force)`);
+    }
+    await rm(stagingDir, { recursive: true, force: true });
   }
 
   // Stage the ENTIRE api/ tree (except test files) into .vercel-api-routes/ at
