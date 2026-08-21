@@ -1,4 +1,5 @@
 import { cp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadManifest, runSourceAttribution, scanUpstreamHosts } from './source-attribution.mjs';
@@ -250,6 +251,27 @@ function refreshSourceAttribution() {
   return retireHosts.length;
 }
 
+// Vercel discovers functions from api/ before the build command runs, so the
+// route modules moved out of api/ are no longer reachable through the specific
+// rewrites in vercel.json (e.g. /ask -> /api/ask). Point every /api/<route>
+// rewrite destination at the single generated index.ts instead, carrying the
+// route through __wm_route so requestUrl() can dispatch it. api/mcp.ts stays a
+// real function, so /api/mcp keeps its direct destination.
+function rewriteVercelDestinations() {
+  const vercelPath = join(root, 'vercel.json');
+  const raw = readFileSync(vercelPath, 'utf8');
+  const rewritten = raw.replace(
+    /("destination":\s*"\/api\/)([^"?]+)(\?[^"]*)?(")/g,
+    (match, prefix, route, query, suffix) => {
+      if (route === 'index') return match;
+      if (route === 'mcp' && !query) return match;
+      const queryPart = query ? `&${query.slice(1)}` : '';
+      return `${prefix}index?__wm_route=${route}${queryPart}${suffix}`;
+    },
+  );
+  if (rewritten !== raw) writeFileSync(vercelPath, rewritten);
+}
+
 async function main() {
   if (!(await stat(apiDir).catch(() => null))) {
     throw new Error('api/ directory is missing; the canonical repository layout is required');
@@ -310,6 +332,7 @@ async function main() {
   const retiredCount = refreshSourceAttribution();
 
   await writeFile(generatedIndex, renderIndex(routes));
+  rewriteVercelDestinations();
 
   const stagedCount = files.filter((relativePath) => !staysInApi(relativePath)).length;
   console.log(
