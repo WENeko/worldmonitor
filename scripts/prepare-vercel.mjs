@@ -32,6 +32,13 @@ function staysInApi(relativePath) {
   if (fileName.startsWith('_')) return true;
   if (/\.(test|spec)\./.test(relativePath)) return true;
   if (!isCodeFile(relativePath)) return true;
+  // api/mcp.ts must stay a real function: vercel.json rewrites /mcp and
+  // /.well-known/mcp -> /api/mcp, which resolve to the function directly
+  // (rewrite destinations are not re-routed through the /api/(.*) rewrite).
+  // It is also a material source for the /mcp URL in build:sitemap's static
+  // manifest, so removing it fails build:sitemap. Keeping it adds exactly one
+  // extra function (2 total), still far under the free-plan limit.
+  if (relativePath === 'mcp.ts') return true;
   return false;
 }
 
