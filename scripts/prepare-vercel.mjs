@@ -316,6 +316,29 @@ function patchDocsStatsReadFallback() {
   writeFileSync(docsStatsPath, raw.replace(marker, fallback));
 }
 
+// The repo's .gitignore ignores internal/ and skills/ directories anywhere in
+// the tree (api/internal and api/skills are re-included explicitly). The staged
+// route tree mirrors those directories at .vercel-api-routes/internal and
+// .vercel-api-routes/skills, which would otherwise be ignored and left out of
+// the deploy branch commit. Re-include them the same way upstream re-includes
+// their api/ counterparts so the generated api/index.ts routes keep resolving.
+function allowStagedGitignoreExceptions() {
+  const gitignorePath = join(root, '.gitignore');
+  const raw = readFileSync(gitignorePath, 'utf8');
+  if (raw.includes('!.vercel-api-routes/internal/')) return; // already added
+  const block = [
+    '',
+    '# Vercel single-function deploy branch: the staged route tree mirrors api/,',
+    '# so internal/ and skills/ endpoints stay tracked under .vercel-api-routes/.',
+    '!.vercel-api-routes/internal/',
+    '!.vercel-api-routes/internal/*',
+    '!.vercel-api-routes/skills/',
+    '!.vercel-api-routes/skills/*',
+    '',
+  ].join('\n');
+  writeFileSync(gitignorePath, raw.replace(/\s*$/, '\n') + block);
+}
+
 async function main() {
   if (!(await stat(apiDir).catch(() => null))) {
     throw new Error('api/ directory is missing; the canonical repository layout is required');
@@ -376,6 +399,7 @@ async function main() {
   rewriteMcpEntryImports();
   await keepEmptyMcpDir();
   patchDocsStatsReadFallback();
+  allowStagedGitignoreExceptions();
 
   const retiredCount = refreshSourceAttribution();
 
