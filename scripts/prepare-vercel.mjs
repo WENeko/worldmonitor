@@ -39,15 +39,11 @@ function staysInApi(relativePath) {
   // It is also a material source for the /mcp URL in build:sitemap's static
   // manifest, so removing it fails build:sitemap.
   if (relativePath === 'mcp.ts') return true;
-  // The api/mcp/ implementation tree must stay in place: it is statically
-  // imported at build time by scripts/generate-public-product-facts.mjs
-  // (api/mcp/registry/index.ts), read by scripts/docs-stats.mjs (ui/*.ts and
-  // registry/*-tools.ts), and imported at runtime by api/mcp.ts itself. The
-  // files are ALSO copied into .vercel-api-routes/ because a few moved route
-  // modules (a2a.ts, user/mcp-quota.ts) import them through ./mcp/* relative
-  // paths. Only api/mcp/handler.ts has a default export, so keeping the tree
-  // adds at most that one extra function — still far under the free-plan limit.
-  if (relativePath.startsWith('mcp/')) return true;
+  // The api/mcp/ implementation tree moves into .vercel-api-routes/mcp/ so
+  // Vercel doesn't count every nested .ts file as a separate function (the
+  // free plan is limited to 12). api/mcp.ts imports are rewritten to point
+  // at the staged tree and generate-public-product-facts.mjs is patched to
+  // dynamically import from .vercel-api-routes/ instead.
   return false;
 }
 
@@ -294,10 +290,10 @@ function rewriteBuildCommand() {
   if (rewritten !== raw) writeFileSync(vercelPath, rewritten);
 }
 
-// docs-stats (used by inventory:facts in postinstall) reads api/bootstrap.js and
-// api/health.js, which are route files and move into .vercel-api-routes/. (The
-// api/mcp/* files it also reads stay in place.) Add a fallback in its read()
-// helper so the moved reads resolve against the staged tree.
+// docs-stats (used by inventory:facts in postinstall) reads api/bootstrap.js,
+// api/health.js, and api/mcp/* files, all of which move into .vercel-api-routes/.
+// Add a fallback in its read() helper so the moved reads resolve against the
+// staged tree.
 function patchDocsStatsReadFallback() {
   const docsStatsPath = join(root, 'scripts', 'docs-stats.mjs');
   const raw = readFileSync(docsStatsPath, 'utf8');
@@ -326,6 +322,49 @@ function patchDocsStatsReadFallback() {
 // .vercel-api-routes/skills, which would otherwise be ignored and left out of
 // the deploy branch commit. Re-include them the same way upstream re-includes
 // their api/ counterparts so the generated api/index.ts routes keep resolving.
+// api/mcp.ts imports its implementation from ./mcp/handler, ./mcp/auth, etc.
+// After the mcp/ tree moves into .vercel-api-routes/mcp/, rewrite those imports
+// to point at the staged tree so the /mcp endpoint keeps working at runtime.
+function rewriteMcpEntryImports() {
+  const mcpTsPath = join(apiDir, 'mcp.ts');
+  const raw = readFileSync(mcpTsPath, 'utf8');
+  const rewritten = raw.replace(
+    /(from\s+)(['"])\.\/mcp\//g,
+    '$1$2../.vercel-api-routes/mcp/',
+  );
+  if (rewritten !== raw) writeFileSync(mcpTsPath, rewritten);
+}
+
+// generate-public-product-facts.mjs statically imports from api/mcp/registry/index.ts.
+// After mcp/ moves into .vercel-api-routes/, change the import to use a dynamic
+// import with fallback (the .vercel-api-routes/ path on the deploy branch, the
+// api/ path on main for `npm run product:facts` during development).
+function patchProductFactsImport() {
+  const factsPath = join(root, 'scripts', 'generate-public-product-facts.mjs');
+  const raw = readFileSync(factsPath, 'utf8');
+  const marker = "import { TOOL_REGISTRY, toolAccess } from '../api/mcp/registry/index.ts';";
+  if (!raw.includes(marker)) return; // already patched or upstream changed
+  const replacement = [
+    '// import { TOOL_REGISTRY, toolAccess } from \'../api/mcp/registry/index.ts\';',
+    "const mcpRegistryRoot = join(dirname(fileURLToPath(import.meta.url)), '..');",
+    "const mcpRegistryAbsPath = join(mcpRegistryRoot, '.vercel-api-routes/mcp/registry/index.ts');",
+    "const mcpRegistryPath = existsSync(mcpRegistryAbsPath)",
+    "  ? '../.vercel-api-routes/mcp/registry/index.ts'",
+    "  : '../api/mcp/registry/index.ts';",
+    'const { TOOL_REGISTRY, toolAccess } = await import(mcpRegistryPath);',
+  ].join('\n');
+  writeFileSync(factsPath, raw.replace(marker, replacement));
+}
+
+// build:sitemap's static manifest requires api/mcp/ to exist as a material
+// source directory. Keep an empty directory with a .gitkeep so the check
+// passes without Vercel counting nested files as functions.
+function createEmptyMcpDir() {
+  const mcpDir = join(apiDir, 'mcp');
+  mkdir(mcpDir, { recursive: true }).catch(() => {});
+  writeFileSync(join(mcpDir, '.gitkeep'), '');
+}
+
 function allowStagedGitignoreExceptions() {
   const gitignorePath = join(root, '.gitignore');
   const raw = readFileSync(gitignorePath, 'utf8');
@@ -401,7 +440,10 @@ async function main() {
   }
 
   patchDocsStatsReadFallback();
+  rewriteMcpEntryImports();
+  patchProductFactsImport();
   allowStagedGitignoreExceptions();
+  createEmptyMcpDir();
 
   const retiredCount = refreshSourceAttribution();
 
