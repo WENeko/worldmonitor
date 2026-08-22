@@ -308,7 +308,7 @@ function patchDocsStatsReadFallback() {
     // .vercel-api-routes/ (same depth). Resolve api/* reads that moved there so
     // inventory:facts still works during postinstall.
     if (error?.code === 'ENOENT' && p.startsWith('api/')) {
-      return readFileSync(join(rootOf(), '.vercel-api-routes', p), 'utf8');
+      return readFileSync(join(rootOf(), '.vercel-api-routes', p.slice('api/'.length)), 'utf8');
     }
     throw error;
   }
