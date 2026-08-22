@@ -37,9 +37,17 @@ function staysInApi(relativePath) {
   // /.well-known/mcp -> /api/mcp, which resolve to the function directly
   // (rewrite destinations are not re-routed through the /api/(.*) rewrite).
   // It is also a material source for the /mcp URL in build:sitemap's static
-  // manifest, so removing it fails build:sitemap. Keeping it adds exactly one
-  // extra function (2 total), still far under the free-plan limit.
+  // manifest, so removing it fails build:sitemap.
   if (relativePath === 'mcp.ts') return true;
+  // The api/mcp/ implementation tree must stay in place: it is statically
+  // imported at build time by scripts/generate-public-product-facts.mjs
+  // (api/mcp/registry/index.ts), read by scripts/docs-stats.mjs (ui/*.ts and
+  // registry/*-tools.ts), and imported at runtime by api/mcp.ts itself. The
+  // files are ALSO copied into .vercel-api-routes/ because a few moved route
+  // modules (a2a.ts, user/mcp-quota.ts) import them through ./mcp/* relative
+  // paths. Only api/mcp/handler.ts has a default export, so keeping the tree
+  // adds at most that one extra function — still far under the free-plan limit.
+  if (relativePath.startsWith('mcp/')) return true;
   return false;
 }
 
@@ -285,28 +293,10 @@ function rewriteBuildCommand() {
   if (rewritten !== raw) writeFileSync(vercelPath, rewritten);
 }
 
-// api/mcp.ts stays a real Vercel function (see staysInApi), but its ./mcp/*
-// implementation files are staged into .vercel-api-routes/mcp/. Rewrite its
-// relative imports so the edge entry still resolves at runtime.
-function rewriteMcpEntryImports() {
-  const mcpEntry = join(apiDir, 'mcp.ts');
-  const raw = readFileSync(mcpEntry, 'utf8');
-  const rewritten = raw.replace(/from '\.\/mcp\//g, "from '../.vercel-api-routes/mcp/");
-  if (rewritten !== raw) writeFileSync(mcpEntry, rewritten);
-}
-
-// build:sitemap lists `api/mcp` as a material source for the /mcp URL and
-// asserts the path exists. Keep an empty api/mcp directory (a dotfile is not a
-// Vercel function) so that check passes after the route files are staged out.
-async function keepEmptyMcpDir() {
-  await mkdir(join(apiDir, 'mcp'), { recursive: true });
-  await writeFile(join(apiDir, 'mcp', '.gitkeep'), '');
-}
-
-// docs-stats (used by inventory:facts in postinstall) reads several api/ files:
-// api/mcp/ui/registry.ts, api/mcp/ui/shell.ts, api/mcp/registry/{rpc,cache}-tools.ts,
-// api/bootstrap.js and api/health.js. Those move into .vercel-api-routes/. Add a
-// fallback in its read() helper so those reads resolve against the staged tree.
+// docs-stats (used by inventory:facts in postinstall) reads api/bootstrap.js and
+// api/health.js, which are route files and move into .vercel-api-routes/. (The
+// api/mcp/* files it also reads stay in place.) Add a fallback in its read()
+// helper so the moved reads resolve against the staged tree.
 function patchDocsStatsReadFallback() {
   const docsStatsPath = join(root, 'scripts', 'docs-stats.mjs');
   const raw = readFileSync(docsStatsPath, 'utf8');
@@ -409,8 +399,6 @@ async function main() {
     }
   }
 
-  rewriteMcpEntryImports();
-  await keepEmptyMcpDir();
   patchDocsStatsReadFallback();
   allowStagedGitignoreExceptions();
 
