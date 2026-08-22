@@ -19,7 +19,13 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PRODUCT_CATALOG, PUBLIC_PRODUCT_METADATA } from '../convex/config/productCatalog.ts';
-import { TOOL_REGISTRY, toolAccess } from '../api/mcp/registry/index.ts';
+// import { TOOL_REGISTRY, toolAccess } from '../api/mcp/registry/index.ts';
+const mcpRegistryRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+const mcpRegistryAbsPath = join(mcpRegistryRoot, '.vercel-api-routes/mcp/registry/index.ts');
+const mcpRegistryPath = existsSync(mcpRegistryAbsPath)
+  ? '../.vercel-api-routes/mcp/registry/index.ts'
+  : '../api/mcp/registry/index.ts';
+const { TOOL_REGISTRY, toolAccess } = await import(mcpRegistryPath);
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CHECK = process.argv.includes('--check');

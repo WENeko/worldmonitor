@@ -25,7 +25,20 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 // can never observe the probe. null means the real ROOT.
 let rootOverride = null;
 const rootOf = () => rootOverride ?? ROOT;
-const read = (p) => readFileSync(join(rootOf(), p), 'utf8');
+const read = (p) => {
+  const primary = join(rootOf(), p);
+  try {
+    return readFileSync(primary, 'utf8');
+  } catch (error) {
+    // Vercel single-function deploy branch: api/ route modules are staged into
+    // .vercel-api-routes/ (same depth). Resolve api/* reads that moved there so
+    // inventory:facts still works during postinstall.
+    if (error?.code === 'ENOENT' && p.startsWith('api/')) {
+      return readFileSync(join(rootOf(), '.vercel-api-routes', p.slice('api/'.length)), 'utf8');
+    }
+    throw error;
+  }
+};
 const dirsIn = (p) =>
   readdirSync(join(rootOf(), p), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
 const filesIn = (p) =>
