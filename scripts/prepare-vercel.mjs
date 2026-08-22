@@ -272,6 +272,50 @@ function rewriteVercelDestinations() {
   if (rewritten !== raw) writeFileSync(vercelPath, rewritten);
 }
 
+// api/mcp.ts stays a real Vercel function (see staysInApi), but its ./mcp/*
+// implementation files are staged into .vercel-api-routes/mcp/. Rewrite its
+// relative imports so the edge entry still resolves at runtime.
+function rewriteMcpEntryImports() {
+  const mcpEntry = join(apiDir, 'mcp.ts');
+  const raw = readFileSync(mcpEntry, 'utf8');
+  const rewritten = raw.replace(/from '\.\/mcp\//g, "from '../.vercel-api-routes/mcp/");
+  if (rewritten !== raw) writeFileSync(mcpEntry, rewritten);
+}
+
+// build:sitemap lists `api/mcp` as a material source for the /mcp URL and
+// asserts the path exists. Keep an empty api/mcp directory (a dotfile is not a
+// Vercel function) so that check passes after the route files are staged out.
+async function keepEmptyMcpDir() {
+  await mkdir(join(apiDir, 'mcp'), { recursive: true });
+  await writeFile(join(apiDir, 'mcp', '.gitkeep'), '');
+}
+
+// docs-stats (used by inventory:facts in postinstall) reads several api/ files:
+// api/mcp/ui/registry.ts, api/mcp/ui/shell.ts, api/mcp/registry/{rpc,cache}-tools.ts,
+// api/bootstrap.js and api/health.js. Those move into .vercel-api-routes/. Add a
+// fallback in its read() helper so those reads resolve against the staged tree.
+function patchDocsStatsReadFallback() {
+  const docsStatsPath = join(root, 'scripts', 'docs-stats.mjs');
+  const raw = readFileSync(docsStatsPath, 'utf8');
+  const marker = "const read = (p) => readFileSync(join(rootOf(), p), 'utf8');";
+  if (!raw.includes(marker)) return; // already patched, or upstream changed the helper
+  const fallback = `const read = (p) => {
+  const primary = join(rootOf(), p);
+  try {
+    return readFileSync(primary, 'utf8');
+  } catch (error) {
+    // Vercel single-function deploy branch: api/ route modules are staged into
+    // .vercel-api-routes/ (same depth). Resolve api/* reads that moved there so
+    // inventory:facts still works during postinstall.
+    if (error?.code === 'ENOENT' && p.startsWith('api/')) {
+      return readFileSync(join(rootOf(), '.vercel-api-routes', p), 'utf8');
+    }
+    throw error;
+  }
+};`;
+  writeFileSync(docsStatsPath, raw.replace(marker, fallback));
+}
+
 async function main() {
   if (!(await stat(apiDir).catch(() => null))) {
     throw new Error('api/ directory is missing; the canonical repository layout is required');
@@ -328,6 +372,10 @@ async function main() {
       await rm(src, { force: true });
     }
   }
+
+  rewriteMcpEntryImports();
+  await keepEmptyMcpDir();
+  patchDocsStatsReadFallback();
 
   const retiredCount = refreshSourceAttribution();
 
