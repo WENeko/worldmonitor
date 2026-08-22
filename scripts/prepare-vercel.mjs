@@ -272,6 +272,19 @@ function rewriteVercelDestinations() {
   if (rewritten !== raw) writeFileSync(vercelPath, rewritten);
 }
 
+// Once the consolidation is committed, Vercel must not run prepare:vercel at
+// build time — the already-generated api/index.ts makes it throw. The build
+// command reduces to upstream's build:full; inventory:facts runs in postinstall.
+function rewriteBuildCommand() {
+  const vercelPath = join(root, 'vercel.json');
+  const raw = readFileSync(vercelPath, 'utf8');
+  const rewritten = raw.replace(
+    /"buildCommand":\s*"[^"]*"/,
+    '"buildCommand": "npm run build:full"',
+  );
+  if (rewritten !== raw) writeFileSync(vercelPath, rewritten);
+}
+
 // api/mcp.ts stays a real Vercel function (see staysInApi), but its ./mcp/*
 // implementation files are staged into .vercel-api-routes/mcp/. Rewrite its
 // relative imports so the edge entry still resolves at runtime.
@@ -405,6 +418,7 @@ async function main() {
 
   await writeFile(generatedIndex, renderIndex(routes));
   rewriteVercelDestinations();
+  rewriteBuildCommand();
 
   const stagedCount = files.filter((relativePath) => !staysInApi(relativePath)).length;
   console.log(
