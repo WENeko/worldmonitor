@@ -29,6 +29,7 @@ concurrency:
 
 jobs:
   monitor:
+    if: github.repository_owner == 'koala73'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

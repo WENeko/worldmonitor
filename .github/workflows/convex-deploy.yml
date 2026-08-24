@@ -34,6 +34,7 @@ concurrency:
 
 jobs:
   changes:
+    if: github.repository_owner == 'koala73'
     # Distinct check-run name — see the note in typecheck.yml (#5822). This
     # workflow is push-to-main only, so it never competes on a PR head SHA, but
     # the deploy gate evaluates main pushes too and `changes` is one of its
@@ -93,7 +94,7 @@ jobs:
 
   deploy:
     needs: changes
-    if: needs.changes.outputs.convex == 'true'
+    if: github.repository_owner == 'koala73' && needs.changes.outputs.convex == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

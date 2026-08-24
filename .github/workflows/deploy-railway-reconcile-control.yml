@@ -22,6 +22,7 @@ concurrency:
 
 jobs:
   unit-test:
+    if: github.repository_owner == 'koala73'
     name: Unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -43,7 +44,7 @@ jobs:
   deploy:
     name: Wrangler deploy
     needs: [unit-test]
-    if: github.ref == 'refs/heads/main'
+    if: github.repository_owner == 'koala73' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -151,6 +152,7 @@ jobs:
           NODE
 
   live-smoke:
+    if: github.repository_owner == 'koala73'
     name: Live control-plane smoke
     needs: [deploy]
     runs-on: ubuntu-latest

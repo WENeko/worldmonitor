@@ -1,0 +1,71 @@
+# ============================================================================
+# Vibe-Trading — Docker Compose for OCI Ampere A1
+# ============================================================================
+# Hermes is installed natively on the host. This runs ONLY Vibe-Trading.
+#
+# Default LLM: DeepSeek (crédits gratuits, excellent raisonnement)
+# Safety net:  FCC (free-claude-code) proxy, installable nativement sur le host
+#
+# Usage:
+#   1. Copy env.template to .env and fill in DEEPSEEK_API_KEY.
+#   2. Build & start:  docker compose up -d --build
+#      First build: ~10-15 min on Ampere A1 (pip installs + native wheels).
+#   3. Check status:   docker compose ps
+#   4. View logs:      docker compose logs -f
+#   5. Stop:           docker compose down
+#
+# Resource limits: 1.5 CPU / 9 GB RAM.
+# Leaves ~0.5 CPU / 3 GB for native Hermes + FCC + OS overhead.
+# To adjust limits, edit the deploy block and run `docker compose up -d` again.
+# ============================================================================
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "20m"
+    max-file: "3"
+
+services:
+  vibe-trading:
+    build:
+      context: .
+      dockerfile: vibe-trading.Dockerfile
+      args:
+        VIBE_TRADING_VERSION: v0.1.14
+    image: vibe-trading:arm64
+    container_name: vibe-trading
+    restart: unless-stopped
+    network_mode: host
+    <<: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 9g
+        reservations:
+          cpus: "0.5"
+          memory: 2g
+    volumes:
+      - vibe_data:/home/vibe/.vibe-trading
+    environment:
+      # ===== PRIMARY: DeepSeek (crédits gratuits) =====
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      # ===== OPTIONAL: OpenRouter (free models, fallback manuel) =====
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-}
+      # ===== OPTIONAL: Other free-tier providers =====
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      # ===== Provider selection =====
+      # Default: deepseek. Switch to openrouter when using FCC proxy.
+      - VIBE_TRADING_PROVIDER=${VIBE_TRADING_PROVIDER:-deepseek}
+      - VIBE_TRADING_MODEL=${VIBE_TRADING_MODEL:-}
+      - VIBE_TRADING_LLM_TIMEOUT_SECONDS=${VIBE_TRADING_LLM_TIMEOUT_SECONDS:-300}
+      # ===== Broker credentials (uncomment when ready) =====
+      # - ALPACA_API_KEY=${ALPACA_API_KEY:-}
+      # - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY:-}
+
+volumes:
+  vibe_data:
+    name: vibe_data
+    # Persistent: research runs, backtest results, SQLite memory, configs
