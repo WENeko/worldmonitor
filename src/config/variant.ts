@@ -45,7 +45,9 @@ export const SITE_VARIANT: string = (() => {
   if (h.startsWith('commodity.')) return 'commodity';
   if (h.startsWith('energy.')) return 'energy';
 
-  if (h === 'localhost' || h === '127.0.0.1') {
+  // [fork-patch] On non-upstream hosts (self-hosted, Vercel preview), read
+  // the variant from localStorage so the variant switcher works locally.
+  if (h === 'localhost' || h === '127.0.0.1' || (h !== 'worldmonitor.app' && h !== 'www.worldmonitor.app' && !h.endsWith('.worldmonitor.app'))) {
     const stored = loadStoredVariant();
     if (isSiteVariant(stored)) return stored;
     return buildVariant;

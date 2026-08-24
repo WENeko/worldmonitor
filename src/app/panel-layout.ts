@@ -199,7 +199,8 @@ export function variantSwitcherHref(
   currentVariant: string,
   isLocal: boolean,
 ): string {
-  return isLocal || currentVariant === targetVariant ? '#' : VARIANT_SWITCHER_DASHBOARD_URLS[targetVariant];
+  // [fork-patch] On any host that isn't upstream, never redirect to upstream subdomains.
+  return isLocal || currentVariant === targetVariant ? '#' : (typeof location !== 'undefined' && location.hostname !== 'worldmonitor.app' && !location.hostname.endsWith('.worldmonitor.app') ? '#' : VARIANT_SWITCHER_DASHBOARD_URLS[targetVariant]);
 }
 
 // TEMPORARY MIRROR of each panel constructor's footprint (`defaultRowSpan` /
@@ -899,7 +900,7 @@ export class PanelLayoutManager implements AppModule {
       <div class="header" role="banner">
         <div class="header-left">
           <div class="variant-switcher">${(() => {
-        const local = this.ctx.isDesktopApp || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+        const local = this.ctx.isDesktopApp || location.hostname === 'localhost' || location.hostname === '127.0.0.1' || (location.hostname !== 'worldmonitor.app' && location.hostname !== 'www.worldmonitor.app' && !location.hostname.endsWith('.worldmonitor.app'));
         const inIframe = window.self !== window.top;
         const vHref = (v: keyof typeof VARIANT_SWITCHER_DASHBOARD_URLS) =>
           variantSwitcherHref(v, SITE_VARIANT, local);
@@ -1061,7 +1062,7 @@ export class PanelLayoutManager implements AppModule {
         <div class="mobile-menu-footer-links">
           ${referenceLinksHtml}
           <a href="${this.ctx.isDesktopApp ? 'https://www.worldmonitor.app/pro#pricing' : '/pro#pricing'}" target="_blank" rel="noopener">Pricing</a>
-          <a href="${this.ctx.isDesktopApp ? 'https://worldmonitor.app/blog/' : 'https://www.worldmonitor.app/blog/'}" target="_blank" rel="noopener">Blog</a>
+          <a href="/blog/" target="_blank" rel="noopener">Blog</a>
           <a href="${this.ctx.isDesktopApp ? 'https://worldmonitor.app/docs' : 'https://www.worldmonitor.app/docs'}" target="_blank" rel="noopener">Docs</a>
           <a href="https://status.worldmonitor.app/" target="_blank" rel="noopener">Status</a>
         </div>

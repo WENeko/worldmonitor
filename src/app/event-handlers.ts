@@ -704,7 +704,9 @@ export class EventHandlerManager implements AppModule {
     };
     document.addEventListener('keydown', this.boundUndoHandler);
 
-    const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    // [fork-patch] Treat any non-upstream host as local so the variant-switcher
+    // stages the choice in localStorage and reloads instead of navigating away.
+    const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || (location.hostname !== 'worldmonitor.app' && location.hostname !== 'www.worldmonitor.app' && !location.hostname.endsWith('.worldmonitor.app'));
     this.ctx.container.querySelectorAll<HTMLAnchorElement>('.variant-option').forEach(link => {
       link.addEventListener('click', (e) => {
         const variant = link.dataset.variant;
@@ -1566,6 +1568,14 @@ export class EventHandlerManager implements AppModule {
     await this.exitFullscreenForNavigation();
 
     if (this.ctx.isDesktopApp || options.isLocalDev) {
+      if (stageVariantSelection(SITE_VARIANT, variant, writeStorageValue)) {
+        window.location.reload();
+      }
+      return;
+    }
+    // [fork-patch] On non-upstream hosts, never navigate to upstream subdomains.
+    const onUpstream = location.hostname === 'worldmonitor.app' || location.hostname === 'www.worldmonitor.app' || location.hostname.endsWith('.worldmonitor.app');
+    if (!onUpstream) {
       if (stageVariantSelection(SITE_VARIANT, variant, writeStorageValue)) {
         window.location.reload();
       }
