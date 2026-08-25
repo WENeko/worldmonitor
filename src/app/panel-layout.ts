@@ -199,8 +199,16 @@ export function variantSwitcherHref(
   currentVariant: string,
   isLocal: boolean,
 ): string {
-  // [fork-patch] On any host that isn't upstream, never redirect to upstream subdomains.
-  return isLocal || currentVariant === targetVariant ? '#' : (typeof location !== 'undefined' && location.hostname !== 'worldmonitor.app' && !location.hostname.endsWith('.worldmonitor.app') ? '#' : VARIANT_SWITCHER_DASHBOARD_URLS[targetVariant]);
+  // [fork-patch] On any host that isn't upstream, never redirect to upstream
+  // subdomains; offer a same-origin ?variant= link instead (visible URL change,
+  // middle-click friendly).
+  if (isLocal || currentVariant === targetVariant) return '#';
+  const onUpstreamHost =
+    typeof location !== 'undefined' &&
+    (location.hostname === 'worldmonitor.app' ||
+      location.hostname === 'www.worldmonitor.app' ||
+      location.hostname.endsWith('.worldmonitor.app'));
+  return onUpstreamHost ? VARIANT_SWITCHER_DASHBOARD_URLS[targetVariant] : `?variant=${targetVariant}`;
 }
 
 // TEMPORARY MIRROR of each panel constructor's footprint (`defaultRowSpan` /

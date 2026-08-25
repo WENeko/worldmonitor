@@ -1573,11 +1573,15 @@ export class EventHandlerManager implements AppModule {
       }
       return;
     }
-    // [fork-patch] On non-upstream hosts, never navigate to upstream subdomains.
+    // [fork-patch] On non-upstream hosts, never navigate to upstream subdomains;
+    // stage the choice and reload the SAME page with a ?variant= URL param so
+    // the switch is visible in the address bar and shareable.
     const onUpstream = location.hostname === 'worldmonitor.app' || location.hostname === 'www.worldmonitor.app' || location.hostname.endsWith('.worldmonitor.app');
     if (!onUpstream) {
       if (stageVariantSelection(SITE_VARIANT, variant, writeStorageValue)) {
-        window.location.reload();
+        const url = new URL(window.location.href);
+        url.searchParams.set('variant', variant);
+        window.location.assign(url.toString());
       }
       return;
     }
