@@ -1,53 +1,12 @@
-# ============================================================================
-# Hermes Agent — free-tier fallback chain
-# ============================================================================
-# Add this to ~/.hermes/config.yaml under the existing model: section.
-#
-# Setup via CLI (recommended):
-#   hermes fallback add deepseek deepseek-chat
-#   hermes fallback add gemini models/gemini-2.5-flash
-#   hermes fallback add opencode-free default
-#
-# Or edit directly:
-# ============================================================================
+# Hermes additions for the OCI trading stack.
+# Merge this MCP block into the existing ~/.hermes/config.yaml; do not
+# overwrite the existing profile, memory, or model settings blindly.
 
-# ---- Primary model (set this first via `hermes model`) ----
-# model:
-#   provider: deepseek          # Crédits gratuits, excellent raisonnement
-#   default: deepseek-chat
+mcp_servers:
+  vibe_trading:
+    url: "http://127.0.0.1:8900/mcp"
 
-# ---- Ordered fallback chain ----
-# Tried in order when the primary fails:
-# 1. Gemini Flash (gratuit, 1500 req/jour, bon pour fallback rapide)
-# 2. OpenCode Free (keyless, toujours dispo, qualité correcte en secours)
-#
-# fallback_providers:
-#   - provider: gemini
-#     model: models/gemini-2.5-flash
-#   - provider: opencode-free
-#     model: default
-
-# ---- Full example with all free-tier options ----
-# fallback_providers:
-#   # Niveau 1: Gemini — gratuit, bon équilibre qualité/dispo
-#   - provider: gemini
-#     model: models/gemini-2.5-flash
-#
-#   # Niveau 2: OpenRouter free — Llama 3.3 70B, Qwen 3 32B
-#   - provider: openrouter
-#     model: openrouter/meta-llama/llama-3.3-70b-instruct:free
-#
-#   # Niveau 3: OpenCode Free — keyless, dernière ligne de défense
-#   - provider: opencode-free
-#     model: default
-
-# ---- How to test ----
-# 1. Run: hermes fallback list   (see current chain)
-# 2. Start a session, check /status for active provider
-# 3. Simulate failure: set primary to a bad key, observe fallback kicking in
-
-# ---- Credentials needed ----
-# DeepSeek:  DEEPSEEK_API_KEY in ~/.hermes/.env  (https://platform.deepseek.com/api_keys)
-# Gemini:    GEMINI_API_KEY in ~/.hermes/.env     (https://aistudio.google.com/apikey)
-# OpenRouter: OPENROUTER_API_KEY in ~/.hermes/.env (https://openrouter.ai/keys)
-# OpenCode Free: no key needed
+# Hermes keeps its own provider fallback chain. Configure it using the Hermes
+# CLI/docs for the installed version; LiteLLM is the fallback gateway used by
+# Vibe-Trading and is not a replacement for Hermes' own model configuration.
+# Keep at least one independent Hermes provider if Hermes is the orchestrator.

@@ -1,31 +1,44 @@
-# ============================================================================
-# Vibe-Trading — Docker Compose for OCI Ampere A1
-# ============================================================================
-# Hermes is installed natively on the host. This runs ONLY Vibe-Trading.
-#
-# Default LLM: DeepSeek (crédits gratuits, excellent raisonnement)
-# Safety net:  FCC (free-claude-code) proxy, installable nativement sur le host
-#
-# Usage:
-#   1. Copy env.template to .env and fill in DEEPSEEK_API_KEY.
-#   2. Build & start:  docker compose up -d --build
-#      First build: ~10-15 min on Ampere A1 (pip installs + native wheels).
-#   3. Check status:   docker compose ps
-#   4. View logs:      docker compose logs -f
-#   5. Stop:           docker compose down
-#
-# Resource limits: 1.5 CPU / 9 GB RAM.
-# Leaves ~0.5 CPU / 3 GB for native Hermes + FCC + OS overhead.
-# To adjust limits, edit the deploy block and run `docker compose up -d` again.
-# ============================================================================
+# Trading stack for OCI Ampere A1 (ARM64)
+# Hermes and Vibe-Trading use host networking because Vibe-Trading's MCP
+# listener is intentionally loopback-only. LiteLLM is private and reaches
+# them through the host gateway at 127.0.0.1:4000.
 
 x-logging: &default-logging
-  driver: "json-file"
+  driver: json-file
   options:
-    max-size: "20m"
+    max-size: 20m
     max-file: "3"
 
 services:
+  hermes:
+    image: nousresearch/hermes-agent:latest
+    container_name: hermes
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      vibe-trading:
+        condition: service_started
+    volumes:
+      - ~/.hermes:/opt/data
+    environment:
+      HERMES_UID: ${HERMES_UID:-1000}
+      HERMES_GID: ${HERMES_GID:-1000}
+      HERMES_DASHBOARD: ${HERMES_DASHBOARD:-1}
+      HERMES_DASHBOARD_HOST: 127.0.0.1
+      API_SERVER_ENABLED: ${API_SERVER_ENABLED:-false}
+      API_SERVER_HOST: 127.0.0.1
+      API_SERVER_KEY: ${API_SERVER_KEY:-}
+    command: ["gateway", "run"]
+    <<: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.6"
+          memory: 3g
+        reservations:
+          cpus: "0.3"
+          memory: 1g
+
   vibe-trading:
     build:
       context: .
@@ -36,36 +49,53 @@ services:
     container_name: vibe-trading
     restart: unless-stopped
     network_mode: host
+    volumes:
+      - vibe_data:/home/vibe/.vibe-trading
+    environment:
+      # Vibe-Trading's OpenAI-compatible path points at LiteLLM.
+      OPENAI_API_KEY: ${LITELLM_MASTER_KEY:-}
+      OPENAI_BASE_URL: http://127.0.0.1:4000/v1
+      VIBE_TRADING_PROVIDER: ${VIBE_TRADING_PROVIDER:-openai}
+      VIBE_TRADING_MODEL: ${VIBE_TRADING_MODEL:-vibe-trading-critical}
+      VIBE_TRADING_LLM_TIMEOUT_SECONDS: ${VIBE_TRADING_LLM_TIMEOUT_SECONDS:-180}
+      VIBE_TRADING_MCP_ALLOWED_HOSTS: ${VIBE_TRADING_MCP_ALLOWED_HOSTS:-}
     <<: *default-logging
     deploy:
       resources:
         limits:
-          cpus: "1.5"
-          memory: 9g
+          cpus: "1.2"
+          memory: 7g
         reservations:
-          cpus: "0.5"
+          cpus: "0.4"
           memory: 2g
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: litellm
+    restart: unless-stopped
+    # Publish only on loopback. Vibe-Trading reaches it through host mode;
+    # no LiteLLM endpoint is exposed through the OCI public interface.
+    ports:
+      - "127.0.0.1:4000:4000"
     volumes:
-      - vibe_data:/home/vibe/.vibe-trading
+      - ./litellm_config.yaml:/app/config.yaml:ro
     environment:
-      # ===== PRIMARY: DeepSeek (crédits gratuits) =====
-      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
-      # ===== OPTIONAL: OpenRouter (free models, fallback manuel) =====
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-}
-      # ===== OPTIONAL: Other free-tier providers =====
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - GROQ_API_KEY=${GROQ_API_KEY:-}
-      # ===== Provider selection =====
-      # Default: deepseek. Switch to openrouter when using FCC proxy.
-      - VIBE_TRADING_PROVIDER=${VIBE_TRADING_PROVIDER:-deepseek}
-      - VIBE_TRADING_MODEL=${VIBE_TRADING_MODEL:-}
-      - VIBE_TRADING_LLM_TIMEOUT_SECONDS=${VIBE_TRADING_LLM_TIMEOUT_SECONDS:-300}
-      # ===== Broker credentials (uncomment when ready) =====
-      # - ALPACA_API_KEY=${ALPACA_API_KEY:-}
-      # - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-local-change-me}
+    command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000"]
+    <<: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.2"
+          memory: 1g
+        reservations:
+          cpus: "0.1"
+          memory: 256m
 
 volumes:
   vibe_data:
     name: vibe_data
-    # Persistent: research runs, backtest results, SQLite memory, configs

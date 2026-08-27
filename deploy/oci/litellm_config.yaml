@@ -1,0 +1,47 @@
+# LiteLLM gateway for Vibe-Trading
+# Secrets are read from the environment; do not put keys in this file.
+
+model_list:
+  # All entries share the public alias requested by Vibe-Trading.
+  - model_name: vibe-trading-critical
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  - model_name: vibe-trading-critical
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: vibe-trading-critical
+    litellm_params:
+      model: openrouter/meta-llama/llama-3.3-70b-instruct:free
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: vibe-trading-utility
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: vibe-trading-utility
+    litellm_params:
+      model: groq/llama-3.1-8b-instant
+      api_key: os.environ/GROQ_API_KEY
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+  retry_after: 2
+  timeout: 180
+  allowed_fails: 2
+  cooldown_time: 60
+  fallbacks:
+    - {"vibe-trading-critical": ["vibe-trading-utility"]}
+    - {"vibe-trading-utility": ["vibe-trading-critical"]}
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

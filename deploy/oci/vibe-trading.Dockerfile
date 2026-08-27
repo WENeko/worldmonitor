@@ -3,13 +3,18 @@
 # ============================================================================
 # Build: docker build -t vibe-trading:arm64 .
 # The build clones Vibe-Trading from GitHub, installs deps, no local source needed.
+#
+# Runtime: the entrypoint runs TWO processes:
+#   - vibe-trading serve  (Web UI + REST API)  → 0.0.0.0:8899
+#   - vibe-trading-mcp --transport http        → 127.0.0.1:8900/mcp
 # ============================================================================
 
 FROM python:3.11-slim
 
 ARG VIBE_TRADING_VERSION=v0.1.14
 
-# System deps for weasyprint (PDF reports) — harmless if not used
+# System deps for weasyprint (PDF reports) — harmless if not used.
+# bash is required by the entrypoint restart loops.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango-1.0-0 \
     libpangoft2-1.0-0 \
@@ -20,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-dejavu-core \
     git \
     curl \
+    bash \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user (matches Vibe-Trading conventions)
@@ -34,13 +40,15 @@ RUN pip install --no-cache-dir \
 # Data directory (volume mount point)
 RUN mkdir -p /home/vibe/.vibe-trading && chown -R vibe:vibe /home/vibe/.vibe-trading
 
+# Entrypoint: runs `serve` (UI/API) + `mcp --transport http` (MCP server)
+COPY vibe-trading-entrypoint.sh /usr/local/bin/vibe-trading-entrypoint.sh
+RUN chmod +x /usr/local/bin/vibe-trading-entrypoint.sh && chmod 755 /usr/local/bin/vibe-trading-entrypoint.sh
+
 USER vibe
 WORKDIR /home/vibe
 VOLUME /home/vibe/.vibe-trading
 
-# Expose the web UI + API
-EXPOSE 8899
+# Web UI + REST API, and MCP Streamable HTTP (loopback, intérieur réseau host)
+EXPOSE 8899 8900
 
-# Default command: start the full server (UI + API).
-# Switch to "vibe-trading-mcp" via docker compose override for MCP-only mode.
-CMD ["vibe-trading", "serve", "--host", "0.0.0.0", "--port", "8899"]
+CMD ["vibe-trading-entrypoint.sh"]
