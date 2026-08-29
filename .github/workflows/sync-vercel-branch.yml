@@ -82,11 +82,10 @@ jobs:
           # and retires route-only hosts. Restore the canonical manifest after
           # adaptation so Vercel postinstall sees the same ledger as main.
           git show origin/main:shared/source-attribution-manifest.json > shared/source-attribution-manifest.json
-          # The adapted tree is intentionally different from main, so run the
-          # same scanner Vercel runs only against the canonical source manifest.
-          # generate-inventory-facts writes volatile artifacts; its attribution
-          # fallback must not turn a stale ledger into a publishable branch.
-          node scripts/generate-inventory-facts.mjs
+          # Do not run inventory:facts here: the adapted tree intentionally no
+          # longer contains the original api/ route paths, so its scanner cannot
+          # validate the canonical manifest. Inventory artifacts were already
+          # generated and validated before adaptation.
           git diff --check
 
       - name: Preserve build-time generated paths
