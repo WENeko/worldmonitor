@@ -29,10 +29,20 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Configure git identity
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
       - name: Synchronize fork main with upstream main
         run: |
           git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
           git fetch --no-tags upstream main
+
+          # Save fork-specific files that don't exist in upstream
+          mkdir -p /tmp/fork-files/scripts /tmp/fork-files/deploy
+          cp scripts/prepare-vercel.mjs /tmp/fork-files/scripts/ 2>/dev/null || true
+          cp -r deploy/oci /tmp/fork-files/deploy/ 2>/dev/null || true
 
           # Start from origin/main to preserve existing workflow files
           git checkout -B "${CANONICAL_BRANCH}" "origin/main"
@@ -57,6 +67,10 @@ jobs:
             | while IFS= read -r file; do
                 git rm "$file" 2>/dev/null || true
               done
+
+          # Restore fork-specific files
+          cp /tmp/fork-files/scripts/prepare-vercel.mjs scripts/ 2>/dev/null || true
+          cp -r /tmp/fork-files/deploy/oci deploy/ 2>/dev/null || true
 
           # Commit and push only if there are changes
           git add -A
