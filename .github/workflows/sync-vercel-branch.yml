@@ -63,26 +63,31 @@ jobs:
           cp /tmp/fork-files/scripts/source-attribution.mjs scripts/ 2>/dev/null || true
           cp -r /tmp/fork-files/deploy/oci deploy/ 2>/dev/null || true
 
-          # Refresh generated manifests before publishing main.
+          # The source manifest belongs to canonical upstream/main. Do not
+          # regenerate it after route adaptation: the adapted tree is not the
+          # source tree used by the inventory scanner during Vercel install.
           npm ci --ignore-scripts
           node scripts/source-attribution.mjs --write
           node scripts/generate-inventory-facts.mjs
+          npm run inventory:facts
 
           git add -A
-          git diff --cached --quiet && echo "No changes" && exit 0
-          git commit -m 'chore: sync application code and generated manifests from upstream/main'
+          git diff --cached --quiet && echo "No changes" || git commit -m 'chore: sync application code and generated manifests from upstream/main'
           git push --force-with-lease origin HEAD:main
-
-      - name: Verify clean install prerequisites
-        run: npm ci --ignore-scripts && npm run inventory:facts
 
       - name: Generate Vercel deployment files
         run: |
           node scripts/prepare-vercel.mjs --force
-          # prepare-vercel changes the source tree; regenerate the manifest
-          # against that final tree before publishing the Vercel branch.
-          node scripts/source-attribution.mjs --write
+          # prepare-vercel invokes source-attribution against the adapted tree
+          # and retires route-only hosts. Restore the canonical manifest after
+          # adaptation so Vercel postinstall sees the same ledger as main.
+          git show origin/main:shared/source-attribution-manifest.json > shared/source-attribution-manifest.json
+          # The adapted tree is intentionally different from main, so run the
+          # same scanner Vercel runs only against the canonical source manifest.
+          # generate-inventory-facts writes volatile artifacts; its attribution
+          # fallback must not turn a stale ledger into a publishable branch.
           node scripts/generate-inventory-facts.mjs
+          git diff --check
 
       - name: Preserve build-time generated paths
         run: |
