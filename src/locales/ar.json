@@ -538,6 +538,12 @@
       "recent": "عمليات البحث الأخيرة",
       "empty": "ابحث في البيانات أو نفّذ أوامر",
       "noResults": "لا توجد نتائج",
+      "resultAnnouncement_zero": "لا توجد نتائج لـ {{query}}",
+      "resultAnnouncement_one": "نتيجة واحدة لـ {{query}}",
+      "resultAnnouncement_two": "نتيجتان لـ {{query}}",
+      "resultAnnouncement_few": "{{count}} نتائج لـ {{query}}",
+      "resultAnnouncement_many": "{{count}} نتيجة لـ {{query}}",
+      "resultAnnouncement_other": "{{count}} نتيجة لـ {{query}}",
       "commands": "أوامر",
       "results": "نتائج",
       "seeAllCommands": "عرض جميع الأوامر",
@@ -2735,6 +2741,18 @@
       "rubBase": "بنك روسيا — روبل لكل وحدة واحدة",
       "rubPerUnit": "روبل لكل وحدة",
       "sourceCbr": "المصدر: بنك روسيا"
+    },
+    "passkeyOffer": {
+      "title": "حفظ مفتاح المرور؟",
+      "body": "قم بتسجيل الدخول في المرة القادمة باستخدام بصمتك أو وجهك أو رمز جهازك — بدون كلمة مرور لتتذكرها.",
+      "accept": "حفظ مفتاح المرور",
+      "dismiss": "ليس الآن",
+      "close": "إغلاق",
+      "announce": "احفظ مفتاح مرور لتسجيل الدخول بشكل أسرع في المرة القادمة.",
+      "busy": "جاري انتظار جهازك…",
+      "succeeded": "تم حفظ مفتاح المرور. يمكنك استخدامه في المرة القادمة التي تسجل فيها الدخول.",
+      "retryable": "لم ينته الإجراء. يمكنك المحاولة مرة أخرى.",
+      "failed": "لم نتمكن من حفظ مفتاح مرور على هذا الجهاز."
     }
   },
   "popups": {
@@ -3516,7 +3534,8 @@
   "auth": {
     "signIn": "سجل الدخول",
     "createAccount": "إنشاء حساب",
-    "settings": "الإعدادات"
+    "settings": "الإعدادات",
+    "passkeyOffer": {}
   },
   "mcp": {
     "connectPanel": "الاتصال بـ MCP",

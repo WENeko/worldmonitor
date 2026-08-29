@@ -384,7 +384,12 @@
           "Soporte dedicado",
           "Integraciones personalizadas",
           "Garantía SLA",
-          "Opción local"
+          "Opción local",
+          "Acuerdo de procesamiento de datos (DPA)",
+          "Facturación por orden de compra",
+          "SAML SSO, SCIM",
+          "Configuración personalizada de seguridad y privacidad",
+          "Totalmente white-labeled — con o sin participación en ingresos"
         ],
         "cta": "Contactar Ventas"
       },
@@ -395,7 +400,7 @@
           "Derechos de redistribución — integra nuestros datos en lo que vendes",
           "300 solicitudes/minuto",
           "10.000 solicitudes/día incluidas",
-          "5 licencias Pro incluidas",
+          "5 licencias Pro — invita a usuarios con cualquier dominio de correo corporativo",
           "Soporte prioritario"
         ],
         "highlightFeatures": [

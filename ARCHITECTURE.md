@@ -149,7 +149,7 @@ Edge functions are bundled per file: each deployed function may not pull in unre
 4. API key validation
 5. Rate limiting (endpoint-specific, then global fallback)
 6. Route matching (static Map lookup, then dynamic `{param}` scan)
-7. POST-to-GET compatibility (for stale clients)
+7. POST-to-GET compatibility (for stale clients). Unmatched POSTs with a trusted `Content-Length` under 1 MB may be retried as GET when a GET handler exists for the path. The body is all-or-nothing: JSON objects of scalars and scalar arrays become query parameters; object values, nested/non-scalar array members, non-object JSON, malformed JSON, and unread bodies return 400 without applying a partial translation. Empty or whitespace-only bodies still fall through to GET with no extra query parameters. Unknown paths still 404/405. Array expansion remains capped at 200 values per key.
 8. Handler execution with error boundary
 9. ETag generation (FNV-1a hash) + 304 Not Modified
 10. Cache header application
@@ -376,6 +376,7 @@ Runs before every `git push`:
 | `security-audit.yml` | PR, push to main, daily cron, manual | Production dependency audits for every tracked `package-lock.json` workspace, failing on unbaselined high/critical advisories |
 | `seed-freshness-monitor.yml` | 15-minute cron, manual | Enforces production ingestion acceptance after a green main gate (HEAD, or the newest gated ancestor when HEAD is undecided or already red); fails on every actionable compact-health problem except explicitly on-demand sources without grading production before Railway deploys or runs |
 | `railway-deploy-drift.yml` | Hourly cron, manual | Runs two independent read-only checks against the exact production fleet: Viewer-safe source/build/deploy configuration drift and deployment/Git-closure drift. It has no mutation, dispatch, retry, approval, or acceptance-baseline path |
+| `railway-registry-sync.yml` | Push to `main` touching `scripts/railway-services.json`, manual | Read-only deployment-only configuration audit that fails within minutes of a registry edit whose live Railway watch paths were never applied (#7256): #6928 widened `ais-relay` without syncing, Railway refused `6821a584e` (#7196) with `No changes to watched files`, and the six-hourly monitor reported it only as 31 consecutive reds. Audits configuration only — the deployment-history check is legitimately red during post-merge build lag |
 | `railway-deploy-trigger.yml` | Manual rollback only | Keeps the legacy reconciler quiesced unless an operator explicitly activates the bounded rollback path; it does not own normal Railway deployment creation |
 | `analytics-collector-monitor.yml` | 15-minute cron, manual | Probes the self-hosted Umami collector directly (heartbeat, tracker script, ingest route) and fails when events are being dropped — Railway reported a green deployment through the 4-day #5565 blackout, so deployment status is not trusted here |
 | `umami-storage-monitor.yml` | 15-minute cron, manual | Reads the Umami Postgres Railway volume and the `umami-retention` deployment history without mutation, caches a bounded history, and fails on capacity or projected days-to-full thresholds, or when the retention runner's newest deployment that ran is `CRASHED` |

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -18,15 +18,27 @@ import {
   VARIANT_DEFAULTS,
   getEffectivePanelConfig,
 } from '../src/config/panels.ts';
-import { buildWebMcpTools } from '../src/services/webmcp.ts';
+import { buildWebMcpTools as buildProductionWebMcpTools } from '../src/services/webmcp.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+function buildWebMcpTools(
+  app: Parameters<typeof buildProductionWebMcpTools>[0],
+  track: Parameters<typeof buildProductionWebMcpTools>[1],
+) {
+  return buildProductionWebMcpTools(app, track).map((tool) => ({
+    ...tool,
+    execute(input: Record<string, unknown>) {
+      return tool.execute(input, { signal: new AbortController().signal });
+    },
+  }));
+}
+
 function createBindings(overrides: Record<string, unknown> = {}) {
   return {
-    openCountryBriefByCode: async () => {},
+    openCountryBriefByCode: async () => true,
     resolveCountryName: (code: string) => `Country ${code}`,
-    openSearch: async () => {},
+    openSearch: async () => true,
     getDashboardContext: async () => ({
       variant: 'full',
       map: {
@@ -57,6 +69,22 @@ function createBindings(overrides: Record<string, unknown> = {}) {
       truncated: false,
     }),
     openSearchResult: async () => ({ ok: true, status: 'opened' as const, type: 'country' }),
+    getAccessContext: async () => ({
+      accountState: 'signed_out' as const,
+      clerk: 'unavailable' as const,
+      productTier: 'anonymous' as const,
+      capabilities: {
+        premiumAccess: false,
+        apiAccess: false,
+        mcpAccess: false,
+        dataExport: false,
+      },
+      limits: {
+        enabledPanels: { used: 1, cap: 40 },
+        dashboardTabs: { used: 1, cap: 3, canCreate: true },
+      },
+    }),
+    openSignIn: async () => ({ ok: false as const, status: 'denied' as const, reason: 'clerk_unavailable' as const }),
     ...overrides,
   };
 }
@@ -70,6 +98,8 @@ const VALID_INPUTS: Record<string, Record<string, unknown>> = {
   set_map_layers: { layers: { weather: true } },
   search_dashboard: { query: 'germany' },
   open_search_result: { resultKey: `sr_${'a'.repeat(32)}` },
+  get_access_context: {},
+  open_sign_in: {},
 };
 
 interface HomepageTool {
@@ -85,6 +115,119 @@ const HOMEPAGE_VALID_INPUTS: Record<string, Record<string, unknown>> = {
   launchWorldMonitor: { monitor: 'world' },
   getWorldMonitorMcpEndpoint: {},
 };
+
+const WEBMCP_MAINTAINER_SOURCES = [
+  'src/config/webmcp.ts',
+  'src/services/webmcp.ts',
+  'src/App.ts',
+  'src/app/webmcp-dashboard.ts',
+  'src/app/webmcp-access.ts',
+  'src/services/webmcp-access-snapshot.ts',
+  'src/app/webmcp-search-controller.ts',
+  'src/app/webmcp-search-effects.ts',
+  'src/app/search-selection-dispatcher.ts',
+  'src/components/GlobalProcurementPanel.ts',
+  'pro-test/welcome.html',
+  'vercel.json',
+  'docker/nginx-security-headers.conf',
+  'docker/nginx-embed-security-headers.conf',
+  'vite.config.ts',
+  'pro-test/vite.config.ts',
+  'tests/webmcp*.test.*',
+  'tests/dom/*webmcp*.test.*',
+  'tests/deploy-config.test.mjs',
+  'tests/fixtures/webmcp/evals.v1.json',
+  'scripts/evaluate-webmcp-evals.mjs',
+  'e2e/webmcp.spec.ts',
+  'e2e/webmcp-cancellation.spec.ts',
+  'e2e/embed.spec.ts',
+] as const;
+
+const WEBMCP_FOCUSED_VERIFICATION_TESTS = [
+  'tests/docs-i18n-parity.test.mjs',
+  'tests/webmcp-inventory.test.mts',
+  'tests/webmcp.test.mjs',
+  'tests/webmcp-search-effects.test.mts',
+  'tests/webmcp-dashboard.test.mts',
+  'tests/webmcp-runtime.test.mjs',
+  'tests/webmcp-analytics-policy.test.mjs',
+  'tests/webmcp-evals.test.mjs',
+  'tests/webmcp-access.test.mts',
+  'tests/deploy-config.test.mjs',
+] as const;
+
+function sectionBetween(guide: string, startHeading: string, endHeading: string): string {
+  const start = guide.indexOf(startHeading);
+  const end = guide.indexOf(endHeading, start + startHeading.length);
+  assert.notEqual(start, -1, `public WebMCP guide is missing ${startHeading}`);
+  assert.notEqual(end, -1, `public WebMCP guide is missing ${endHeading}`);
+  return guide.slice(start, end);
+}
+
+function visibleMdx(section: string): string {
+  return section
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/```[\s\S]*?```/g, '');
+}
+
+function renderedTableNames(section: string): string[] {
+  return [...visibleMdx(section).matchAll(/^\| `([^`]+)` \|/gm)].map((match) => match[1]);
+}
+
+function assertMaintainerSourceExists(source: string) {
+  const lastSlash = source.lastIndexOf('/');
+  const directory = source.slice(0, lastSlash);
+  const basename = source.slice(lastSlash + 1);
+  if (!basename.includes('*')) {
+    assert.ok(existsSync(resolve(ROOT, source)), `WebMCP maintainer source does not exist: ${source}`);
+    return;
+  }
+
+  const pattern = new RegExp(`^${basename.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replaceAll('*', '.*')}$`);
+  const matches = readdirSync(resolve(ROOT, directory)).filter((entry) => pattern.test(entry));
+  assert.ok(matches.length > 0, `WebMCP maintainer source glob matches no files: ${source}`);
+}
+
+function assertGuideContract(
+  guide: string,
+  headings: {
+    homepage: string;
+    dashboard: string;
+    declarative: string;
+    journeys: string;
+    sourceMap: string;
+    verification: string;
+    verificationEnd: string;
+  },
+) {
+  assert.deepEqual(
+    renderedTableNames(sectionBetween(guide, headings.homepage, headings.dashboard)),
+    WEBMCP_HOMEPAGE_TOOL_NAMES,
+  );
+  assert.deepEqual(
+    renderedTableNames(sectionBetween(guide, headings.dashboard, headings.declarative)),
+    WEBMCP_SPA_TOOL_NAMES,
+  );
+  assert.deepEqual(
+    renderedTableNames(sectionBetween(guide, headings.declarative, headings.journeys)),
+    WEBMCP_DECLARATIVE_TOOL_NAMES,
+  );
+
+  const sourceMap = visibleMdx(sectionBetween(guide, headings.sourceMap, headings.verification));
+  const sourcePaths = [...sourceMap.matchAll(/^\| ([^|]+) \|/gm)].flatMap((row) =>
+    [...(row[1] ?? '').matchAll(/`([^`]+)`/g)].map((match) => match[1]),
+  );
+  assert.deepEqual(sourcePaths, WEBMCP_MAINTAINER_SOURCES);
+  for (const source of sourcePaths) assertMaintainerSourceExists(source);
+  const verification = sectionBetween(guide, headings.verification, headings.verificationEnd);
+  const focusedTestPaths = [...verification.matchAll(/^\s{2}(tests\/[^\s\\]+)(?:\s+\\)?$/gm)]
+    .map((match) => match[1]);
+  assert.deepEqual(focusedTestPaths, WEBMCP_FOCUSED_VERIFICATION_TESTS);
+  assert.match(guide, /target_cancellation_unsupported/);
+  assert.match(guide, /WebMcpToolError/);
+  assert.match(guide, /--test-concurrency=1/);
+}
 
 function homepageTools(): HomepageTool[] {
   const html = readFileSync(resolve(ROOT, 'pro-test/welcome.html'), 'utf8');
@@ -200,6 +343,76 @@ describe('WebMCP canonical inventories', () => {
       assert.equal(new Set(combined).size, combined.length, `${variant} combined inventory has duplicates`);
     }
   });
+
+  it('keeps both public guides aligned with the canonical inventory and maintainer map', () => {
+    const guides = [
+      {
+        guide: readFileSync(resolve(ROOT, 'docs/webmcp.mdx'), 'utf8'),
+        headings: {
+          homepage: '### Homepage tools',
+          dashboard: '### Dashboard imperative tools',
+          declarative: '### Declarative procurement tool',
+          journeys: '## Common browser-agent journeys',
+          sourceMap: '### Source map',
+          verification: '### Verification ladder',
+          verificationEnd: '## Compatibility and removal policy',
+        },
+      },
+      {
+        guide: readFileSync(resolve(ROOT, 'docs/zh/webmcp.mdx'), 'utf8'),
+        headings: {
+          homepage: '### 首页工具',
+          dashboard: '### 仪表板命令式工具',
+          declarative: '### 声明式采购工具',
+          journeys: '## 常见浏览器智能体流程',
+          sourceMap: '### 源文件图',
+          verification: '### 验证阶梯',
+          verificationEnd: '## 兼容与移除策略',
+        },
+      },
+    ];
+
+    for (const { guide, headings } of guides) {
+      assertGuideContract(guide, headings);
+    }
+  });
+
+  it('fails the guide contract when a row disappears, drifts, or cannot be extracted', () => {
+    const guide = readFileSync(resolve(ROOT, 'docs/webmcp.mdx'), 'utf8');
+    const headings = {
+      homepage: '### Homepage tools',
+      dashboard: '### Dashboard imperative tools',
+      declarative: '### Declarative procurement tool',
+      journeys: '## Common browser-agent journeys',
+      sourceMap: '### Source map',
+      verification: '### Verification ladder',
+      verificationEnd: '## Compatibility and removal policy',
+    };
+    assert.throws(() => assertGuideContract(guide.replace(/^\| `openSearch` .*$/m, ''), headings));
+    assert.throws(() => assertGuideContract(guide.replace(/^\| `src\/App\.ts` .*$/m, ''), headings));
+    assert.throws(() =>
+      assertGuideContract(
+        guide.replace('| Tool | Input schema | Behavior |', '| Tool | Input schema | Behavior |\n| `stale_tool` | Empty object | Stale entry. |'),
+        headings,
+      ),
+    );
+    assert.throws(() =>
+      assertGuideContract(
+        guide.replace(/^\| `openSearch` (.*)$/m, '{/* | `openSearch` $1 */}'),
+        headings,
+      ),
+    );
+    assert.throws(() =>
+      assertGuideContract(
+        guide.replace(/^\| `src\/App\.ts` (.*)$/m, '{/* | `src/App.ts` $1 */}'),
+        headings,
+      ),
+    );
+    assert.throws(() => assertGuideContract(guide.replace('### Source map', '### Sources'), headings));
+    assert.throws(() =>
+      assertGuideContract(guide.replace(/^\s{2}tests\/webmcp-dashboard\.test\.mts \\\n/m, ''), headings),
+    );
+  });
 });
 
 describe('WebMCP imperative schema and budget contract', () => {
@@ -215,7 +428,7 @@ describe('WebMCP imperative schema and budget contract', () => {
     }
   });
 
-  it('applies uniform metadata, schema, output, and error budgets to all eight tools', async () => {
+  it('applies uniform metadata, schema, output, and error budgets to all dashboard tools', async () => {
     const tools = buildWebMcpTools(createBindings(), () => {});
     for (const tool of tools) {
       assert.ok(tool.name.length <= WEBMCP_TOOL_BUDGETS.nameChars, `${tool.name}: name`);
@@ -249,6 +462,8 @@ describe('WebMCP imperative schema and budget contract', () => {
       applyDashboardAction: async () => { throw privateError; },
       searchDashboard: async () => { throw privateError; },
       openSearchResult: async () => { throw privateError; },
+      getAccessContext: async () => { throw privateError; },
+      openSignIn: async () => { throw privateError; },
     }), () => {});
     for (const tool of failing) {
       await assert.rejects(tool.execute(VALID_INPUTS[tool.name]!), (error: Error) => (
@@ -265,6 +480,7 @@ describe('WebMCP imperative schema and budget contract', () => {
       resolveCountryName: () => `HOSTILE_${'x'.repeat(5_000)}`,
       openCountryBriefByCode: async (code: string, country: string) => {
         calls.push({ code, country });
+        return true;
       },
     }), () => {}).find(({ name }) => name === 'openCountryBrief')!;
 

@@ -7,7 +7,7 @@ import ts from 'typescript';
 import { guardProBuiltOutput, shouldSkipProBuiltOutput } from './_lib/pro-built-output.mjs';
 import {
   DashboardBindingError,
-  buildWebMcpTools,
+  buildWebMcpTools as buildProductionWebMcpTools,
   registerWebMcpTools,
 } from '../src/services/webmcp.ts';
 import {
@@ -32,11 +32,22 @@ const settlePromises = async () => {
   await new Promise((resolvePromise) => setImmediate(resolvePromise));
 };
 
+// Most callback unit tests model the newer host contract explicitly. The raw
+// production builder remains available for compatibility/fail-closed tests.
+function buildWebMcpTools(app, track) {
+  return buildProductionWebMcpTools(app, track).map((tool) => ({
+    ...tool,
+    execute(input, context = { signal: new AbortController().signal }) {
+      return tool.execute(input, context);
+    },
+  }));
+}
+
 function createBindings(overrides = {}) {
   return {
-    openCountryBriefByCode: async () => {},
+    openCountryBriefByCode: async () => true,
     resolveCountryName: (code) => `Country ${code}`,
-    openSearch: async () => {},
+    openSearch: async () => true,
     getDashboardContext: async () => ({
       variant: 'full',
       map: {
@@ -68,6 +79,22 @@ function createBindings(overrides = {}) {
       ok: true,
       status: 'opened',
     }),
+    getAccessContext: async () => ({
+      accountState: 'signed_out',
+      clerk: 'unavailable',
+      productTier: 'anonymous',
+      capabilities: {
+        premiumAccess: false,
+        apiAccess: false,
+        mcpAccess: false,
+        dataExport: false,
+      },
+      limits: {
+        enabledPanels: { used: 1, cap: 40 },
+        dashboardTabs: { used: 1, cap: 3, canCreate: true },
+      },
+    }),
+    openSignIn: async () => ({ ok: false, status: 'denied', reason: 'clerk_unavailable' }),
     ...overrides,
   };
 }
@@ -129,6 +156,8 @@ describe('webmcp.ts: current API contract', () => {
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.setMapLayers/);
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.searchDashboard/);
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.openSearchResult/);
+    assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.getAccessContext/);
+    assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.openSignIn/);
   });
 
   it('classifies structured denials by exact reason codes', () => {
@@ -173,7 +202,7 @@ describe('webmcp.ts: current API contract', () => {
       assert.ok(tool.title.length > 0);
       assert.equal(
         tool.annotations?.readOnlyHint,
-        ['get_dashboard_context', 'search_dashboard'].includes(tool.name),
+        ['get_access_context', 'get_dashboard_context', 'search_dashboard'].includes(tool.name),
       );
       const properties = tool.inputSchema?.properties ?? {};
       for (const property of Object.values(properties)) {
@@ -189,6 +218,17 @@ describe('webmcp.ts: current API contract', () => {
       .find((candidate) => candidate.name === 'open_dashboard_panel');
     assert.match(tool.description, /panel_disabled/);
     assert.match(tool.description, /does not enable/i);
+  });
+
+  it('documents per-result cancellation on search_dashboard and open_search_result', () => {
+    const tools = buildWebMcpTools(createBindings(), () => {});
+    const search = tools.find((candidate) => candidate.name === 'search_dashboard');
+    const open = tools.find((candidate) => candidate.name === 'open_search_result');
+    assert.match(search.description, /executable/);
+    assert.match(search.description, /bound effect/);
+    assert.match(open.description, /bound effect class/);
+    assert.match(open.description, /target_cancellation_unsupported/);
+    assert.match(open.description, /View-state/);
   });
 
   it('advertises mutually exclusive named-view and coordinate inputs', () => {
@@ -266,6 +306,219 @@ describe('webmcp.ts: current API contract', () => {
     assert.deepEqual(Object.keys(open.inputSchema.properties), ['resultKey']);
     assert.equal(open.inputSchema.properties.resultKey.pattern, '^sr_[a-f0-9]{32}$');
   });
+
+  it('publishes a PII-free access snapshot and a credential-free sign-in opener', async () => {
+    const tools = buildWebMcpTools(createBindings(), () => {});
+    const access = tools.find((tool) => tool.name === 'get_access_context');
+    const signIn = tools.find((tool) => tool.name === 'open_sign_in');
+
+    assert.deepEqual(access.annotations, { readOnlyHint: true });
+    assert.equal(access.inputSchema.additionalProperties, false);
+    assert.deepEqual(access.inputSchema.properties, {});
+    assert.match(access.description, /no names, emails, account IDs, tokens/i);
+
+    const snapshot = await access.execute({}, { signal: new AbortController().signal });
+    assert.equal(snapshot.accountState, 'signed_out');
+    assert.equal(snapshot.clerk, 'unavailable');
+    assert.equal(snapshot.productTier, 'anonymous');
+    assert.equal(snapshot.targetCancellationSupported, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(snapshot, 'email'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(snapshot, 'userId'), false);
+
+    assert.deepEqual(signIn.annotations, { readOnlyHint: false });
+    assert.equal(signIn.inputSchema.additionalProperties, false);
+    assert.deepEqual(signIn.inputSchema.properties, {});
+    assert.match(signIn.description, /does not accept credentials/i);
+    assert.deepEqual(await signIn.execute({}, { signal: new AbortController().signal }), {
+      ok: false,
+      status: 'denied',
+      reason: 'clerk_unavailable',
+    });
+    await assert.rejects(
+      () => signIn.execute(
+        { password: 'secret', otp: '123456' },
+        { signal: new AbortController().signal },
+      ),
+      (error) => error.name === 'WebMcpToolError'
+        && /does not accept credentials/.test(error.message),
+    );
+  });
+
+  it('passes already_open sign-in results through unchanged', async () => {
+    const tools = buildWebMcpTools(createBindings({
+      openSignIn: async () => ({ ok: true, status: 'already_open', reason: 'already_open' }),
+    }), () => {});
+    const signIn = tools.find((tool) => tool.name === 'open_sign_in');
+    assert.deepEqual(
+      await signIn.execute({}, { signal: new AbortController().signal }),
+      { ok: true, status: 'already_open', reason: 'already_open' },
+    );
+  });
+
+  it('runs reversible view-state tools and gates effects that can outlive cancellation', async () => {
+    let mutationCalls = 0;
+    const events = [];
+    const tools = buildProductionWebMcpTools(createBindings({
+      openCountryBriefByCode: async () => { mutationCalls += 1; return true; },
+      openSearch: async () => { mutationCalls += 1; return true; },
+      applyDashboardAction: async (action) => {
+        mutationCalls += 1;
+        return {
+          ok: true,
+          status: 'applied',
+          actionType: action.type,
+          message: 'Applied.',
+          targets: [],
+        };
+      },
+      openSearchResult: async () => {
+        mutationCalls += 1;
+        return { ok: true, status: 'opened' };
+      },
+      openSignIn: async () => {
+        mutationCalls += 1;
+        return { ok: true, status: 'opened' };
+      },
+    }), (event, data) => events.push({ event, data }));
+    const validInputs = {
+      openCountryBrief: { iso2: 'DE' },
+      openSearch: {},
+      open_dashboard_panel: { panelId: 'markets' },
+      set_map_view: { view: 'eu' },
+      set_map_layers: { layers: { conflicts: true } },
+      open_search_result: { resultKey: `sr_${'a'.repeat(32)}` },
+      open_sign_in: {},
+    };
+
+    assert.equal(
+      (await tools.find(({ name }) => name === 'get_dashboard_context').execute({})).variant,
+      'full',
+    );
+    const accessWithoutSignal = await tools.find(({ name }) => name === 'get_access_context').execute({});
+    assert.equal(accessWithoutSignal.accountState, 'signed_out');
+    assert.equal(accessWithoutSignal.targetCancellationSupported, false);
+    assert.equal(
+      (await tools.find(({ name }) => name === 'search_dashboard')
+        .execute({ query: 'safe' })).resultCount,
+      0,
+    );
+
+    // openCountryBrief can consume daily LLM allowance after caller
+    // cancellation. set_map_layers persists STORAGE_KEYS.mapLayers. Both stay
+    // fail-closed without a target signal. open_search_result is
+    // result-dependent: the tool wrapper must reach the binding so the issued
+    // effect class can decide. The remaining dashboard-changing tools only
+    // move reversible visible view state.
+    //
+    // Every tool is pinned to its EXACT return, gated and ungated alike.
+    // `notDeepEqual(result, denial)` excluded exactly one literal object, so a
+    // swallowed error, a differently shaped failure, a wrong country name, or a
+    // dropped actionType all passed it. createBindings() is deterministic, so
+    // there is nothing environment-dependent left to hedge against.
+    const gated = ['openCountryBrief', 'set_map_layers'];
+    const denial = {
+      ok: false,
+      status: 'denied',
+      reason: 'target_cancellation_unsupported',
+      message: 'This browser cannot cancel work already running in the page, so World Monitor '
+        + 'will not run tools whose effects can outlive cancellation. Read-only and '
+        + 'reversible view-state dashboard tools still work.',
+    };
+    const appliedAction = (actionType) => ({
+      ok: true,
+      status: 'applied',
+      actionType,
+      message: 'Applied.',
+      targets: [],
+      targetCount: 0,
+      targetsTruncated: false,
+    });
+    const expected = {
+      openCountryBrief: denial,
+      openSearch: 'Opened search palette.',
+      open_dashboard_panel: appliedAction('open_panel'),
+      set_map_view: appliedAction('set_view'),
+      set_map_layers: denial,
+      open_search_result: { ok: true, status: 'opened' },
+      open_sign_in: { ok: true, status: 'opened' },
+    };
+    assert.deepEqual(
+      Object.keys(expected).sort(),
+      Object.keys(validInputs).sort(),
+      'every exercised tool must have a pinned expected value',
+    );
+    for (const [name, input] of Object.entries(validInputs)) {
+      const tool = tools.find((candidate) => candidate.name === name);
+      assert.deepEqual(
+        await tool.execute(input),
+        expected[name],
+        gated.includes(name)
+          ? `${name} can outlive cancellation and must fail closed`
+          : `${name} must run and return exactly its documented result`,
+      );
+    }
+    assert.equal(
+      mutationCalls,
+      Object.keys(validInputs).length - gated.length,
+      'every ungated dashboard-changing binding runs exactly once without a target signal',
+    );
+    assert.deepEqual(
+      events.filter(({ data }) => data.reason === 'unavailable').map(({ data }) => data.tool).sort(),
+      [...gated].sort(),
+      'only cancellation-required tools may report the compatibility denial',
+    );
+
+    // A real target signal admits the tool and therefore reaches validation.
+    await assert.rejects(
+      () => tools.find(({ name }) => name === 'openCountryBrief').execute(
+        { iso2: 'not-valid' },
+        { signal: new AbortController().signal },
+      ),
+      (error) => error.analyticsReason === 'validation'
+        && /ISO 3166-1 alpha-2/.test(error.message),
+      'a signal-capable invocation must validate its input',
+    );
+    assert.equal(
+      mutationCalls,
+      Object.keys(validInputs).length - gated.length,
+      'a malformed input must not reach a mutating binding',
+    );
+  });
+
+  it('records only tool identity and target cancellation capability at callback entry', async () => {
+    const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    const marks = [];
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { __wmLcpDebug: { enabled: true, marks } },
+    });
+    try {
+      const tools = buildProductionWebMcpTools(createBindings(), () => {});
+      await tools.find(({ name }) => name === 'get_dashboard_context').execute({});
+      await tools.find(({ name }) => name === 'openSearch').execute(
+        {},
+        { signal: new AbortController().signal },
+      );
+
+      assert.deepEqual(marks.map(({ name, detail }) => ({ name, detail })), [
+        {
+          name: 'wm:webmcp:tool-start',
+          detail: { tool: 'get_dashboard_context', targetCancellationSupported: false },
+        },
+        {
+          name: 'wm:webmcp:tool-start',
+          detail: { tool: 'openSearch', targetCancellationSupported: true },
+        },
+      ]);
+    } finally {
+      globalThis.performance?.clearMarks?.('wm:webmcp:tool-start');
+      if (previousWindow) {
+        Object.defineProperty(globalThis, 'window', previousWindow);
+      } else {
+        delete globalThis.window;
+      }
+    }
+  });
 });
 
 describe('webmcp.ts: native tool execution and telemetry', () => {
@@ -273,7 +526,10 @@ describe('webmcp.ts: native tool execution and telemetry', () => {
     const calls = [];
     const events = [];
     const tools = buildWebMcpTools(createBindings({
-      openCountryBriefByCode: async (code, country) => calls.push({ code, country }),
+      openCountryBriefByCode: async (code, country) => {
+        calls.push({ code, country });
+        return true;
+      },
     }), (event, data) => events.push({ event, data }));
 
     const result = await tools.find((tool) => tool.name === 'openCountryBrief').execute({ iso2: 'de' });
@@ -318,6 +574,51 @@ describe('webmcp.ts: native tool execution and telemetry', () => {
       event: 'webmcp-tool-invoked',
       data: { tool: 'openSearch', outcome: 'failure', reason: 'internal' },
     }]);
+  });
+
+  it('does not report country or search opens before their UI is visible', async () => {
+    const events = [];
+    const tools = buildWebMcpTools(createBindings({
+      openCountryBriefByCode: async () => false,
+      openSearch: async () => false,
+    }), (event, data) => events.push({ event, data }));
+
+    await assert.rejects(
+      tools.find((tool) => tool.name === 'openCountryBrief').execute({ iso2: 'DE' }),
+      (error) => error.name === 'WebMcpToolError'
+        && error.message === 'The requested country brief did not become visible.',
+    );
+    await assert.rejects(
+      tools.find((tool) => tool.name === 'openSearch').execute({}),
+      (error) => error.name === 'WebMcpToolError'
+        && error.message === 'The search palette did not become visible.',
+    );
+    assert.deepEqual(events, [
+      {
+        event: 'webmcp-tool-invoked',
+        data: { tool: 'openCountryBrief', outcome: 'failure', reason: 'unavailable' },
+      },
+      {
+        event: 'webmcp-tool-invoked',
+        data: { tool: 'openSearch', outcome: 'failure', reason: 'unavailable' },
+      },
+    ]);
+  });
+
+  it('requires an explicit visible acknowledgement for country and search opens', async () => {
+    const tools = buildWebMcpTools(createBindings({
+      openCountryBriefByCode: async () => undefined,
+      openSearch: async () => undefined,
+    }), () => {});
+
+    await assert.rejects(
+      tools.find((tool) => tool.name === 'openCountryBrief').execute({ iso2: 'DE' }),
+      (error) => error.name === 'WebMcpToolError' && /did not become visible/.test(error.message),
+    );
+    await assert.rejects(
+      tools.find((tool) => tool.name === 'openSearch').execute({}),
+      (error) => error.name === 'WebMcpToolError' && /did not become visible/.test(error.message),
+    );
   });
 
   it('preserves closed dashboard availability reasons', async () => {
@@ -498,10 +799,12 @@ describe('webmcp.ts: native tool execution and telemetry', () => {
     const open = tools.find((tool) => tool.name === 'open_search_result');
 
     await search.execute({ query: '  iran  ' });
-    assert.deepEqual(searchCalls, [['iran', 'all', 8]]);
+    assert.deepEqual(searchCalls[0].slice(0, 3), ['iran', 'all', 8]);
+    assert.ok(searchCalls[0][3]?.signal instanceof AbortSignal);
 
     await search.execute({ query: 'iran', scope: 'signals', limit: 1 });
-    assert.deepEqual(searchCalls[1], ['iran', 'signals', 1]);
+    assert.deepEqual(searchCalls[1].slice(0, 3), ['iran', 'signals', 1]);
+    assert.ok(searchCalls[1][3]?.signal instanceof AbortSignal);
 
     await assert.rejects(
       search.execute({ query: 'iran', url: 'https://attacker.invalid/' }),
@@ -591,7 +894,10 @@ describe('webmcp.ts: native tool execution and telemetry', () => {
     const openCalls = [];
     let unrelatedUiCalls = 0;
     const tools = buildWebMcpTools(createBindings({
-      openSearch: async () => { unrelatedUiCalls += 1; },
+      openSearch: async () => {
+        unrelatedUiCalls += 1;
+        return true;
+      },
       applyDashboardAction: async () => {
         unrelatedUiCalls += 1;
         return {
@@ -779,7 +1085,7 @@ describe('webmcp.ts: promise registration lifecycle', () => {
     await settlePromises();
     assert.deepEqual(harness.events, [{
       event: 'webmcp-registered',
-      data: { toolCount: 8, pageSurface: 'dashboard', api: 'document-current' },
+      data: { toolCount: DASHBOARD_TOOL_NAMES.length, pageSurface: 'dashboard', api: 'document-current' },
     }]);
 
     controller.abort();
@@ -806,7 +1112,7 @@ describe('webmcp.ts: promise registration lifecycle', () => {
       },
       {
         event: 'webmcp-registered',
-        data: { toolCount: 7, pageSurface: 'dashboard', api: 'document-current' },
+        data: { toolCount: DASHBOARD_TOOL_NAMES.length - 1, pageSurface: 'dashboard', api: 'document-current' },
       },
     ]);
     assert.ok(!JSON.stringify(harness.events).includes('raw duplicate detail'));
@@ -1213,13 +1519,13 @@ describe('webmcp App.ts binding invariants', () => {
     assertCallArguments(
       callByExpression(waitForUiReady, appFile, 'this.waitForDashboardReady'),
       appFile,
-      ['false'],
+      ['false', 'execution?.signal'],
     );
     const waitForMapReady = objectPropertyInitializer(options, appFile, 'waitForMapReady');
     assertCallArguments(
       callByExpression(waitForMapReady, appFile, 'this.waitForDashboardReady'),
       appFile,
-      [],
+      ['true', 'execution?.signal'],
     );
 
     const applierOptions = objectPropertyInitializer(options, appFile, 'applierOptions');
@@ -1280,6 +1586,32 @@ describe('webmcp App.ts binding invariants', () => {
     assert.match(syncCondition, /result\.actionType === 'set_view'/);
   });
 
+  it('routes country opens through lazy presentation without requiring a pre-created page', () => {
+    const openCountryBrief = objectPropertyInitializer(bindings, appFile, 'openCountryBriefByCode');
+    assertCallArguments(
+      callByExpression(openCountryBrief, appFile, 'this.openWebMcpCountryBrief'),
+      appFile,
+      ['code', 'country', 'execution'],
+    );
+
+    const openWebMcpCountryBrief = appMember('openWebMcpCountryBrief');
+    const ready = callByExpression(openWebMcpCountryBrief, appFile, 'this.waitForUiReady');
+    const open = callByExpression(
+      openWebMcpCountryBrief,
+      appFile,
+      'this.openCountryBriefWithAcknowledgement',
+    );
+    assert.ok(ready.getStart(appFile) < open.getStart(appFile));
+    assert.equal(
+      findNodes(openWebMcpCountryBrief, (node) => (
+        ts.isPropertyAccessExpression(node)
+        && node.getText(appFile) === 'this.state.countryBriefPage'
+      )).length,
+      0,
+      'the country manager must be allowed to lazy-create its page after UI readiness',
+    );
+  });
+
   it('keeps search readiness lazy and refuses fabricated opener keys without loading search', () => {
     const searchDashboard = objectPropertyInitializer(bindings, appFile, 'searchDashboard');
     const searchReady = callByExpression(
@@ -1288,7 +1620,7 @@ describe('webmcp App.ts binding invariants', () => {
       'this.waitForDashboardReady',
       'search dashboard readiness',
     );
-    assertCallArguments(searchReady, appFile, ['false']);
+    assertCallArguments(searchReady, appFile, ['false', 'execution?.signal']);
     const ensureSearch = callByExpression(searchDashboard, appFile, 'this.ensureSearchManager');
     const executeSearch = callByExpression(searchDashboard, appFile, 'manager.searchDashboard');
     assert.ok(searchReady.getStart(appFile) < ensureSearch.getStart(appFile));
@@ -1323,13 +1655,51 @@ describe('webmcp App.ts binding invariants', () => {
       'invalid or expired result-key denial',
     );
     const openReady = callByExpression(openSearchResult, appFile, 'this.waitForUiReady');
+    assertCallArguments(openReady, appFile, ['execution?.signal']);
     const openResult = callByExpression(openSearchResult, appFile, 'manager.openSearchResult');
     assert.ok(openReady.getStart(appFile) < openResult.getStart(appFile));
     assert.ok(openResult.arguments[1], 'open_search_result must receive a renderer readiness callback');
     assertCallArguments(
       callByExpression(openResult.arguments[1], appFile, 'this.waitForDashboardReady'),
       appFile,
-      [],
+      ['true', 'execution?.signal'],
+    );
+  });
+
+  it('reads access context and opens sign-in without waiting for map or UI ready', () => {
+    const accessImport = findNode(
+      appFile,
+      (node) => (
+        ts.isImportDeclaration(node)
+        && ts.isStringLiteral(node.moduleSpecifier)
+        && node.moduleSpecifier.text === '@/app/webmcp-access'
+      ),
+      'static @/app/webmcp-access import',
+    );
+    const importedNames = accessImport.importClause?.namedBindings?.elements
+      .map(({ name }) => name.text) ?? [];
+    assert.ok(importedNames.includes('getWebMcpAccessContext'));
+    assert.ok(importedNames.includes('openWebMcpSignIn'));
+
+    const getAccessContext = objectPropertyInitializer(bindings, appFile, 'getAccessContext');
+    const openSignIn = objectPropertyInitializer(bindings, appFile, 'openSignIn');
+    for (const [name, initializer] of [
+      ['getAccessContext', getAccessContext],
+      ['openSignIn', openSignIn],
+    ]) {
+      const text = initializer.getText(appFile);
+      assert.equal(text.includes('waitForUiReady'), false, `${name} must not wait for UI ready`);
+      assert.equal(text.includes('waitForDashboardReady'), false, `${name} must not wait for the map`);
+    }
+    callByExpression(getAccessContext, appFile, 'getWebMcpAccessContext');
+    assert.match(
+      getAccessContext.getText(appFile),
+      /freeTierFallbackActive:\s*this\.freeTierGate\.authSettleDeadlineExceeded/,
+    );
+    assertCallArguments(
+      callByExpression(openSignIn, appFile, 'openWebMcpSignIn'),
+      appFile,
+      ['execution?.signal'],
     );
   });
 
@@ -1373,7 +1743,7 @@ describe('webmcp App.ts binding invariants', () => {
     assertCallArguments(
       callByExpression(waitForUiReady, appFile, 'waitForWebMcpUiReady'),
       appFile,
-      ['this.uiReady', 'this.appDestroyed', 'timeoutMs'],
+      ['this.uiReady', 'this.appDestroyed', 'timeoutMs', "'UI'", 'signal'],
     );
     const waitForDashboardReady = appMember('waitForDashboardReady');
     const dashboardUiReady = callByExpression(

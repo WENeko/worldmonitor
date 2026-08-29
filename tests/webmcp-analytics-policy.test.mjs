@@ -6,7 +6,7 @@ import { FakeWebMcpModelContext } from './helpers/fake-webmcp-model-context.mjs'
 import { resetAnalyticsForTesting } from '../src/services/analytics.ts';
 import {
   DashboardBindingError,
-  buildWebMcpTools,
+  buildWebMcpTools as buildProductionWebMcpTools,
   registerWebMcpTools,
 } from '../src/services/webmcp.ts';
 
@@ -24,11 +24,20 @@ const settlePromises = async () => {
   await new Promise((resolve) => setImmediate(resolve));
 };
 
+function buildWebMcpTools(app, track) {
+  return buildProductionWebMcpTools(app, track).map((tool) => ({
+    ...tool,
+    execute(input, context = { signal: new AbortController().signal }) {
+      return tool.execute(input, context);
+    },
+  }));
+}
+
 function createBindings(overrides = {}) {
   return {
-    openCountryBriefByCode: async () => {},
+    openCountryBriefByCode: async () => true,
     resolveCountryName: (code) => `Country ${code}`,
-    openSearch: async () => {},
+    openSearch: async () => true,
     getDashboardContext: async () => ({
       variant: 'full',
       map: {
@@ -54,6 +63,22 @@ function createBindings(overrides = {}) {
       truncated: false,
     }),
     openSearchResult: async () => ({ ok: true, status: 'opened' }),
+    getAccessContext: async () => ({
+      accountState: 'signed_out',
+      clerk: 'unavailable',
+      productTier: 'anonymous',
+      capabilities: {
+        premiumAccess: false,
+        apiAccess: false,
+        mcpAccess: false,
+        dataExport: false,
+      },
+      limits: {
+        enabledPanels: { used: 1, cap: 40 },
+        dashboardTabs: { used: 1, cap: 3, canCreate: true },
+      },
+    }),
+    openSignIn: async () => ({ ok: false, status: 'denied', reason: 'clerk_unavailable' }),
     ...overrides,
   };
 }
@@ -103,6 +128,7 @@ describe('WebMCP analytics privacy policy', () => {
 
     resetAnalyticsForTesting();
     const provider = new FakeWebMcpModelContext({
+      supportsTargetExecutionSignal: true,
       registrationFailure: new Map([
         ['set_map_view', new DOMException('PRIVATE_HOST_FAILURE', 'AbortError')],
       ]),
@@ -158,7 +184,7 @@ describe('WebMCP analytics privacy policy', () => {
       collected.find(({ event }) => event === 'webmcp-registered'),
       {
         event: 'webmcp-registered',
-        data: { toolCount: 7, pageSurface: 'dashboard', api: 'document-current' },
+        data: { toolCount: 9, pageSurface: 'dashboard', api: 'document-current' },
       },
     );
     assert.deepEqual(

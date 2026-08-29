@@ -5,6 +5,8 @@ import {
   WEBMCP_SPA_TOOL_NAMES,
 } from '../src/config/webmcp.ts';
 import {
+  CANCELLATION_REQUIRED_WEBMCP_TOOLS,
+  WEBMCP_TOOL_CANCELLATION_POLICY,
   registerWebMcpTools,
 } from '../src/services/webmcp.ts';
 import { waitForWebMcpUiReady } from '../src/app/webmcp-dashboard.ts';
@@ -27,9 +29,9 @@ function deferred() {
 
 function createBindings(overrides = {}) {
   return {
-    openCountryBriefByCode: async () => {},
+    openCountryBriefByCode: async () => true,
     resolveCountryName: (code) => `Country ${code}`,
-    openSearch: async () => {},
+    openSearch: async () => true,
     getDashboardContext: async () => ({
       variant: 'full',
       map: {
@@ -55,6 +57,22 @@ function createBindings(overrides = {}) {
       truncated: false,
     }),
     openSearchResult: async () => ({ ok: true, status: 'opened' }),
+    getAccessContext: async () => ({
+      accountState: 'signed_out',
+      clerk: 'unavailable',
+      productTier: 'anonymous',
+      capabilities: {
+        premiumAccess: false,
+        apiAccess: false,
+        mcpAccess: false,
+        dataExport: false,
+      },
+      limits: {
+        enabledPanels: { used: 1, cap: 40 },
+        dashboardTabs: { used: 1, cap: 3, canCreate: true },
+      },
+    }),
+    openSignIn: async () => ({ ok: false, status: 'denied', reason: 'clerk_unavailable' }),
     ...overrides,
   };
 }
@@ -68,10 +86,10 @@ function trackedRuntime(provider) {
   return { ...harness, events };
 }
 
-async function executeRegistered(provider, name, inputJson = '{}') {
+async function executeRegistered(provider, name, inputJson = '{}', options = {}) {
   const descriptor = (await provider.getTools()).find((tool) => tool.name === name);
   assert.ok(descriptor, `missing registered WebMCP tool ${name}`);
-  return provider.executeTool(descriptor, inputJson);
+  return provider.executeTool(descriptor, inputJson, options);
 }
 
 describe('WebMCP registry behavioral contract', () => {
@@ -89,11 +107,14 @@ describe('WebMCP registry behavioral contract', () => {
   });
 
   it('registers synchronously, exposes sorted serialized schemas, and executes registered tools', async () => {
-    const provider = new FakeWebMcpModelContext();
+    const provider = new FakeWebMcpModelContext({ supportsTargetExecutionSignal: true });
     const harness = trackedRuntime(provider);
     const opened = [];
     const controller = registerWebMcpTools(createBindings({
-      openCountryBriefByCode: async (code, country) => opened.push({ code, country }),
+      openCountryBriefByCode: async (code, country) => {
+        opened.push({ code, country });
+        return true;
+      },
     }), harness.runtime);
 
     assert.deepEqual(
@@ -126,13 +147,280 @@ describe('WebMCP registry behavioral contract', () => {
     assert.deepEqual(harness.events, [
       {
         event: 'webmcp-registered',
-        data: { toolCount: 8, pageSurface: 'dashboard', api: 'document-current' },
+        data: { toolCount: WEBMCP_SPA_TOOL_NAMES.length, pageSurface: 'dashboard', api: 'document-current' },
       },
       {
         event: 'webmcp-tool-invoked',
         data: { tool: 'openCountryBrief', outcome: 'success', reason: 'completed' },
       },
     ]);
+  });
+
+  it('marks registration settlement so a probe can read the inventory in one call', async () => {
+    // On Chrome's WebMCP origin-trial build, ANY access to
+    // document.modelContext before the page finishes registering wedges the
+    // registration itself — a bare property read is enough, and an empty
+    // getTools() is a symptom rather than the cause. So a discovery probe must
+    // touch nothing until this mark, which the page emits from its own
+    // instrumentation, says "read now, once" — see e2e/webmcp.spec.ts.
+    const previousWindow = Object.hasOwn(globalThis, 'window') ? globalThis.window : undefined;
+    const hadWindow = Object.hasOwn(globalThis, 'window');
+    const marks = [];
+    globalThis.window = { __wmLcpDebug: { enabled: true, marks } };
+    try {
+      const provider = new FakeWebMcpModelContext({ supportsTargetExecutionSignal: true });
+      const harness = trackedRuntime(provider);
+      registerWebMcpTools(createBindings(), harness.runtime);
+      assert.equal(
+        marks.some(({ name }) => name === 'wm:webmcp:registered'),
+        false,
+        'the mark must not appear before registration settles',
+      );
+      await settlePromises();
+
+      const registered = marks.filter(({ name }) => name === 'wm:webmcp:registered');
+      assert.equal(registered.length, 1, 'registration settles exactly once');
+      assert.deepEqual(registered[0].detail, { toolCount: WEBMCP_SPA_TOOL_NAMES.length });
+      assert.deepEqual(
+        (await provider.getTools()).map(({ name }) => name),
+        [...WEBMCP_SPA_TOOL_NAMES].sort((left, right) => left.localeCompare(right)),
+        'the mark must not fire before the inventory is actually readable',
+      );
+    } finally {
+      if (hadWindow) globalThis.window = previousWindow;
+      else delete globalThis.window;
+    }
+  });
+
+  it('marks an empty registration pass without authorizing an inventory read', async () => {
+    const previousWindow = Object.hasOwn(globalThis, 'window') ? globalThis.window : undefined;
+    const hadWindow = Object.hasOwn(globalThis, 'window');
+    const marks = [];
+    globalThis.window = { __wmLcpDebug: { enabled: true, marks } };
+    try {
+      const failures = new Map(WEBMCP_SPA_TOOL_NAMES.map((name) => [
+        name,
+        new DOMException(`${name} rejected`, 'NotAllowedError'),
+      ]));
+      const provider = new FakeWebMcpModelContext({ registrationFailure: failures });
+      const harness = trackedRuntime(provider);
+      registerWebMcpTools(createBindings(), harness.runtime);
+
+      assert.equal(marks.length, 0, 'no settlement mark appears before registration finishes');
+      await settlePromises();
+
+      const empty = marks.filter(({ name }) => name === 'wm:webmcp:registration-empty');
+      assert.equal(empty.length, 1, 'the all-rejected pass settles exactly once');
+      assert.deepEqual(empty[0].detail, { toolCount: 0 });
+      assert.equal(
+        marks.some(({ name }) => name === 'wm:webmcp:registered'),
+        false,
+        'an empty pass must not authorize the probe to read the provider inventory',
+      );
+      assert.deepEqual(await provider.getTools(), []);
+      assert.equal(
+        harness.events.filter(({ event }) => event === 'webmcp-registration-failed').length,
+        WEBMCP_SPA_TOOL_NAMES.length,
+      );
+      assert.equal(
+        harness.events.some(({ event }) => event === 'webmcp-registered'),
+        false,
+      );
+    } finally {
+      if (hadWindow) globalThis.window = previousWindow;
+      else delete globalThis.window;
+    }
+  });
+
+  it('does not enter a registered callback for a pre-aborted invocation', async () => {
+    let mutationCalls = 0;
+    const provider = new FakeWebMcpModelContext({ supportsTargetExecutionSignal: true });
+    const harness = trackedRuntime(provider);
+    registerWebMcpTools(createBindings({
+      applyDashboardAction: async () => {
+        mutationCalls += 1;
+        return {
+          ok: true,
+          status: 'applied',
+          actionType: 'set_view',
+          message: 'Applied dashboard action.',
+          targets: [],
+        };
+      },
+    }), harness.runtime);
+    await settlePromises();
+
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(
+      executeRegistered(
+        provider,
+        'set_map_view',
+        JSON.stringify({ view: 'eu' }),
+        { signal: controller.signal },
+      ),
+      (error) => error.name === 'AbortError',
+    );
+    assert.equal(mutationCalls, 0);
+    assert.equal(provider.executionCalls.length, 0);
+    assert.equal(
+      harness.events.some(({ event }) => event === 'webmcp-tool-invoked'),
+      false,
+    );
+  });
+
+  it('classifies every SPA tool in the cancellation policy record', () => {
+    // The gate is derived from this record, so an unclassified tool would fall
+    // out of the gate silently. TypeScript catches a missing key only while the
+    // record keeps its Record<WebMcpSpaToolName, ...> annotation; this asserts
+    // the same exhaustiveness at runtime, from the shipped tool inventory, so
+    // growing WEBMCP_SPA_TOOL_NAMES past the policy fails loudly here.
+    assert.deepEqual(
+      Object.keys(WEBMCP_TOOL_CANCELLATION_POLICY).sort(),
+      [...WEBMCP_SPA_TOOL_NAMES].sort(),
+      'every SPA tool needs an explicit cancellation policy',
+    );
+    assert.deepEqual(
+      Object.values(WEBMCP_TOOL_CANCELLATION_POLICY)
+        .filter((policy) => !['read-only', 'view-state', 'cancellation-required', 'result-dependent'].includes(policy)),
+      [],
+      'policy values are limited to the documented classifications',
+    );
+  });
+
+  it('denies tools whose effects can outlive cancellation when the host omits the target signal', async () => {
+    // set_map_layers writes STORAGE_KEYS.mapLayers (and can open the AIS
+    // stream). An uncancellable invocation outlives the session, so it stays
+    // fail-closed while the browser cannot deliver a signal. open_search_result
+    // is result-dependent and must reach its binding so the issued effect
+    // class can decide.
+    assert.deepEqual(
+      [...CANCELLATION_REQUIRED_WEBMCP_TOOLS].sort(),
+      ['openCountryBrief', 'set_map_layers'],
+      'the gated set includes persistent layer writes and metered country generation',
+    );
+    let mutationCalls = 0;
+    let openCalls = 0;
+    const provider = new FakeWebMcpModelContext();
+    const harness = trackedRuntime(provider);
+    registerWebMcpTools(createBindings({
+      applyDashboardAction: async () => {
+        mutationCalls += 1;
+        return { ok: true, status: 'applied', actionType: 'set_layers', message: 'Applied.', targets: [] };
+      },
+      openSearchResult: async () => {
+        openCalls += 1;
+        return { ok: true, status: 'opened' };
+      },
+    }), harness.runtime);
+    await settlePromises();
+
+    const denial = {
+      ok: false,
+      status: 'denied',
+      reason: 'target_cancellation_unsupported',
+      message: 'This browser cannot cancel work already running in the page, so World Monitor '
+        + 'will not run tools whose effects can outlive cancellation. Read-only and '
+        + 'reversible view-state dashboard tools still work.',
+    };
+    assert.deepEqual(
+      await executeRegistered(provider, 'openCountryBrief', JSON.stringify({ iso2: 'DE' })),
+      denial,
+    );
+    assert.deepEqual(
+      await executeRegistered(provider, 'set_map_layers', JSON.stringify({ layers: { conflicts: true } })),
+      denial,
+    );
+    assert.deepEqual(
+      await executeRegistered(
+        provider,
+        'open_search_result',
+        JSON.stringify({ resultKey: `sr_${'a'.repeat(32)}` }),
+      ),
+      { ok: true, status: 'opened' },
+    );
+    assert.equal(mutationCalls, 0, 'a gated tool must not reach its binding');
+    assert.equal(openCalls, 1, 'result-dependent open_search_result must reach its binding');
+  });
+
+  it('runs a dashboard-changing tool when the host omits the target execution signal', async () => {
+    let mutationCalls = 0;
+    let contextCalls = 0;
+    const provider = new FakeWebMcpModelContext();
+    const harness = trackedRuntime(provider);
+    registerWebMcpTools(createBindings({
+      getDashboardContext: async () => {
+        contextCalls += 1;
+        return createBindings().getDashboardContext();
+      },
+      applyDashboardAction: async () => {
+        mutationCalls += 1;
+        return {
+          ok: true,
+          status: 'applied',
+          actionType: 'set_view',
+          message: 'Applied dashboard action.',
+          targets: [],
+        };
+      },
+    }), harness.runtime);
+    await settlePromises();
+
+    const context = await executeRegistered(provider, 'get_dashboard_context');
+    assert.equal(context.variant, 'full');
+    assert.equal(contextCalls, 1);
+
+    // Chrome through 151 passes no target-side signal. These tools only move
+    // visible, reversible dashboard view state, so they run anyway rather than
+    // costing 7 of 10 tools on every browser that exists.
+    assert.deepEqual(
+      await executeRegistered(provider, 'set_map_view', JSON.stringify({ view: 'eu' })),
+      {
+        ok: true,
+        status: 'applied',
+        actionType: 'set_view',
+        message: 'Applied dashboard action.',
+        targets: [],
+        targetCount: 0,
+        targetsTruncated: false,
+      },
+    );
+    assert.equal(mutationCalls, 1, 'the binding must actually run without a target signal');
+    assert.equal(provider.executionCalls.at(-1).targetSignal, undefined);
+    assert.deepEqual(harness.events.at(-1), {
+      event: 'webmcp-tool-invoked',
+      data: { tool: 'set_map_view', outcome: 'success', reason: 'completed' },
+    });
+  });
+
+  it('rejects the caller before the default target cancellation hop is delivered', async () => {
+    const callbackEntered = deferred();
+    const targetAbortObserved = deferred();
+    let targetSignal;
+    const provider = new FakeWebMcpModelContext({ supportsTargetExecutionSignal: true });
+    await provider.registerTool({
+      name: 'ordering_probe',
+      description: 'Test callback cancellation transport ordering.',
+      inputSchema: { type: 'object', additionalProperties: false },
+      execute: async (_args, execution) => {
+        targetSignal = execution.signal;
+        targetSignal.addEventListener('abort', () => targetAbortObserved.resolve(), { once: true });
+        callbackEntered.resolve();
+        await targetAbortObserved.promise;
+        targetSignal.throwIfAborted();
+      },
+    });
+    const descriptor = (await provider.getTools())[0];
+    const controller = new AbortController();
+    const invocation = provider.executeTool(descriptor, '{}', { signal: controller.signal });
+    await callbackEntered.promise;
+
+    controller.abort();
+    await assert.rejects(invocation, (error) => error.name === 'AbortError');
+    assert.equal(targetSignal.aborted, false);
+
+    await targetAbortObserved.promise;
+    assert.equal(targetSignal.aborted, true);
   });
 
   it('reports duplicate, disallowed, rejected, and host-aborted registrations by closed reason', async () => {
@@ -157,7 +445,7 @@ describe('WebMCP registry behavioral contract', () => {
     ]);
     assert.deepEqual(harness.events.at(-1), {
       event: 'webmcp-registered',
-      data: { toolCount: 3, pageSurface: 'dashboard', api: 'document-current' },
+      data: { toolCount: WEBMCP_SPA_TOOL_NAMES.length - failures.size, pageSurface: 'dashboard', api: 'document-current' },
     });
     assert.equal(JSON.stringify(harness.events).includes('detail'), false);
   });
@@ -217,16 +505,91 @@ describe('WebMCP registry behavioral contract', () => {
 });
 
 describe('registered WebMCP readiness behavior', () => {
+  it('delivers target cancellation asynchronously and prevents later deferred mutation', async () => {
+    const entered = deferred();
+    const release = deferred();
+    const targetAbortScheduled = deferred();
+    const targetAbortObserved = deferred();
+    let deliverTargetAbort;
+    let effects = 0;
+    let receivedSignal;
+    const provider = new FakeWebMcpModelContext({
+      supportsTargetExecutionSignal: true,
+      scheduleTargetExecutionAbort: (deliver) => {
+        deliverTargetAbort = deliver;
+        targetAbortScheduled.resolve();
+      },
+    });
+    const harness = trackedRuntime(provider);
+    registerWebMcpTools(createBindings({
+      applyDashboardAction: async (action, execution) => {
+        receivedSignal = execution?.signal;
+        execution?.signal?.addEventListener(
+          'abort',
+          () => targetAbortObserved.resolve(),
+          { once: true },
+        );
+        entered.resolve();
+        await release.promise;
+        execution?.signal?.throwIfAborted();
+        effects += 1;
+        return {
+          ok: true,
+          status: 'applied',
+          actionType: action.type,
+          message: 'Applied dashboard action.',
+          targets: [],
+        };
+      },
+    }), harness.runtime);
+    await settlePromises();
+
+    const controller = new AbortController();
+    const invocation = executeRegistered(
+      provider,
+      'set_map_view',
+      JSON.stringify({ view: 'eu', zoom: 4 }),
+      { signal: controller.signal },
+    );
+    await entered.promise;
+    assert.ok(receivedSignal);
+    assert.notEqual(receivedSignal, controller.signal);
+    assert.equal(provider.executionCalls.at(-1).targetSignal, receivedSignal);
+    controller.abort();
+    await assert.rejects(invocation, (error) => error.name === 'AbortError');
+    await targetAbortScheduled.promise;
+    assert.equal(receivedSignal.aborted, false);
+    assert.equal(effects, 0);
+
+    deliverTargetAbort();
+    await targetAbortObserved.promise;
+    assert.equal(receivedSignal.aborted, true);
+    release.resolve();
+    await settlePromises();
+    assert.equal(effects, 0);
+    assert.deepEqual(harness.events.at(-1), {
+      event: 'webmcp-tool-invoked',
+      data: { tool: 'set_map_view', outcome: 'failure', reason: 'cancelled' },
+    });
+    assert.equal(
+      harness.events.some(({ data }) => (
+        data.tool === 'set_map_view' && data.outcome === 'success'
+      )),
+      false,
+    );
+  });
+
   it('keeps a pre-ready invocation pending and resumes through the registered definition', async () => {
     const ready = deferred();
     const destroyed = new Promise(() => {});
     let opened = false;
-    const provider = new FakeWebMcpModelContext();
+    const provider = new FakeWebMcpModelContext({ supportsTargetExecutionSignal: true });
     const harness = trackedRuntime(provider);
     registerWebMcpTools(createBindings({
       openSearch: async () => {
         await waitForWebMcpUiReady(ready.promise, destroyed, 1_000);
         opened = true;
+        return true;
       },
     }), harness.runtime);
     await settlePromises();
@@ -247,7 +610,7 @@ describe('registered WebMCP readiness behavior', () => {
 
   it('turns readiness timeout into a bounded, privacy-safe tool failure', async () => {
     const never = new Promise(() => {});
-    const provider = new FakeWebMcpModelContext();
+    const provider = new FakeWebMcpModelContext({ supportsTargetExecutionSignal: true });
     const harness = trackedRuntime(provider);
     registerWebMcpTools(createBindings({
       openSearch: () => waitForWebMcpUiReady(never, never, 5),
@@ -269,7 +632,7 @@ describe('registered WebMCP readiness behavior', () => {
   it('wakes a pre-ready invocation on teardown and removes its registered definition', async () => {
     const ready = new Promise(() => {});
     const destroyed = deferred();
-    const provider = new FakeWebMcpModelContext();
+    const provider = new FakeWebMcpModelContext({ supportsTargetExecutionSignal: true });
     const harness = trackedRuntime(provider);
     const controller = registerWebMcpTools(createBindings({
       openSearch: () => waitForWebMcpUiReady(ready, destroyed.promise, 1_000),

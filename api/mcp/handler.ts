@@ -31,6 +31,13 @@ import {
   RESOURCE_TEMPLATE_LIST_RESPONSE,
 } from './resources/index';
 import { rpcError, rpcOk, withMcpNoStore } from './rpc';
+import {
+  buildSkillResourceRead,
+  buildSkillsGetResponse,
+  buildSkillsListResponse,
+  isSkillUri,
+  isSkillResourceUri,
+} from './skill-extension/index';
 import { buildUiResourceRead, isUiResourceUri, UI_RESOURCE_LIST_RESPONSE } from './ui/registry';
 import { emitTelemetry, principalIdForLog } from './telemetry';
 import { createMcpUsage, emitMcpRequestEvent, setUsageContext, type McpUsage } from './usage';
@@ -85,6 +92,8 @@ const PUBLIC_MCP_METHODS: ReadonlySet<string> = new Set([
   'prompts/get',
   'resources/list',
   'resources/templates/list',
+  'skills/list',
+  'skills/get',
   'logging/setLevel',
 ]);
 
@@ -286,6 +295,28 @@ function replayEventsAfter(sessionId: string, lastEventId: string): StoredSseEve
   const stream = mcpSseStreamsBySession.get(sessionId)?.get(cursor.streamId);
   if (!stream) return null;
   return stream.events.slice(cursor.sequence + 1);
+}
+
+// Mid-call billing denials (dispatch's BillingDenialError re-emit) must
+// classify like the pre-check sites: 'billing' -> billing_verification_503
+// / tier_403, not rate_limit_degraded (503) or an ordinary precheck (403).
+// Shared by tools/call and template resources/read so the two surfaces
+// cannot drift (#7269).
+function classifyDispatchedUsage(usage: McpUsage, response: Response): void {
+  if (response.headers.get('X-Billing-Verification')) {
+    usage.phase = 'billing';
+  } else if (response.status === 429 || response.status === 503) {
+    usage.phase = 'dispatch';
+  } else if (response.status === 401 || response.status === 403) {
+    // #6716 F4: dispatch can now emit a tier denial of its own (the
+    // free-tier fail-closed guard at 401, and the gateway-backed
+    // upgrade-required at 403). Without this arm both fall past every
+    // branch, keep usage.phase's 'ok' default, and get recorded as
+    // SERVED — deleting from the dataset exactly the denial events this
+    // funnel exists to measure. 'precheck' maps a non-503 status to
+    // tier_403, matching how the pre-check sites classify the same verdict.
+    usage.phase = 'precheck';
+  }
 }
 
 function sseHeadersFrom(headers: Headers): Headers {
@@ -729,7 +760,11 @@ async function mcpHandlerInner(
     : null;
   const isPublicResourceRead = typeof resourceReadUri === 'string' && isPublicResourceUri(resourceReadUri);
   const isAccountResourceRead = typeof resourceReadUri === 'string' && isAccountResourceUri(resourceReadUri);
-  const isAnonResourceRead = uiResourceReadUri !== null || isPublicResourceRead;
+  const isSkillResourceRead = isSkillUri(resourceReadUri);
+  const skillResourceReadUri = isSkillResourceUri(resourceReadUri) ? resourceReadUri : null;
+  const isAnonResourceRead = uiResourceReadUri !== null
+    || isPublicResourceRead
+    || isSkillResourceRead;
 
   // U7 (R7, R9): a `tools/call` naming a tool in the always-free subset is
   // promoted to the anonymous path per-request, the same shape
@@ -869,7 +904,10 @@ async function mcpHandlerInner(
           logging: {},
           prompts: { listChanged: false },
           resources: { subscribe: false, listChanged: false },
-          extensions: { 'io.modelcontextprotocol/ui': {} },
+          extensions: {
+            'io.modelcontextprotocol/ui': {},
+            'io.modelcontextprotocol/skills': {},
+          },
         },
         serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
         instructions: SERVER_INSTRUCTIONS,
@@ -901,23 +939,7 @@ async function mcpHandlerInner(
         freeAccountAllowance,
         resourceMetadataUrl,
       );
-      // Mid-call billing denials (dispatch's BillingDenialError re-emit) must
-      // classify like the pre-check sites: 'billing' -> billing_verification_503
-      // / tier_403, not rate_limit_degraded (503) or 'ok' (403).
-      if (dispatched.headers.get('X-Billing-Verification')) {
-        usage.phase = 'billing';
-      } else if (dispatched.status === 429 || dispatched.status === 503) {
-        usage.phase = 'dispatch';
-      } else if (dispatched.status === 401 || dispatched.status === 403) {
-        // #6716 F4: dispatch can now emit a tier denial of its own (the
-        // free-tier fail-closed guard at 401, and the gateway-backed
-        // upgrade-required at 403). Without this arm both fall past every
-        // branch, keep usage.phase's 'ok' default, and get recorded as
-        // SERVED — deleting from the dataset exactly the denial events this
-        // funnel exists to measure. 'precheck' maps a non-503 status to
-        // tier_403, matching how the pre-check sites classify the same verdict.
-        usage.phase = 'precheck';
-      }
+      classifyDispatchedUsage(usage, dispatched);
       return maybeStreamJsonRpcResponse(req, dispatched);
     }
     // Prompts are metadata-class — they ship a workflow template, not data.
@@ -936,6 +958,10 @@ async function mcpHandlerInner(
       if (!built.ok) return maybeStreamJsonRpcResponse(req, rpcError(id, built.code, built.message, corsHeaders));
       return maybeStreamJsonRpcResponse(req, rpcOk(id, { description: built.description, messages: built.messages }, corsHeaders));
     }
+    case 'skills/list':
+      return maybeStreamJsonRpcResponse(req, buildSkillsListResponse(id, body.params, corsHeaders));
+    case 'skills/get':
+      return maybeStreamJsonRpcResponse(req, buildSkillsGetResponse(id, body.params, corsHeaders));
     // Resources split by data sensitivity. resources/list + the new
     // resources/templates/list are metadata-class — public catalog-enumeration
     // methods (in PUBLIC_MCP_METHODS, quota-exempt, anon-rate-limited) that
@@ -964,6 +990,17 @@ async function mcpHandlerInner(
     case 'resources/templates/list':
       return maybeStreamJsonRpcResponse(req, rpcOk(id, { resourceTemplates: RESOURCE_TEMPLATE_LIST_RESPONSE }, corsHeaders));
     case 'resources/read':
+      if (isSkillResourceRead) {
+        if (!skillResourceReadUri) {
+          return maybeStreamJsonRpcResponse(req, rpcError(
+            id,
+            -32602,
+            `Unknown skill resource uri "${resourceReadUri}".`,
+            corsHeaders,
+          ));
+        }
+        return maybeStreamJsonRpcResponse(req, buildSkillResourceRead(id, skillResourceReadUri, corsHeaders));
+      }
       // MCP Apps `ui://` read: a static, data-free HTML app shell served on the
       // public path (no context, no quota, no dispatch). Resolved above into
       // `uiResourceReadUri`.
@@ -1019,14 +1056,7 @@ async function mcpHandlerInner(
           freeAccountAllowance,
           resourceMetadataUrl,
         );
-        if (resourceRes.status === 429 || resourceRes.status === 503) {
-          usage.phase = 'dispatch';
-        } else if (resourceRes.status === 401 || resourceRes.status === 403) {
-          // Mirror of the tools/call classification above (#6716 F4) — a
-          // resources/read routes through the same dispatcher and can emit the
-          // same tier denials.
-          usage.phase = 'precheck';
-        }
+        classifyDispatchedUsage(usage, resourceRes);
         return maybeStreamJsonRpcResponse(req, resourceRes);
       }
     case 'logging/setLevel': {

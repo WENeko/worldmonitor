@@ -827,7 +827,7 @@
       "status": "excluded",
       "references": [
         {
-          "path": "server/_shared/llm-health.ts"
+          "path": "shared/llm-health-providers.js"
         }
       ]
     },
@@ -856,6 +856,23 @@
       "references": [
         {
           "path": "scripts/seed-iea-oil-stocks.mjs"
+        }
+      ]
+    },
+    {
+      "host": "api.imd.gov.in",
+      "provider": "India Meteorological Department",
+      "kind": "structured",
+      "observed": true,
+      "license": "IMD public API is account- and key-gated. RTI IMETD/R/E/25/00381 states APIs are without charges for non-commercial use only. World Monitor public-display and redistribution rights are validated.",
+      "attribution": "Data source: India Meteorological Department. Link https://api.imd.gov.in/public/api_reference.html and the official product page.",
+      "status": "reviewed",
+      "references": [
+        {
+          "path": "scripts/lib/imd-cyclone-marine.mjs"
+        },
+        {
+          "path": "src/app/data-loader.ts"
         }
       ]
     },
@@ -1328,6 +1345,9 @@
         },
         {
           "path": "api/mcp/downstream.ts"
+        },
+        {
+          "path": "api/mcp/skill-extension/generated.ts"
         },
         {
           "path": "scripts/ais-relay.cjs"
@@ -2917,15 +2937,10 @@
       "host": "defense.gov",
       "provider": "defense.gov",
       "kind": "feed",
-      "observed": true,
+      "observed": false,
       "license": "Provider terms for this feed publisher; verify before redistribution",
       "attribution": "Credit defense.gov and link to the original feed publisher.",
-      "status": "terms-review",
-      "references": [
-        {
-          "path": "src/config/feeds.ts"
-        }
-      ]
+      "status": "excluded"
     },
     {
       "host": "dev.events",
@@ -3232,6 +3247,9 @@
       "attribution": "Credit earthquake.usgs.gov and link to the original upstream API/dataset.",
       "status": "terms-review",
       "references": [
+        {
+          "path": "api/mcp/skill-extension/generated.ts"
+        },
         {
           "path": "scripts/seed-earthquakes.mjs"
         }
@@ -5001,15 +5019,10 @@
       "host": "insideclimatenews.org",
       "provider": "insideclimatenews.org",
       "kind": "structured",
-      "observed": true,
+      "observed": false,
       "license": "Provider terms for this upstream API/dataset; verify before redistribution",
       "attribution": "Credit insideclimatenews.org and link to the original upstream API/dataset.",
-      "status": "terms-review",
-      "references": [
-        {
-          "path": "scripts/seed-climate-news.mjs"
-        }
-      ]
+      "status": "excluded"
     },
     {
       "host": "insightcrime.org",
@@ -5732,6 +5745,9 @@
           "path": "src/components/LiveNewsPanel.ts"
         },
         {
+          "path": "src/services/desktop-runtime.ts"
+        },
+        {
           "path": "src/services/wm-session.ts"
         }
       ]
@@ -5843,6 +5859,20 @@
         },
         {
           "path": "src/config/feeds.ts"
+        }
+      ]
+    },
+    {
+      "host": "mausam.imd.gov.in",
+      "provider": "India Meteorological Department",
+      "kind": "structured",
+      "observed": true,
+      "license": "Official IMD visualization pages cited for attribution and source links, not scraped.",
+      "attribution": "Data source: India Meteorological Department. Link the official marine/coastal bulletin page.",
+      "status": "reviewed",
+      "references": [
+        {
+          "path": "scripts/lib/imd-cyclone-marine.mjs"
         }
       ]
     },
@@ -6075,6 +6105,9 @@
       "attribution": "Credit moxie.foxnews.com and link to the original feed publisher.",
       "status": "terms-review",
       "references": [
+        {
+          "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
         {
           "path": "src/config/feeds.ts"
         }
@@ -7004,6 +7037,9 @@
       "status": "terms-review",
       "references": [
         {
+          "path": "api/mcp/skill-extension/generated.ts"
+        },
+        {
           "path": "scripts/_bet-templates-markets.mjs"
         },
         {
@@ -7611,6 +7647,20 @@
       "references": [
         {
           "path": "scripts/seed-resilience-static.mjs"
+        }
+      ]
+    },
+    {
+      "host": "rsmcnewdelhi.imd.gov.in",
+      "provider": "India Meteorological Department",
+      "kind": "structured",
+      "observed": true,
+      "license": "Official RSMC New Delhi visualization pages cited for attribution and source links, not scraped.",
+      "attribution": "Data source: India Meteorological Department / RSMC New Delhi. Link https://rsmcnewdelhi.imd.gov.in/.",
+      "status": "reviewed",
+      "references": [
+        {
+          "path": "scripts/lib/imd-cyclone-marine.mjs"
         }
       ]
     },
@@ -9829,15 +9879,10 @@
       "host": "whitehouse.gov",
       "provider": "whitehouse.gov",
       "kind": "feed",
-      "observed": true,
+      "observed": false,
       "license": "Provider terms for this feed publisher; verify before redistribution",
       "attribution": "Credit whitehouse.gov and link to the original feed publisher.",
-      "status": "terms-review",
-      "references": [
-        {
-          "path": "src/config/feeds.ts"
-        }
-      ]
+      "status": "excluded"
     },
     {
       "host": "wiadomosci.onet.pl",
@@ -9918,6 +9963,9 @@
         },
         {
           "path": "api/fwdstart.js"
+        },
+        {
+          "path": "api/mcp/skill-extension/generated.ts"
         },
         {
           "path": "api/not-found.ts"
@@ -13845,6 +13893,9 @@
       "references": [
         {
           "path": "server/worldmonitor/news/v1/_feeds.ts"
+        },
+        {
+          "path": "src/config/feeds.ts"
         }
       ]
     },
@@ -13929,6 +13980,9 @@
       "status": "terms-review",
       "references": [
         {
+          "path": "api/mcp/skill-extension/generated.ts"
+        },
+        {
           "path": "server/worldmonitor/webcam/v1/get-webcam-image.ts"
         },
         {
@@ -13980,10 +14034,16 @@
       "status": "excluded",
       "references": [
         {
+          "path": "api/_cors.js"
+        },
+        {
           "path": "api/a2a.ts"
         },
         {
           "path": "api/ask.ts"
+        },
+        {
+          "path": "api/mcp/skill-extension/generated.ts"
         },
         {
           "path": "api/not-found.ts"
