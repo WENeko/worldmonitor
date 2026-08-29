@@ -77,7 +77,12 @@ jobs:
         run: npm ci --ignore-scripts && npm run inventory:facts
 
       - name: Generate Vercel deployment files
-        run: node scripts/prepare-vercel.mjs --force
+        run: |
+          node scripts/prepare-vercel.mjs --force
+          # prepare-vercel changes the source tree; regenerate the manifest
+          # against that final tree before publishing the Vercel branch.
+          node scripts/source-attribution.mjs --write
+          node scripts/generate-inventory-facts.mjs
 
       - name: Preserve build-time generated paths
         run: |
