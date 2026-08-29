@@ -92,6 +92,12 @@ jobs:
             echo "=== Attempting to continue with partial deployment ==="
           }
 
+      - name: Create directories for build scripts
+        run: |
+          # Some build scripts write to api/ locations that were moved to .vercel-api-routes/
+          # Create the directories so the build can write its generated files
+          mkdir -p api/mcp/skill-extension
+
       - name: Validate generated deployment
         run: |
           echo "=== Checking generated files ==="
