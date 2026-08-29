@@ -502,10 +502,9 @@ async function main() {
   }
 
   // Stage the ENTIRE api/ tree (except test files) into .vercel-api-routes/ at
-  // the same depth as api/, so relative imports keep resolving. Keep the
-  // original source files in api/: inventory:facts and build-time generators
-  // scan that tree during Vercel's npm install. Vercel's function limit is
-  // handled by the generated index/rewrite layer, not by deleting source files.
+  // the same depth as api/, so relative imports keep resolving. Non-underscore
+  // route files are removed from api/ so Vercel discovers only the generated
+  // router and stays within the Hobby function limit.
   await mkdir(stagingDir, { recursive: true });
 
   for (const relativePath of files) {
@@ -527,15 +526,12 @@ async function main() {
   createEmptyMcpDir();
   forkUnlockProGates();
 
-  // Route staging intentionally removes function source files from api/ so
-  // Vercel stays within the Hobby function limit. The staged copies remain
-  // available under .vercel-api-routes/ for the generated router.
 
   await writeFile(generatedIndex, renderIndex(routes));
   rewriteVercelDestinations();
   rewriteBuildCommand();
 
-  const stagedCount = files.filter((relativePath) => !/\.(test|spec)\./.test(relativePath)).length;
+  const stagedCount = files.filter((relativePath) => !staysInApi(relativePath) && !/\.(test|spec)\./.test(relativePath)).length;
   console.log(
     `[prepare-vercel] staged ${stagedCount} api files (${routes.length} routes) behind api/index.ts`,
   );
