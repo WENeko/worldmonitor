@@ -25,7 +25,7 @@ jobs:
       - name: Checkout fork
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.CANONICAL_BRANCH }}
+          ref: main
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -34,7 +34,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
-      - name: Synchronize fork main with upstream main
+      - name: Synchronize application code with upstream
         run: |
           git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
           git fetch --no-tags upstream main
@@ -44,50 +44,47 @@ jobs:
           cp scripts/source-attribution.mjs /tmp/fork-files/scripts/ 2>/dev/null || true
           cp -r deploy/oci /tmp/fork-files/deploy/ 2>/dev/null || true
 
-          git checkout -B "${CANONICAL_BRANCH}" "origin/main"
-
+          git checkout -B main origin/main
           git diff --name-only origin/main upstream/main \
             -- . ':!.github/workflows/' \
             | while IFS= read -r file; do
                 git checkout upstream/main -- "$file" 2>/dev/null || true
               done
-
           git diff --diff-filter=A --name-only origin/main upstream/main \
             -- . ':!.github/workflows/' \
             | while IFS= read -r file; do
                 git checkout upstream/main -- "$file" 2>/dev/null || true
               done
-
           git diff --diff-filter=D --name-only origin/main upstream/main \
             -- . ':!.github/workflows/' \
-            | while IFS= read -r file; do
-                git rm "$file" 2>/dev/null || true
-              done
+            | while IFS= read -r file; do git rm "$file" 2>/dev/null || true; done
 
           cp /tmp/fork-files/scripts/prepare-vercel.mjs scripts/ 2>/dev/null || true
           cp /tmp/fork-files/scripts/source-attribution.mjs scripts/ 2>/dev/null || true
           cp -r /tmp/fork-files/deploy/oci deploy/ 2>/dev/null || true
 
+          # Refresh generated manifests before publishing main.
+          npm ci --ignore-scripts
+          node scripts/source-attribution.mjs --write
+          node scripts/generate-inventory-facts.mjs
+
           git add -A
           git diff --cached --quiet && echo "No changes" && exit 0
-          git commit -m "chore: sync application code from upstream/main"
-          git push --force-with-lease origin "HEAD:${CANONICAL_BRANCH}"
+          git commit -m 'chore: sync application code and generated manifests from upstream/main'
+          git push --force-with-lease origin HEAD:main
 
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Regenerate source attribution manifest
-        run: node scripts/source-attribution.mjs --write
+      - name: Verify clean install prerequisites
+        run: npm ci --ignore-scripts && npm run inventory:facts
 
       - name: Generate Vercel deployment files
         run: node scripts/prepare-vercel.mjs --force
 
-      - name: Prepare build-time generated paths
+      - name: Preserve build-time generated paths
         run: |
-          # prepare-vercel stages runtime routes under .vercel-api-routes,
-          # while build-agent-skills-index writes to the original API path.
-          mkdir -p api/mcp/skill-extension
-          cp .vercel-api-routes/mcp/skill-extension/*.ts api/mcp/skill-extension/
+          if [ -d ".vercel-api-routes/mcp/skill-extension" ]; then
+            mkdir -p api/mcp/skill-extension
+            cp .vercel-api-routes/mcp/skill-extension/*.ts api/mcp/skill-extension/
+          fi
 
       - name: Validate generated deployment
         run: |
