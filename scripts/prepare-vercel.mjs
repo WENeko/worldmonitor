@@ -502,11 +502,10 @@ async function main() {
   }
 
   // Stage the ENTIRE api/ tree (except test files) into .vercel-api-routes/ at
-  // the same depth as api/, so relative imports keep resolving: routes import
-  // ../server/... (same depth), ./_x helpers and ../_x helpers (moved with
-  // them), and server/_shared imports ../../api/_x.js against the copies that
-  // stay in api/. Non-underscore code files are then removed from api/ so
-  // Vercel only sees the single generated index.ts as a function.
+  // the same depth as api/, so relative imports keep resolving. Keep the
+  // original source files in api/: inventory:facts and build-time generators
+  // scan that tree during Vercel's npm install. Vercel's function limit is
+  // handled by the generated index/rewrite layer, not by deleting source files.
   await mkdir(stagingDir, { recursive: true });
 
   for (const relativePath of files) {
@@ -516,9 +515,9 @@ async function main() {
     const destDir = dirname(dest);
     await mkdir(destDir, { recursive: true });
     await cp(src, dest);
-    if (!staysInApi(relativePath)) {
-      await rm(src, { force: true });
-    }
+    // Do not remove source modules from api/. The adapter keeps the complete
+    // source tree available to postinstall/build scripts; generated routing
+    // remains available under .vercel-api-routes/.
   }
 
   patchDocsStatsReadFallback();
@@ -535,7 +534,7 @@ async function main() {
   rewriteVercelDestinations();
   rewriteBuildCommand();
 
-  const stagedCount = files.filter((relativePath) => !staysInApi(relativePath)).length;
+  const stagedCount = files.filter((relativePath) => !/\.(test|spec)\./.test(relativePath)).length;
   console.log(
     `[prepare-vercel] staged ${stagedCount} api files (${routes.length} routes) behind api/index.ts`,
   );
