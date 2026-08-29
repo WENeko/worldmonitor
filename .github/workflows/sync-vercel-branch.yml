@@ -92,12 +92,6 @@ jobs:
             echo "=== Attempting to continue with partial deployment ==="
           }
 
-      - name: Create directories for build scripts
-        run: |
-          # Some build scripts write to api/ locations that were moved to .vercel-api-routes/
-          # Create the directories so the build can write its generated files
-          mkdir -p api/mcp/skill-extension
-
       - name: Validate generated deployment
         run: |
           echo "=== Checking generated files ==="
@@ -113,6 +107,10 @@ jobs:
 
           # Create or reset vercel branch from current HEAD (with generated files)
           git checkout -B "${VERCEL_BRANCH}" HEAD
+
+          # Create directories that build scripts need to write to
+          # These were moved by prepare-vercel.mjs but build scripts still write to api/
+          mkdir -p api/mcp/skill-extension
 
           # Stage all generated files
           git add -A
