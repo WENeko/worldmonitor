@@ -29,6 +29,7 @@ import {
 } from './source-catalog-identity.mjs';
 import {
   activeSourceAttributionEntries,
+  buildSourceAttributionStats,
   scanUpstreamHosts,
   sourceAttributionStats,
 } from './source-attribution.mjs';
@@ -791,7 +792,7 @@ export function gitFileLastmod(rootDir, relativePath) {
   }
 }
 
-export async function loadCorpusData({ rootDir = DEFAULT_ROOT } = {}) {
+export async function loadCorpusData({ rootDir = DEFAULT_ROOT, skipSourceAttribution = false } = {}) {
   const resilience = readJson(rootDir, RESILIENCE_SNAPSHOT_PATH);
   const reverseNames = reverseCountryNames(readJson(rootDir, COUNTRY_NAMES_PATH));
   const [
@@ -864,8 +865,10 @@ export async function loadCorpusData({ rootDir = DEFAULT_ROOT } = {}) {
   // Tests retain a separate raw-manifest oracle so a mutation here cannot make
   // both the expected and actual provider sets agree with the same bug.
   const sourceInventory = scanUpstreamHosts(rootDir);
-  const sourceStats = sourceAttributionStats(sourceInventory, attributionManifest);
   const activeSourceEntries = activeSourceAttributionEntries(attributionManifest);
+  const sourceStats = skipSourceAttribution
+    ? buildSourceAttributionStats({ validate: false })
+    : sourceAttributionStats(sourceInventory, attributionManifest);
   const sourceCatalog = attachCoverageToCatalog(
     buildSourceCatalog(activeSourceEntries, {
       logicalProviders: attributionManifest.logicalProviders || [],
@@ -873,7 +876,7 @@ export async function loadCorpusData({ rootDir = DEFAULT_ROOT } = {}) {
     scanNamedFeedDeclarations(rootDir),
     loadSourceGeography(rootDir),
   );
-  if (sourceCatalog.length !== sourceStats.providerCount) {
+  if (!skipSourceAttribution && sourceCatalog.length !== sourceStats.providerCount) {
     throw new Error('Source catalog provider count drifted from the attribution manifest');
   }
   const sourcesLastmod = sourcePageLastmod({
@@ -1815,8 +1818,9 @@ export async function buildCorpus({
   outDir = DEFAULT_OUT_DIR,
   baseUrl = DEFAULT_BASE_URL,
   clean = true,
+  skipSourceAttribution = false,
 } = {}) {
-  const data = await loadCorpusData({ rootDir });
+  const data = await loadCorpusData({ rootDir, skipSourceAttribution });
   if (clean) {
     for (const dir of GENERATED_DIRS) {
       rmSync(join(outDir, dir), { recursive: true, force: true });
@@ -1987,10 +1991,13 @@ function parseArgs(argv) {
     outDir: DEFAULT_OUT_DIR,
     baseUrl: DEFAULT_BASE_URL,
     clean: true,
+    skipSourceAttribution: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === '--no-clean') {
+    if (arg === '--skip-source-attribution') {
+      options.skipSourceAttribution = true;
+    } else if (arg === '--no-clean') {
       options.clean = false;
     } else if (arg === '--out-dir') {
       options.outDir = resolve(argv[++i]);

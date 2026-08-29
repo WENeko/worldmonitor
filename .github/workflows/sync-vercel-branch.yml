@@ -103,7 +103,7 @@ jobs:
       - name: Publish adapted Vercel branch
         run: |
           git checkout -B "${VERCEL_BRANCH}" HEAD
-          node -e "const fs=require('fs'); const p='package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.scripts.postinstall='cross-env npm_config_allow_scripts= npm --prefix blog-site ci --prefer-offline'; j.scripts['prebuild:full']='npm run product:facts:vercel'; j.scripts['product:facts:vercel']='node --import tsx scripts/generate-product-config.mjs && node --import tsx scripts/generate-public-product-facts.mjs'; fs.writeFileSync(p, JSON.stringify(j,null,2)+'\\n');"
+          node -e "const fs=require('fs'); const p='package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.scripts.postinstall='cross-env npm_config_allow_scripts= npm --prefix blog-site ci --prefer-offline'; j.scripts['prebuild:full']='npm run product:facts:vercel'; j.scripts['product:facts:vercel']='node --import tsx scripts/generate-product-config.mjs && node --import tsx scripts/generate-public-product-facts.mjs'; j.scripts['build:crawlable-corpus']='node --import tsx scripts/build-crawlable-corpus.mjs --skip-source-attribution'; fs.writeFileSync(p, JSON.stringify(j,null,2)+'\\n');"
           git add -A
           git diff --cached --quiet && echo "No changes to vercel branch" && exit 0
           git commit -m 'chore(vercel): regenerate deployment branch from upstream/main'
