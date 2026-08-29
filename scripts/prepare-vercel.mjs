@@ -515,9 +515,9 @@ async function main() {
     const destDir = dirname(dest);
     await mkdir(destDir, { recursive: true });
     await cp(src, dest);
-    // Do not remove source modules from api/. The adapter keeps the complete
-    // source tree available to postinstall/build scripts; generated routing
-    // remains available under .vercel-api-routes/.
+    if (!staysInApi(relativePath)) {
+      await rm(src, { force: true });
+    }
   }
 
   patchDocsStatsReadFallback();
@@ -527,8 +527,9 @@ async function main() {
   createEmptyMcpDir();
   forkUnlockProGates();
 
-  // Validate the source manifest before adaptation; route staging is a
-  // deployment-layout transform and must not alter attribution metadata.
+  // Route staging intentionally removes function source files from api/ so
+  // Vercel stays within the Hobby function limit. The staged copies remain
+  // available under .vercel-api-routes/ for the generated router.
 
   await writeFile(generatedIndex, renderIndex(routes));
   rewriteVercelDestinations();
