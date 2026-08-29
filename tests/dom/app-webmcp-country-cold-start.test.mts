@@ -65,6 +65,21 @@ describe('App WebMCP country binding cold start', () => {
       resolveCountryName: () => 'France',
       openSearch: async () => true,
       getDashboardContext: async () => unusedDashboardContext,
+      listMapLayerCatalog: async () => ({
+        variant: 'full',
+        rendererKind: 'deck',
+        enabledLayers: [],
+        liveLayerKeys: [],
+        hasPremium: false,
+        deckGlActive: true,
+      }),
+      listDashboardPanels: async () => ({
+        variant: 'full',
+        total: 0,
+        hasMore: false,
+        nextCursor: null,
+        panels: [],
+      }),
       ...unusedNavigationBindings(),
       applyDashboardAction: async () => ({
         ok: true,
@@ -79,6 +94,9 @@ describe('App WebMCP country binding cold start', () => {
         truncated: false,
       }),
       openSearchResult: async () => ({ ok: true, status: 'opened' }),
+      applyDashboardTabAction: async () => {
+        throw new Error('Unexpected dashboard tab action.');
+      },
       getAccessContext: async () => ({
         accountState: 'signed_out',
         clerk: 'unavailable',
@@ -162,6 +180,21 @@ describe('App WebMCP country binding cold start', () => {
       resolveCountryName: () => 'France',
       openSearch: async () => true,
       getDashboardContext: async () => unusedDashboardContext,
+      listMapLayerCatalog: async () => ({
+        variant: 'full',
+        rendererKind: 'deck',
+        enabledLayers: [],
+        liveLayerKeys: [],
+        hasPremium: false,
+        deckGlActive: true,
+      }),
+      listDashboardPanels: async () => ({
+        variant: 'full',
+        total: 0,
+        hasMore: false,
+        nextCursor: null,
+        panels: [],
+      }),
       ...unusedNavigationBindings(),
       applyDashboardAction: async () => ({
         ok: true,
@@ -176,6 +209,9 @@ describe('App WebMCP country binding cold start', () => {
         truncated: false,
       }),
       openSearchResult: async () => ({ ok: true, status: 'opened' }),
+      applyDashboardTabAction: async () => {
+        throw new Error('Unexpected dashboard tab action.');
+      },
       getAccessContext: async () => ({
         accountState: 'signed_out',
         clerk: 'unavailable',

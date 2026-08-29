@@ -11,16 +11,23 @@
 //   1. openCountryBrief({ iso2 }) — opens the country deep-dive panel.
 //   2. openSearch()               — opens the global command palette.
 //   3. get_dashboard_context()    — reads bounded visible dashboard state.
-//   4. switch_monitor()           — switches World/Tech/Finance/Commodity/Energy/Good News.
-//   5. open_settings()            — opens the settings overlay.
-//   6. open_alerts()              — opens the alerts/notifications tab.
-//   7. open_dashboard_panel()     — opens an already-live panel.
-//   8. set_map_view()             — moves the visible map.
-//   9. set_map_layers()           — changes allowed visible map layers.
-//  10. search_dashboard()         — searches the live dashboard index.
-//  11. open_search_result()       — selects an opaque, revalidated result.
-//  12. get_access_context()       — reads signed-out / loading / signed-in access.
-//  13. open_sign_in()             — opens the existing Clerk sign-in dialog.
+//   4. list_map_layers()          — pages the canonical map-layer catalog.
+//   5. list_dashboard_panels()    — pages the canonical panel catalog.
+//   6. switch_monitor()           — switches World/Tech/Finance/Commodity/Energy/Good News.
+//   7. open_settings()            — opens the settings overlay.
+//   8. open_alerts()              — opens the alerts/notifications tab.
+//   9. open_dashboard_panel()     — opens an already-live panel.
+//  10. set_map_view()             — moves the visible map.
+//  11. set_map_layers()           — changes allowed visible map layers.
+//  12. search_dashboard()         — searches the live dashboard index.
+//  13. open_search_result()       — selects an opaque, revalidated result.
+//  14. list_dashboard_tabs()      — enumerates persistent workspace tabs.
+//  15. select_dashboard_tab()     — switches the active workspace tab.
+//  16. create_dashboard_tab()     — creates a workspace, or returns one by name.
+//  17. rename_dashboard_tab()     — renames a workspace tab by stable ID.
+//  18. delete_dashboard_tab()     — deletes a workspace tab after confirm=true.
+//  19. get_access_context()       — reads signed-out / loading / signed-in access.
+//  20. open_sign_in()             — opens the existing Clerk sign-in dialog.
 //
 // No tool is conditionally registered. Live controls re-check auth and
 // entitlement through the agent-bus applier on every invocation, so a single
@@ -41,12 +48,48 @@ import {
 } from '../config/webmcp';
 import { SITE_VARIANTS, isSiteVariant, type SiteVariant } from '../config/variant';
 import {
+  DASHBOARD_PANEL_CATALOG_CATEGORY_KEYS,
+  DASHBOARD_PANEL_CATALOG_DEFAULT_LIMIT,
+  DASHBOARD_PANEL_CATALOG_MAX_LIMIT,
+  DASHBOARD_PANEL_CATALOG_OUTPUT_TARGET_CHARS,
+  DASHBOARD_PANEL_CATEGORY_MAX_CHARS,
+  DASHBOARD_PANEL_ID_MAX_CHARS,
+  DASHBOARD_PANEL_ID_PATTERN,
+  DASHBOARD_PANEL_LABEL_MAX_CHARS,
+  DashboardPanelCatalogError,
+  type DashboardPanelCatalogItem,
+  type DashboardPanelCatalogPage,
+  type DashboardPanelCatalogQuery,
+  type DashboardPanelUnavailableReason,
+} from './webmcp-panel-catalog';
+import {
   DASHBOARD_MAP_MAX_LATITUDE,
   DASHBOARD_MAP_VIEWS,
   DASHBOARD_LAYER_ACTION_TARGET_ID_PATTERN,
   MAX_LAYER_ACTION_TARGET_ID_LENGTH,
   MAX_LAYER_ACTION_TARGETS,
 } from '../../shared/agent-bus-contract';
+import {
+  DASHBOARD_TAB_ID_PATTERN,
+  DASHBOARD_TAB_NAME_MAX_LENGTH,
+  isDashboardTabId,
+  isDashboardTabListSnapshot,
+  mutationDenied,
+  type DashboardTabAction,
+  type DashboardTabActionResult,
+  type DashboardTabListSnapshot,
+  type DashboardTabMutationResult,
+} from './dashboard-tab-actions';
+import {
+  DEFAULT_MAP_LAYER_PAGE_SIZE,
+  MAX_MAP_LAYER_PAGE_SIZE,
+  WEBMCP_MAP_LAYER_MONITORS,
+  WEBMCP_MAP_LAYER_RENDERERS,
+  WEBMCP_MAP_LAYER_STATES,
+  listMapLayerCatalog,
+  parseMapLayerCatalogArgs,
+  type MapLayerCatalogSnapshot,
+} from './webmcp-map-layer-catalog';
 
 export interface WebMcpAppBindings {
   openCountryBriefByCode(
@@ -63,6 +106,13 @@ export interface WebMcpAppBindings {
   getDashboardContext(
     options?: WebMcpExecutionOptions,
   ): DashboardContextSnapshot | Promise<DashboardContextSnapshot>;
+  listMapLayerCatalog(
+    options?: WebMcpExecutionOptions,
+  ): MapLayerCatalogSnapshot | Promise<MapLayerCatalogSnapshot>;
+  listDashboardPanels(
+    query: DashboardPanelCatalogQuery,
+    options?: WebMcpExecutionOptions,
+  ): DashboardPanelCatalogPage | Promise<DashboardPanelCatalogPage>;
   switchMonitor(
     monitor: SiteVariant,
     options?: WebMcpExecutionOptions,
@@ -87,6 +137,10 @@ export interface WebMcpAppBindings {
     resultKey: string,
     options?: WebMcpExecutionOptions,
   ): DashboardSearchOpenResult | Promise<DashboardSearchOpenResult>;
+  applyDashboardTabAction(
+    action: DashboardTabAction,
+    options?: WebMcpExecutionOptions,
+  ): DashboardTabActionResult | Promise<DashboardTabActionResult>;
   getAccessContext(
     options?: WebMcpExecutionOptions,
   ): AccessContextSnapshot | Promise<AccessContextSnapshot>;
@@ -304,6 +358,8 @@ export const WEBMCP_TOOL_CANCELLATION_POLICY: Readonly<
 > = Object.freeze({
   [WEBMCP_SPA_TOOL.getDashboardContext]: 'read-only',
   [WEBMCP_SPA_TOOL.getAccessContext]: 'read-only',
+  [WEBMCP_SPA_TOOL.listMapLayers]: 'read-only',
+  [WEBMCP_SPA_TOOL.listDashboardPanels]: 'read-only',
   [WEBMCP_SPA_TOOL.searchDashboard]: 'read-only',
   [WEBMCP_SPA_TOOL.openSearch]: 'view-state',
   [WEBMCP_SPA_TOOL.switchMonitor]: 'cancellation-required',
@@ -315,6 +371,11 @@ export const WEBMCP_TOOL_CANCELLATION_POLICY: Readonly<
   [WEBMCP_SPA_TOOL.openCountryBrief]: 'cancellation-required',
   [WEBMCP_SPA_TOOL.setMapLayers]: 'cancellation-required',
   [WEBMCP_SPA_TOOL.openSearchResult]: 'result-dependent',
+  [WEBMCP_SPA_TOOL.listDashboardTabs]: 'read-only',
+  [WEBMCP_SPA_TOOL.selectDashboardTab]: 'cancellation-required',
+  [WEBMCP_SPA_TOOL.createDashboardTab]: 'cancellation-required',
+  [WEBMCP_SPA_TOOL.renameDashboardTab]: 'cancellation-required',
+  [WEBMCP_SPA_TOOL.deleteDashboardTab]: 'cancellation-required',
 });
 
 /** Tools the page refuses to run without a target-side AbortSignal. */
@@ -364,6 +425,8 @@ const TOOL_FAILURE_MESSAGES: Record<WebMcpSpaToolName, string> = {
   openCountryBrief: 'World Monitor could not open that country brief.',
   openSearch: 'World Monitor could not open search.',
   get_dashboard_context: 'World Monitor could not read dashboard context.',
+  list_map_layers: 'World Monitor could not list map layers.',
+  list_dashboard_panels: 'World Monitor could not list dashboard panels.',
   switch_monitor: 'World Monitor could not switch monitors.',
   open_settings: 'World Monitor could not open settings.',
   open_alerts: 'World Monitor could not open alerts.',
@@ -372,6 +435,11 @@ const TOOL_FAILURE_MESSAGES: Record<WebMcpSpaToolName, string> = {
   set_map_layers: 'World Monitor could not update map layers.',
   search_dashboard: 'World Monitor could not search the dashboard.',
   open_search_result: 'World Monitor could not open that search result.',
+  list_dashboard_tabs: 'World Monitor could not list dashboard tabs.',
+  select_dashboard_tab: 'World Monitor could not select that dashboard tab.',
+  create_dashboard_tab: 'World Monitor could not create that dashboard tab.',
+  rename_dashboard_tab: 'World Monitor could not rename that dashboard tab.',
+  delete_dashboard_tab: 'World Monitor could not delete that dashboard tab.',
   get_access_context: 'World Monitor could not read access context.',
   open_sign_in: 'World Monitor could not open sign-in.',
 };
@@ -557,6 +625,9 @@ function withInvocationLogging(
           'unavailable',
         );
       }
+      if (error instanceof DashboardPanelCatalogError) {
+        throw new SafeWebMcpError(error.message, 'validation');
+      }
       throw new SafeWebMcpError(TOOL_FAILURE_MESSAGES[name]);
     }
   };
@@ -585,17 +656,27 @@ const VALIDATION_DENIAL_REASONS = new Set([
   'malformed_arguments',
   'invalid_action',
   'not_dashboard_control',
+  'invalid_name',
+  'confirmation_required',
+  'last_tab',
+  'invalid_monitor',
+  'invalid_renderer',
+  'invalid_state',
+  'invalid_limit',
+  'invalid_cursor',
   'unknown_monitor',
 ]);
 const ENTITLEMENT_DENIAL_REASONS = new Set([
   'panel_not_entitled',
   'layer_not_entitled',
+  'tab_cap',
 ]);
 const STALE_DENIAL_REASONS = new Set([
   'invalid_or_expired_key',
   'search_state_changed',
   'result_no_longer_available',
   'result_no_longer_executable',
+  'tab_not_found',
 ]);
 
 function classifyStructuredDenial(result: Record<string, unknown>): WebMcpInvocationReason {
@@ -623,6 +704,7 @@ function classifyInvocationResult(result: unknown): {
 function classifyInvocationError(error: unknown): WebMcpInvocationReason {
   if (error instanceof SafeWebMcpError) return error.analyticsReason;
   if (error instanceof DashboardBindingError) return 'unavailable';
+  if (error instanceof DashboardPanelCatalogError) return 'validation';
   if (isWebMcpAbortError(error)) return 'cancelled';
   return 'internal';
 }
@@ -699,6 +781,55 @@ function boundDashboardContext(
   result.panels.mountedTruncated = mounted.length < result.panels.mountedCount;
   result.panels.enabledTruncated = enabled.length < result.panels.enabledCount;
   return result;
+}
+
+function boundUnavailableReason(value: unknown): DashboardPanelUnavailableReason | undefined {
+  if (value === 'panel_not_entitled' || value === 'panel_disabled' || value === 'panel_not_live') {
+    return value;
+  }
+  return undefined;
+}
+
+function boundDashboardPanelCatalog(result: DashboardPanelCatalogPage): DashboardPanelCatalogPage {
+  const panels = (Array.isArray(result.panels) ? result.panels : []).map((panel) => {
+    const available = panel?.available === true;
+    const unavailableReason = available ? undefined : boundUnavailableReason(panel?.unavailableReason);
+    const bounded: DashboardPanelCatalogItem = {
+      id: boundedText(panel?.id, DASHBOARD_PANEL_ID_MAX_CHARS),
+      label: boundedText(panel?.label, DASHBOARD_PANEL_LABEL_MAX_CHARS),
+      category: boundedText(panel?.category, DASHBOARD_PANEL_CATEGORY_MAX_CHARS),
+      variants: Array.isArray(panel?.variants)
+        ? panel.variants
+          .filter((value): value is string => typeof value === 'string')
+          .map((value) => value.slice(0, 32))
+        : [],
+      enabled: panel?.enabled === true,
+      mounted: panel?.mounted === true,
+      entitled: panel?.entitled === true,
+      available,
+      ...(unavailableReason ? { unavailableReason } : {}),
+    };
+    return bounded;
+  });
+  const bounded: DashboardPanelCatalogPage = {
+    variant: boundedText(result.variant, 32),
+    total: Math.max(0, Math.floor(boundedNumber(result.total))),
+    hasMore: result.hasMore === true,
+    nextCursor: result.nextCursor ? boundedText(result.nextCursor, DASHBOARD_PANEL_ID_MAX_CHARS) : null,
+    panels,
+  };
+  while (
+    JSON.stringify(bounded).length > DASHBOARD_PANEL_CATALOG_OUTPUT_TARGET_CHARS
+    && bounded.panels.length > 1
+  ) {
+    bounded.panels.pop();
+    bounded.hasMore = true;
+    bounded.nextCursor = bounded.panels[bounded.panels.length - 1]?.id ?? null;
+  }
+  if (JSON.stringify(bounded).length > MAX_OUTPUT_CHARS) {
+    throw new SafeWebMcpError('Dashboard panel catalog exceeded the safe output limit.');
+  }
+  return bounded;
 }
 
 const ACCOUNT_STATES = new Set<WebMcpAccountState>(['signed_out', 'loading', 'signed_in']);
@@ -837,6 +968,108 @@ function boundSearchOpenResult(result: DashboardSearchOpenResult): DashboardSear
   };
 }
 
+function boundDashboardTabList(
+  snapshot: DashboardTabListSnapshot,
+  cursor?: string,
+): DashboardTabActionResult {
+  const sourceTabs = Array.isArray(snapshot.tabs) ? snapshot.tabs : [];
+  const tabs = sourceTabs.map((tab) => ({
+    id: boundedText(tab?.id, 64),
+    name: boundedText(tab?.name, DASHBOARD_TAB_NAME_MAX_LENGTH),
+    active: tab?.active === true,
+    canDelete: tab?.canDelete === true,
+  })).filter((tab) => tab.id);
+  const tabCount = Math.max(
+    Math.max(0, Math.floor(boundedNumber(snapshot.tabCount)) || tabs.length),
+    tabs.length,
+  );
+  const activeTabId = boundedText(snapshot.activeTabId, 64);
+  const canCreate = snapshot.canCreate === true;
+  const cap = snapshot.cap === null || typeof snapshot.cap === 'number' ? snapshot.cap : null;
+  const createBlockReason = snapshot.createBlockReason
+    ? boundedText(snapshot.createBlockReason, 32) as DashboardTabListSnapshot['createBlockReason']
+    : undefined;
+
+  let startIndex = 0;
+  if (cursor !== undefined) {
+    if (!isDashboardTabId(cursor)) {
+      return boundDashboardTabMutation(mutationDenied(
+        'list',
+        'malformed_arguments',
+        'cursor must be a stable dashboard tab ID from list_dashboard_tabs.',
+      ));
+    }
+    startIndex = tabs.findIndex((tab) => tab.id === cursor);
+    if (startIndex < 0) {
+      return boundDashboardTabMutation(mutationDenied(
+        'list',
+        'tab_not_found',
+        'That dashboard tab cursor is no longer available.',
+      ));
+    }
+  }
+
+  const buildPage = (
+    pageTabs: typeof tabs,
+    nextCursor: string | undefined,
+  ): DashboardTabListSnapshot => ({
+    activeTabId,
+    tabs: pageTabs,
+    tabCount,
+    tabsTruncated: nextCursor !== undefined || snapshot.tabsTruncated === true,
+    canCreate,
+    cap,
+    ...(createBlockReason ? { createBlockReason } : {}),
+    ...(nextCursor ? { nextCursor: boundedText(nextCursor, 64) } : {}),
+  });
+
+  const remaining = tabs.slice(startIndex);
+  const page: typeof tabs = [];
+  for (let index = 0; index < remaining.length; index += 1) {
+    const tab = remaining[index];
+    if (!tab) continue;
+    const candidate = [...page, tab];
+    const following = remaining[index + 1];
+    if (JSON.stringify(buildPage(candidate, following?.id)).length > TARGET_OUTPUT_CHARS) {
+      break;
+    }
+    page.push(tab);
+  }
+  if (page.length === 0 && remaining[0]) page.push(remaining[0]);
+
+  const consumed = startIndex + page.length;
+  const nextCursor = consumed < tabs.length ? tabs[consumed]?.id : undefined;
+  const result = buildPage(page, nextCursor);
+  if (JSON.stringify(result).length > MAX_OUTPUT_CHARS) {
+    throw new SafeWebMcpError('Dashboard tab list exceeded the safe output limit.');
+  }
+  return result;
+}
+
+function boundDashboardTabMutation(result: DashboardTabMutationResult): DashboardTabMutationResult {
+  const bounded: DashboardTabMutationResult = {
+    ok: result.ok === true,
+    status: result.status,
+    actionType: result.actionType,
+    message: boundedText(result.message, 240),
+    ...(result.reason ? { reason: boundedText(result.reason, 64) as DashboardTabMutationResult['reason'] } : {}),
+    ...(result.tabId ? { tabId: boundedText(result.tabId, 64) } : {}),
+    ...(result.name ? { name: boundedText(result.name, DASHBOARD_TAB_NAME_MAX_LENGTH) } : {}),
+    ...(result.activeTabId ? { activeTabId: boundedText(result.activeTabId, 64) } : {}),
+    ...(result.unchanged === true ? { unchanged: true } : {}),
+    ...(result.alreadyExisted === true ? { alreadyExisted: true } : {}),
+    ...(typeof result.persisted === 'boolean' ? { persisted: result.persisted } : {}),
+    ...(typeof result.tabCount === 'number' ? { tabCount: Math.max(0, Math.floor(result.tabCount)) } : {}),
+    ...(typeof result.canCreate === 'boolean' ? { canCreate: result.canCreate } : {}),
+    ...(result.cap === null || typeof result.cap === 'number' ? { cap: result.cap } : {}),
+    ...(result.lockReason ? { lockReason: boundedText(result.lockReason, 32) as DashboardTabMutationResult['lockReason'] } : {}),
+  };
+  if (JSON.stringify(bounded).length > MAX_OUTPUT_CHARS) {
+    throw new SafeWebMcpError('Dashboard tab result exceeded the safe output limit.');
+  }
+  return bounded;
+}
+
 const EMPTY_NAV_CONTEXT: DashboardContextSnapshot = {
   variant: '',
   map: {
@@ -886,6 +1119,17 @@ function boundDashboardNavigationResult(result: WebMcpNavigationResult): Record<
     throw new SafeWebMcpError('Dashboard navigation result exceeded the safe output limit.');
   }
   return bounded;
+}
+
+async function applyDashboardTabAction(
+  action: DashboardTabAction,
+  app: WebMcpAppBindings,
+  options?: WebMcpExecutionOptions,
+): Promise<DashboardTabActionResult> {
+  const result = await app.applyDashboardTabAction(action, options);
+  return isDashboardTabListSnapshot(result)
+    ? boundDashboardTabList(result, action.type === 'list' ? action.cursor : undefined)
+    : boundDashboardTabMutation(result);
 }
 
 function hasOnlyOwnKeys(
@@ -1015,6 +1259,129 @@ export function buildWebMcpTools(
       ), trackEvent),
     },
     {
+      name: WEBMCP_SPA_TOOL.listMapLayers,
+      title: 'List Map Layers',
+      description:
+        'Page the canonical map-layer catalog, including disabled layers. Omit monitor for every registered layer; world lists only that variant. Each result has the stable ID, label, enabled state, monitor availability, renderer compatibility, entitlement, and a reason when the current page cannot enable it with set_map_layers. Does not load map datasets.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          monitor: {
+            type: 'string',
+            description: 'Omit for every non-sunset registered layer; world lists only that variant.',
+            enum: [...WEBMCP_MAP_LAYER_MONITORS],
+          },
+          renderer: {
+            type: 'string',
+            description: 'Optional 2d or 3d renderer compatibility filter.',
+            enum: [...WEBMCP_MAP_LAYER_RENDERERS],
+          },
+          state: {
+            type: 'string',
+            description: 'Filter to enabled layers, or layers the current page can enable.',
+            enum: [...WEBMCP_MAP_LAYER_STATES],
+          },
+          cursor: {
+            type: 'string',
+            description: 'Previous page last layer ID; reuse only with the same filters.',
+            minLength: 1,
+            maxLength: MAX_LAYER_ACTION_TARGET_ID_LENGTH,
+            pattern: DASHBOARD_LAYER_ACTION_TARGET_ID_PATTERN,
+          },
+          limit: {
+            type: 'integer',
+            description: `Page size from 1 to ${MAX_MAP_LAYER_PAGE_SIZE}.`,
+            minimum: 1,
+            maximum: MAX_MAP_LAYER_PAGE_SIZE,
+            default: DEFAULT_MAP_LAYER_PAGE_SIZE,
+          },
+        },
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true },
+      execute: withInvocationLogging(WEBMCP_SPA_TOOL.listMapLayers, async (args, extra) => {
+        const parsed = parseMapLayerCatalogArgs(args);
+        if (!parsed.ok) return parsed;
+        return listMapLayerCatalog(
+          {
+            ...await app.listMapLayerCatalog(extra),
+            targetCancellationSupported: Boolean(extra?.signal),
+          },
+          parsed.query,
+          { targetOutputChars: TARGET_OUTPUT_CHARS },
+        );
+      }, trackEvent),
+    },
+    {
+      name: WEBMCP_SPA_TOOL.listDashboardPanels,
+      title: 'List Dashboard Panels',
+      description:
+        'Page the canonical dashboard panel catalog for this tab, including disabled and unmounted panels. Optional variant, category, enabled, and available filters. Follow nextCursor until hasMore is false. Does not return panel data or enable panels. Gated panels include a stable unavailableReason.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          variant: {
+            type: 'string',
+            description: 'Monitor variant to list. Omit to include every canonical panel ID.',
+            enum: [...SITE_VARIANTS],
+          },
+          category: {
+            type: 'string',
+            description: 'Settings category key, such as core or marketsFinance.',
+            enum: [...DASHBOARD_PANEL_CATALOG_CATEGORY_KEYS],
+          },
+          enabled: {
+            type: 'boolean',
+            description: 'If set, keep panels whose enabled state matches.',
+          },
+          available: {
+            type: 'boolean',
+            description: 'If set, keep panels the current session can open.',
+          },
+          cursor: {
+            type: 'string',
+            description: 'Catalog cursor from the previous page nextCursor.',
+            minLength: 1,
+            maxLength: DASHBOARD_PANEL_ID_MAX_CHARS,
+            pattern: DASHBOARD_PANEL_ID_PATTERN,
+          },
+          limit: {
+            type: 'integer',
+            description: 'Maximum panels in this page, from 1 to 8.',
+            minimum: 1,
+            maximum: DASHBOARD_PANEL_CATALOG_MAX_LIMIT,
+            default: DASHBOARD_PANEL_CATALOG_DEFAULT_LIMIT,
+          },
+        },
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true },
+      execute: withInvocationLogging(WEBMCP_SPA_TOOL.listDashboardPanels, async (args, extra) => {
+        if (!hasOnlyOwnKeys(args, ['variant', 'category', 'enabled', 'available', 'cursor', 'limit'])) {
+          throw new SafeWebMcpError(
+            'list_dashboard_panels accepts only variant, category, enabled, available, cursor, and limit.',
+            'validation',
+          );
+        }
+        const query: DashboardPanelCatalogQuery = {};
+        if (args.variant !== undefined) query.variant = args.variant as string;
+        if (args.category !== undefined) query.category = args.category as string;
+        if (args.enabled !== undefined) query.enabled = args.enabled as boolean;
+        if (args.available !== undefined) query.available = args.available as boolean;
+        if (args.cursor !== undefined) query.cursor = args.cursor as string;
+        if (args.limit !== undefined) query.limit = args.limit as number;
+        return boundDashboardPanelCatalog(await app.listDashboardPanels(query, extra));
+      }, trackEvent, {
+        successMetadata: (_args, value) => {
+          const result = value as DashboardPanelCatalogPage;
+          return {
+            resultCount: result.panels.length,
+            hasMore: result.hasMore === true,
+          };
+        },
+      }),
+    },
+    {
       name: WEBMCP_SPA_TOOL.switchMonitor,
       title: 'Switch Monitor',
       description:
@@ -1113,7 +1480,7 @@ export function buildWebMcpTools(
             description: 'Dashboard panel ID, such as "markets" or "strategic-risk".',
             minLength: 1,
             maxLength: 96,
-            pattern: '^[a-z0-9][a-z0-9@_-]*$',
+            pattern: DASHBOARD_PANEL_ID_PATTERN,
           },
         },
         required: ['panelId'],
@@ -1342,6 +1709,208 @@ export function buildWebMcpTools(
           });
         }
         return boundSearchOpenResult(await app.openSearchResult(resultKey, extra));
+      }, trackEvent),
+    },
+    {
+      name: WEBMCP_SPA_TOOL.listDashboardTabs,
+      title: 'List Dashboard Tabs',
+      description:
+        'List dashboard tabs as named persistent panel workspaces. Returns each tab id, name, active flag, plus whether another tab can be created and why add is locked. Use tab ids, not display names, for select, rename, and delete. When tabsTruncated is true, tabCount is the total persisted workspace count and this page omitted later tabs; pass nextCursor to list the rest. Call list_dashboard_tabs again after mutations.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          cursor: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: DASHBOARD_TAB_ID_PATTERN,
+            description: 'Inclusive start tab id from a previous nextCursor. Omit to start at the first workspace.',
+          },
+        },
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true },
+      execute: withInvocationLogging(WEBMCP_SPA_TOOL.listDashboardTabs, async (args, extra) => {
+        if (!hasOnlyOwnKeys(args, ['cursor'])) {
+          return boundDashboardTabMutation(mutationDenied(
+            'list',
+            'malformed_arguments',
+            'list_dashboard_tabs accepts only an optional cursor.',
+          ));
+        }
+        if (args.cursor !== undefined && typeof args.cursor !== 'string') {
+          return boundDashboardTabMutation(mutationDenied(
+            'list',
+            'malformed_arguments',
+            'cursor must be a stable dashboard tab ID from list_dashboard_tabs.',
+          ));
+        }
+        const cursor = typeof args.cursor === 'string' ? args.cursor : undefined;
+        return applyDashboardTabAction(
+          cursor ? { type: 'list', cursor } : { type: 'list' },
+          app,
+          extra,
+        );
+      }, trackEvent),
+    },
+    {
+      name: WEBMCP_SPA_TOOL.selectDashboardTab,
+      title: 'Select Dashboard Tab',
+      description:
+        'Activate a dashboard tab by stable tab id from list_dashboard_tabs. Selecting the already-active tab is a successful no-op. Unavailable without target-side cancellation because tab changes persist to worldmonitor-tabs-v1 and the live panel workspace (same class as openCountryBrief/set_map_layers).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          tabId: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: DASHBOARD_TAB_ID_PATTERN,
+            description: 'Stable dashboard tab id from list_dashboard_tabs.',
+          },
+        },
+        required: ['tabId'],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false },
+      execute: withInvocationLogging(WEBMCP_SPA_TOOL.selectDashboardTab, async (args, extra) => {
+        if (!hasOnlyOwnKeys(args, ['tabId'])) {
+          return boundDashboardTabMutation(mutationDenied(
+            'select',
+            'malformed_arguments',
+            'select_dashboard_tab accepts only tabId.',
+          ));
+        }
+        return applyDashboardTabAction(
+          { type: 'select', tabId: typeof args.tabId === 'string' ? args.tabId : '' },
+          app,
+          extra,
+        );
+      }, trackEvent),
+    },
+    {
+      name: WEBMCP_SPA_TOOL.createDashboardTab,
+      title: 'Create Dashboard Tab',
+      description:
+        'Create a dashboard tab as a named persistent panel workspace, then activate it. Omit name to use the dashboard default. Creating a tab whose trimmed name already exists returns that tab without duplicating it. Honors the same tab cap and entitlement lock as the dashboard tab bar. Unavailable without target-side cancellation because tab changes persist to worldmonitor-tabs-v1 and the live panel workspace (same class as openCountryBrief/set_map_layers).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: DASHBOARD_TAB_NAME_MAX_LENGTH,
+            description: 'Optional display name. Omit to use the dashboard default.',
+          },
+        },
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false },
+      execute: withInvocationLogging(WEBMCP_SPA_TOOL.createDashboardTab, async (args, extra) => {
+        if (!hasOnlyOwnKeys(args, ['name'])) {
+          return boundDashboardTabMutation(mutationDenied(
+            'create',
+            'malformed_arguments',
+            'create_dashboard_tab accepts only an optional name.',
+          ));
+        }
+        const name = args.name;
+        if (name !== undefined && typeof name !== 'string') {
+          return boundDashboardTabMutation(mutationDenied(
+            'create',
+            'invalid_name',
+            `Tab names must be 1–${DASHBOARD_TAB_NAME_MAX_LENGTH} visible characters.`,
+          ));
+        }
+        return applyDashboardTabAction({ type: 'create', name }, app, extra);
+      }, trackEvent),
+    },
+    {
+      name: WEBMCP_SPA_TOOL.renameDashboardTab,
+      title: 'Rename Dashboard Tab',
+      description:
+        'Rename a dashboard tab by stable tab id. Names are trimmed and capped at 40 characters, matching the dashboard tab bar. Renaming to the current name is a successful no-op. Unavailable without target-side cancellation because tab changes persist to worldmonitor-tabs-v1 and the live panel workspace (same class as openCountryBrief/set_map_layers).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          tabId: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: DASHBOARD_TAB_ID_PATTERN,
+            description: 'Stable dashboard tab id from list_dashboard_tabs.',
+          },
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: DASHBOARD_TAB_NAME_MAX_LENGTH,
+            description: 'New display name for the tab.',
+          },
+        },
+        required: ['tabId', 'name'],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false },
+      execute: withInvocationLogging(WEBMCP_SPA_TOOL.renameDashboardTab, async (args, extra) => {
+        if (!hasOnlyOwnKeys(args, ['tabId', 'name'])) {
+          return boundDashboardTabMutation(mutationDenied(
+            'rename',
+            'malformed_arguments',
+            'rename_dashboard_tab accepts only tabId and name.',
+          ));
+        }
+        return applyDashboardTabAction(
+          {
+            type: 'rename',
+            tabId: typeof args.tabId === 'string' ? args.tabId : '',
+            name: typeof args.name === 'string' ? args.name : '',
+          },
+          app,
+          extra,
+        );
+      }, trackEvent),
+    },
+    {
+      name: WEBMCP_SPA_TOOL.deleteDashboardTab,
+      title: 'Delete Dashboard Tab',
+      description:
+        'Delete a dashboard tab by stable tab id. Requires confirm=true. Refuses to delete the last remaining tab. Unavailable without target-side cancellation because tab changes persist to worldmonitor-tabs-v1 and the live panel workspace (same class as openCountryBrief/set_map_layers).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          tabId: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            pattern: DASHBOARD_TAB_ID_PATTERN,
+            description: 'Stable dashboard tab id from list_dashboard_tabs.',
+          },
+          confirm: {
+            type: 'boolean',
+            description: 'Must be true. Delete is a destructive persistent mutation.',
+          },
+        },
+        required: ['tabId', 'confirm'],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false },
+      execute: withInvocationLogging(WEBMCP_SPA_TOOL.deleteDashboardTab, async (args, extra) => {
+        if (!hasOnlyOwnKeys(args, ['tabId', 'confirm'])) {
+          return boundDashboardTabMutation(mutationDenied(
+            'delete',
+            'malformed_arguments',
+            'delete_dashboard_tab accepts only tabId and confirm.',
+          ));
+        }
+        return applyDashboardTabAction(
+          {
+            type: 'delete',
+            tabId: typeof args.tabId === 'string' ? args.tabId : '',
+            confirm: args.confirm === true,
+          },
+          app,
+          extra,
+        );
       }, trackEvent),
     },
     {

@@ -8,7 +8,19 @@ import {
   type WebMcpMonitorKey,
   type WebMcpNavigationResult,
 } from '@/services/webmcp';
+import {
+  normalizeCatalogVariant,
+  type MapLayerCatalogSnapshot,
+} from '@/services/webmcp-map-layer-catalog';
+import type { MapLayerRuntimeAvailability } from '@/services/map-layer-runtime-availability';
+import {
+  listDashboardPanelCatalog,
+  type DashboardPanelCatalogPage,
+  type DashboardPanelCatalogQuery,
+} from '@/services/webmcp-panel-catalog';
+import type { PanelConfig } from '@/types';
 import type { AgentBusApplierOptions } from './agent-bus-applier';
+import type { RendererKind } from '@/config/map-layer-definitions';
 
 const APP_DESTROYED_RESULT: DashboardActionResult = {
   ok: false,
@@ -74,6 +86,55 @@ export function getWebMcpDashboardContext(
         .map(([panelId]) => panelId),
     },
   };
+}
+
+export function getWebMcpMapLayerCatalogSnapshot(
+  ctx: AppContext,
+  variant: string,
+  hasPremium: boolean,
+  tFn?: (key: string) => string,
+  runtimeAvailability?: MapLayerRuntimeAvailability,
+): MapLayerCatalogSnapshot {
+  if (ctx.isDestroyed) {
+    throw new DashboardBindingError('app_destroyed', 'Dashboard is no longer available.');
+  }
+  if (!ctx.map) {
+    throw new DashboardBindingError('map_unavailable', 'Map is not available.');
+  }
+
+  const mapState = ctx.map.getState();
+  const rendererKind: RendererKind = ctx.map.isGlobeMode?.()
+    ? 'globe'
+    : ctx.map.isDeckGLActive?.() ? 'deck' : 'svg';
+  return {
+    variant: normalizeCatalogVariant(variant),
+    rendererKind,
+    enabledLayers: Object.entries(mapState.layers)
+      .filter(([, enabled]) => enabled === true)
+      .map(([layer]) => layer),
+    liveLayerKeys: Object.keys(ctx.mapLayers),
+    ...(runtimeAvailability ? { runtimeAvailability } : {}),
+    hasPremium,
+    deckGlActive: Boolean(ctx.map.isDeckGLActive?.()),
+    ...(tFn ? { tFn } : {}),
+  };
+}
+
+export function listWebMcpDashboardPanels(
+  ctx: AppContext,
+  variant: string,
+  query: DashboardPanelCatalogQuery,
+  options: { isPanelAllowed: (panelId: string, config: PanelConfig) => boolean },
+): DashboardPanelCatalogPage {
+  if (ctx.isDestroyed) {
+    throw new DashboardBindingError('app_destroyed', 'Dashboard is no longer available.');
+  }
+  return listDashboardPanelCatalog({
+    currentVariant: variant,
+    panelSettings: ctx.panelSettings,
+    mountedIds: new Set(Object.keys(ctx.panels)),
+    isPanelAllowed: options.isPanelAllowed,
+  }, query);
 }
 
 export async function waitForWebMcpUiReady(
