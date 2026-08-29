@@ -77,7 +77,7 @@
     "dev:happy": "cross-env VITE_VARIANT=happy vite",
     "dev:commodity": "cross-env VITE_VARIANT=commodity vite",
     "dev:energy": "cross-env VITE_VARIANT=energy vite",
-    "postinstall": "if [ \"$WM_SKIP_INVENTORY_FACTS\" = \"1\" ] || [ -f .vercel-deploy-branch ]; then cross-env npm_config_allow_scripts= npm --prefix blog-site ci --prefer-offline; else npm run inventory:facts && cross-env npm_config_allow_scripts= npm --prefix blog-site ci --prefer-offline; fi",
+    "postinstall": "npm run inventory:facts && cross-env npm_config_allow_scripts= npm --prefix blog-site ci --prefer-offline",
     "prebuild:blog": "npm run product:facts",
     "build:blog": "npm run build:blog:raw",
     "build:blog:raw": "cd blog-site && npm run build && rm -rf ../public/blog && mkdir -p ../public/blog && cp -r dist/* ../public/blog/",
