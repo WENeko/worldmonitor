@@ -232,13 +232,10 @@ export default async function handler(req, res) {
   }
 }
 `;
-}
-
-// Regenerate the source-attribution manifest against the staged tree. The
-// scanner only looks at scripts/, server/, api/ and src/, so route files moved
-// out of api/ drop out of the scan: hosts whose references only lived there
-// must be explicitly retired (buildManifest throws otherwise) and hosts still
-// referenced elsewhere get their reference lists rewritten.
+}  // Historical note: route staging must not regenerate the source-attribution
+  // manifest. The scanner only looks at scripts/, server/, api/ and src/;
+  // moved routes would look like retired sources even though they remain in
+  // .vercel-api-routes/ and are still deployed.
 function refreshSourceAttribution() {
   const inventory = scanUpstreamHosts(root);
   const previous = loadManifest(root);

@@ -69,6 +69,8 @@ jobs:
           node scripts/generate-inventory-facts.mjs
           npm run inventory:facts
 
+          # Keep the validated source tree available while creating vercel;
+          # never copy the pre-adaptation script back into the working tree.
           git add -A
           git diff --cached --quiet && echo "No changes" || git commit -m 'chore: sync application code and generated manifests from upstream/main'
           git push --force-with-lease origin HEAD:main
@@ -76,8 +78,9 @@ jobs:
       - name: Generate Vercel deployment files
         run: |
           node scripts/prepare-vercel.mjs --force
-          # The script preserves the validated manifest from main while it
-          # transforms only the deployment layout.
+          # The adapted branch keeps the manifest produced by main. Do not
+          # invoke source-attribution again after route staging: its scanner
+          # intentionally cannot see moved api/ files.
           git diff --check
 
       - name: Preserve build-time generated paths
