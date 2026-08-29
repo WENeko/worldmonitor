@@ -551,7 +551,10 @@ async function main() {
   createEmptyMcpDir();
   forkUnlockProGates();
 
-  const retiredCount = refreshSourceAttribution();
+  // Keep the manifest generated against the canonical source tree. The Vercel
+  // checkout still contains the staged route tree, so regenerating here makes
+  // postinstall see a ledger that can never pass its own scanner. The workflow
+  // validates this source manifest before adaptation.
 
   await writeFile(generatedIndex, renderIndex(routes));
   rewriteVercelDestinations();
@@ -559,8 +562,7 @@ async function main() {
 
   const stagedCount = files.filter((relativePath) => !staysInApi(relativePath)).length;
   console.log(
-    `[prepare-vercel] staged ${stagedCount} api files (${routes.length} routes) behind api/index.ts; ` +
-    `${retiredCount} retired source-attribution host(s)`,
+    `[prepare-vercel] staged ${stagedCount} api files (${routes.length} routes) behind api/index.ts`,
   );
 }
 

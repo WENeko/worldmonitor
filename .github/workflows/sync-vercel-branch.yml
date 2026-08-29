@@ -78,12 +78,8 @@ jobs:
       - name: Generate Vercel deployment files
         run: |
           node scripts/prepare-vercel.mjs --force
-          # prepare-vercel invokes source-attribution against the adapted tree
-          # and retires route-only hosts. Keep that adapted manifest: Vercel's
-          # postinstall scans the adapted checkout, not canonical main.
-          # The source-attribution command must therefore run after adaptation,
-          # and its output must be committed as part of the Vercel branch.
-          node scripts/source-attribution.mjs --write
+          # prepare-vercel leaves the canonical source manifest untouched.
+          # Vercel postinstall validates that manifest against its source tree.
           git diff --check
 
       - name: Preserve build-time generated paths
