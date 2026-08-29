@@ -34,10 +34,10 @@ jobs:
           git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
           git fetch --no-tags upstream main
           git checkout -B "${CANONICAL_BRANCH}" "upstream/main"
-          # Restore fork-specific workflows before pushing.
-          # GitHub Apps cannot modify .github/workflows/ files,
-          # so upstream workflow changes must not be force-pushed.
-          git checkout origin/main -- .github/workflows/
+          # GitHub Apps cannot push .github/workflows/ files.
+          # Remove them from the index so they are excluded from the push.
+          git rm -r --cached .github/workflows/ 2>/dev/null || true
+          git commit -m "chore(ci): remove workflow files from sync index" --allow-empty || true
           git push --force-with-lease origin "HEAD:${CANONICAL_BRANCH}"
 
       - name: Install dependencies
