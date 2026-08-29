@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  workflows: write
 
 concurrency:
   group: sync-vercel-branch
@@ -35,6 +34,10 @@ jobs:
           git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
           git fetch --no-tags upstream main
           git checkout -B "${CANONICAL_BRANCH}" "upstream/main"
+          # Restore fork-specific workflows before pushing.
+          # GitHub Apps cannot modify .github/workflows/ files,
+          # so upstream workflow changes must not be force-pushed.
+          git checkout origin/main -- .github/workflows/
           git push --force-with-lease origin "HEAD:${CANONICAL_BRANCH}"
 
       - name: Install dependencies
