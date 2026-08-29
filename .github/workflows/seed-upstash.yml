@@ -1,0 +1,81 @@
+# Populate the fork's Upstash Redis with the WorldMonitor seeders.
+#
+# The dashboard's /api/bootstrap reads its initial state from Redis. Without
+# seeded data every panel is empty, so to make the deployed fork useful the
+# Redis backing it must be filled. Upstream does this with a Railway cron; this
+# fork has no Railway, so this manual workflow runs the same seeders against
+# the Upstash database you configured in Vercel.
+#
+# Trigger it from the GitHub UI: Actions -> "Populate Upstash Redis" ->
+# "Run workflow". It is workflow_dispatch ONLY, so it never consumes
+# free-tier minutes automatically.
+#
+# Required repo secrets:
+#   UPSTASH_REDIS_REST_URL    e.g. https://<db>-<region>.upstash.io
+#   UPSTASH_REDIS_REST_TOKEN  the REST token, not the master password
+#
+# Optional secret (add the same source keys you want seeds to use):
+#   GROQ_API_KEY, OPENROUTER_API_KEY, NASA_FIRMS_API_KEY, FINNHUB_API_KEY,
+#   FRED_API_KEY, EIA_API_KEY, AISSTREAM_API_KEY, ACLED_* / CLOUDFLARE_API_TOKEN,
+#   AVIATIONSTACK_API, OPENAQ_API_KEY, WAQI_API_KEY ...
+# Seeders without their key are SKIPPED gracefully and the rest still populate.
+
+name: Populate Upstash Redis
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch whose seeders to run'
+        required: false
+        default: 'main'
+        type: string
+
+concurrency:
+  group: seed-upstash
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || 'main' }}
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # Seeders only need the scripts/ dependency set (15 packages). The root
+      # npm install is huge and its postinstall runs inventory:facts; avoid it.
+      - name: Install seeder dependencies
+        run: npm --prefix scripts ci --prefer-offline
+
+      - name: Run seeders against Upstash
+        env:
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          # Optional source keys (empty when the secret is unset; seeders skip).
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          NASA_FIRMS_API_KEY: ${{ secrets.NASA_FIRMS_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+          AISSTREAM_API_KEY: ${{ secrets.AISSTREAM_API_KEY }}
+          ACLED_ACCESS_TOKEN: ${{ secrets.ACLED_ACCESS_TOKEN }}
+          ACLED_EMAIL: ${{ secrets.ACLED_EMAIL }}
+          ACLED_PASSWORD: ${{ secrets.ACLED_PASSWORD }}
+          AVIATIONSTACK_API: ${{ secrets.AVIATIONSTACK_API }}
+          OPENAQ_API_KEY: ${{ secrets.OPENAQ_API_KEY }}
+          WAQI_API_KEY: ${{ secrets.WAQI_API_KEY }}
+        run: |
+          if [ -z "$UPSTASH_REDIS_REST_URL" ] || [ -z "$UPSTASH_REDIS_REST_TOKEN" ]; then
+            echo "::error::UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN are required repo secrets."
+            exit 1
+          fi
+          sh scripts/run-seeders.sh
