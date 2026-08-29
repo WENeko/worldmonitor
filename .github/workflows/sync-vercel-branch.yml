@@ -110,9 +110,17 @@ jobs:
           git checkout -- .
           git clean -fd
 
-          git fetch origin "${VERCEL_BRANCH}"
-          git checkout -B "${VERCEL_BRANCH}" "origin/${VERCEL_BRANCH}"
+          # Try to fetch vercel branch, create if it doesn't exist
+          git fetch origin "${VERCEL_BRANCH}" 2>/dev/null || echo "No remote vercel branch, will create"
+
+          # Create or reset vercel branch from current HEAD
+          git checkout -B "${VERCEL_BRANCH}" HEAD
+
+          # Stage all changes (including generated files from prepare-vercel)
+          # We need to re-run prepare-vercel on the vercel branch
+          node scripts/prepare-vercel.mjs --force 2>/dev/null || true
+
           git add -A
-          git diff --cached --quiet && exit 0
+          git diff --cached --quiet && echo "No changes to vercel branch" && exit 0
           git commit -m 'chore(vercel): regenerate deployment branch from upstream/main'
           git push origin "HEAD:${VERCEL_BRANCH}"
