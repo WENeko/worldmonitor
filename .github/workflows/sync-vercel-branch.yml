@@ -102,8 +102,8 @@ jobs:
 
       - name: Publish adapted Vercel branch
         run: |
-          touch .vercel-deploy-branch
           git checkout -B "${VERCEL_BRANCH}" HEAD
+          node -e "const fs=require('fs'); const p='package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.scripts.postinstall='cross-env npm_config_allow_scripts= npm --prefix blog-site ci --prefer-offline'; fs.writeFileSync(p, JSON.stringify(j,null,2)+'\\n');"
           git add -A
           git diff --cached --quiet && echo "No changes to vercel branch" && exit 0
           git commit -m 'chore(vercel): regenerate deployment branch from upstream/main'
