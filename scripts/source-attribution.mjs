@@ -30,6 +30,9 @@ import {
 } from './source-catalog-identity.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const SOURCE_SCAN_ROOT = process.env.WM_CANONICAL_ROOT
+  ? join(process.env.WM_CANONICAL_ROOT)
+  : ROOT;
 const MANIFEST_PATH = 'shared/source-attribution-manifest.json';
 const DOCS_PATH = 'docs/source-attribution.mdx';
 // MDX comments, not HTML ones: Mintlify parses docs/source-attribution.mdx as MDX v3,

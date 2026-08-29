@@ -16,8 +16,12 @@ import {
 } from './source-attribution.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const CANONICAL_ROOT = process.env.WM_CANONICAL_ROOT
+  ? join(process.env.WM_CANONICAL_ROOT)
+  : ROOT;
 
 const read = (path) => readFileSync(join(ROOT, path), 'utf8');
+const readCanonical = (path) => readFileSync(join(CANONICAL_ROOT, path), 'utf8');
 const readJson = (path) => JSON.parse(read(path));
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 
@@ -78,7 +82,7 @@ export function buildInventoryFacts(stats = loadStatsForInventoryFacts()) {
 }
 
 function expectedInventoryOutputs({ loadStats = loadStatsForInventoryFacts } = {}) {
-  const productFacts = readJson('shared/product-facts.generated.json');
+  const productFacts = JSON.parse(readCanonical('shared/product-facts.generated.json'));
   if ('capabilities' in productFacts) {
     throw new Error('shared/product-facts.generated.json must not contain extensible inventory counts');
   }

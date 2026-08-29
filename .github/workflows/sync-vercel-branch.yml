@@ -78,6 +78,9 @@ jobs:
       - name: Generate Vercel deployment files
         run: |
           node scripts/prepare-vercel.mjs --force
+          # The adapted tree intentionally removes API route sources. Vercel's
+          # postinstall must not rescan that transformed tree; inventory was
+          # already validated on canonical main above.
           # The adapted branch keeps the manifest produced by main. Do not
           # invoke source-attribution again after route staging: its scanner
           # intentionally cannot see moved api/ files.
