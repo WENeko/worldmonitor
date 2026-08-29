@@ -83,7 +83,7 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Prepare Vercel deployment tree
+      - name: Generate Vercel deployment files
         run: |
           echo "=== Running prepare-vercel.mjs ==="
           node scripts/prepare-vercel.mjs --force 2>&1 || {
@@ -98,7 +98,6 @@ jobs:
           ls -la .vercel-api-routes/ 2>/dev/null | head -20 || echo "No .vercel-api-routes"
           ls -la api/index.ts 2>/dev/null || echo "No api/index.ts"
           git diff --check || true
-          # Don't fail on typecheck errors for now
           npm run typecheck || echo "Typecheck warnings (non-fatal)"
 
       - name: Publish adapted Vercel branch
@@ -106,20 +105,10 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
-          # Clean working tree before switching branches to avoid conflicts
-          git checkout -- .
-          git clean -fd
-
-          # Try to fetch vercel branch, create if it doesn't exist
-          git fetch origin "${VERCEL_BRANCH}" 2>/dev/null || echo "No remote vercel branch, will create"
-
-          # Create or reset vercel branch from current HEAD
+          # Create or reset vercel branch from current HEAD (with generated files)
           git checkout -B "${VERCEL_BRANCH}" HEAD
 
-          # Stage all changes (including generated files from prepare-vercel)
-          # We need to re-run prepare-vercel on the vercel branch
-          node scripts/prepare-vercel.mjs --force 2>/dev/null || true
-
+          # Stage all generated files
           git add -A
           git diff --cached --quiet && echo "No changes to vercel branch" && exit 0
           git commit -m 'chore(vercel): regenerate deployment branch from upstream/main'
