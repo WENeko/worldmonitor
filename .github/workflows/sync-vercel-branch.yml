@@ -33,11 +33,35 @@ jobs:
         run: |
           git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
           git fetch --no-tags upstream main
-          git checkout -B "${CANONICAL_BRANCH}" "upstream/main"
-          # GitHub Apps cannot push .github/workflows/ files.
-          # Remove them from the index so they are excluded from the push.
-          git rm -r --cached .github/workflows/ 2>/dev/null || true
-          git commit -m "chore(ci): remove workflow files from sync index" --allow-empty || true
+
+          # Start from origin/main to preserve existing workflow files
+          git checkout -B "${CANONICAL_BRANCH}" "origin/main"
+
+          # Apply all non-workflow file changes from upstream/main
+          git diff --name-only origin/main upstream/main \
+            -- . ':!.github/workflows/' \
+            | while IFS= read -r file; do
+                git checkout upstream/main -- "$file" 2>/dev/null || true
+              done
+
+          # Also pick up any new files from upstream that aren't workflows
+          git diff --diff-filter=A --name-only origin/main upstream/main \
+            -- . ':!.github/workflows/' \
+            | while IFS= read -r file; do
+                git checkout upstream/main -- "$file" 2>/dev/null || true
+              done
+
+          # Remove files deleted in upstream that aren't workflows
+          git diff --diff-filter=D --name-only origin/main upstream/main \
+            -- . ':!.github/workflows/' \
+            | while IFS= read -r file; do
+                git rm "$file" 2>/dev/null || true
+              done
+
+          # Commit and push only if there are changes
+          git add -A
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "chore: sync application code from upstream/main"
           git push --force-with-lease origin "HEAD:${CANONICAL_BRANCH}"
 
       - name: Install dependencies
