@@ -385,7 +385,6 @@ Runs before every `git push`:
 | `contributor-trust.yml` | PR | Gates untrusted first-time-contributor runs |
 | `stacked-merge-guard.yml` | PR (including base edits), push to main | Required pre-merge check (#7006): fails when a PR's base is not `main` and that base branch's own PR is already merged, which is how a stacked child can show MERGED while `main` never receives the commits |
 | `orphaned-stacked-merge-monitor.yml` | PR closed and merged | Post-merge safety net for #7006: fails when the merge commit is not an ancestor of `main`, then opens an issue and comments on the purple PR |
-| `sync-vercel-branch.yml` | Hourly cron, manual | Fork sync: merges upstream `koala73/worldmonitor` application code into `main` (preserving fork-only workflow/scripts), validates the canonical source-attribution manifest, then regenerates the adapted `vercel` deployment branch (API routes staged into `.vercel-api-routes/`, single generated `api/index.ts` router, package.json install/build overrides so Vercel's postinstall/build never rescan the transformed tree) |
 | `deploy-gate.yml` | After Test/Typecheck/Lint Code/Security Audit/Stacked Merge Guard complete | Aggregates required smoke-gate statuses onto the head SHA for branch protection |
 | `indexnow-submit.yml` | Successful Production deployment, manual | Submits deployment-relevant canonical URLs to IndexNow only after their host-specific ownership keys are directly reachable |
 | `convex-deploy.yml` | Push to main, manual | Deploys Convex backend functions |
