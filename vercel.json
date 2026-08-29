@@ -1,6 +1,5 @@
 {
   "buildCommand": "npm run build:full",
-  "installCommand": "WM_SKIP_INVENTORY_FACTS=1 npm install",
   "ignoreCommand": "bash scripts/vercel-ignore.sh",
   "crons": [],
   "redirects": [
