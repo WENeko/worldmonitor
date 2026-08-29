@@ -85,10 +85,12 @@ jobs:
 
       - name: Generate Vercel deployment files
         run: |
+          echo "=== Updating source-attribution manifest ==="
+          node scripts/source-attribution.mjs --write 2>&1 || echo "source-attribution update failed (non-fatal)"
+
           echo "=== Running prepare-vercel.mjs ==="
           node scripts/prepare-vercel.mjs --force 2>&1 || {
             echo "=== prepare-vercel.mjs failed ==="
-            node scripts/source-attribution.mjs 2>&1 || true
             echo "=== Continuing with partial deployment ==="
           }
 
@@ -97,14 +99,10 @@ jobs:
           echo "=== Checking generated files ==="
           ls -la .vercel-api-routes/ 2>/dev/null | head -20 || echo "No .vercel-api-routes"
           ls -la api/index.ts 2>/dev/null || echo "No api/index.ts"
-          git diff --check || true
 
       - name: Publish adapted Vercel branch
         run: |
           # Copy api/ files that build scripts need to write to back from staging
-          # prepare-vercel.mjs moves routes to .vercel-api-routes/ but build scripts
-          # still read/write from api/. The module loader hook handles reads at runtime,
-          # but build-time writes need the original paths to exist.
           if [ -d ".vercel-api-routes/mcp/skill-extension" ]; then
             mkdir -p api/mcp/skill-extension
             cp .vercel-api-routes/mcp/skill-extension/*.ts api/mcp/skill-extension/ 2>/dev/null || true
