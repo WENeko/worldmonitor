@@ -102,6 +102,7 @@ jobs:
 
       - name: Publish adapted Vercel branch
         run: |
+          touch .vercel-deploy-branch
           git checkout -B "${VERCEL_BRANCH}" HEAD
           git add -A
           git diff --cached --quiet && echo "No changes to vercel branch" && exit 0
