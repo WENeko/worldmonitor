@@ -84,8 +84,6 @@ jobs:
           # The source-attribution command must therefore run after adaptation,
           # and its output must be committed as part of the Vercel branch.
           node scripts/source-attribution.mjs --write
-          node scripts/generate-inventory-facts.mjs
-          npm run inventory:facts
           git diff --check
 
       - name: Preserve build-time generated paths
