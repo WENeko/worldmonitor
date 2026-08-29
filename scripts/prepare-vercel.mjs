@@ -551,9 +551,10 @@ async function main() {
   createEmptyMcpDir();
   forkUnlockProGates();
 
-  // The manifest must describe the final adapted checkout, because Vercel runs
-  // inventory:facts from that checkout during npm install.
-  const retiredCount = refreshSourceAttribution();
+  // The manifest remains the canonical source ledger. Route staging is a
+  // deployment-layout transform, not a source lifecycle event: retiring hosts
+  // here makes Vercel's postinstall disagree with the source manifest shipped
+  // by main. The workflow validates and commits the ledger before staging.
 
   await writeFile(generatedIndex, renderIndex(routes));
   rewriteVercelDestinations();
@@ -561,8 +562,7 @@ async function main() {
 
   const stagedCount = files.filter((relativePath) => !staysInApi(relativePath)).length;
   console.log(
-    `[prepare-vercel] staged ${stagedCount} api files (${routes.length} routes) behind api/index.ts; ` +
-    `${retiredCount} retired source-attribution host(s)`,
+    `[prepare-vercel] staged ${stagedCount} api files (${routes.length} routes) behind api/index.ts`,
   );
 }
 

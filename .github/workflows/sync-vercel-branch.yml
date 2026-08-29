@@ -76,8 +76,8 @@ jobs:
       - name: Generate Vercel deployment files
         run: |
           node scripts/prepare-vercel.mjs --force
-          # prepare-vercel regenerates the manifest after staging, matching the
-          # exact tree that Vercel clones before its postinstall.
+          # The script preserves the validated manifest from main while it
+          # transforms only the deployment layout.
           git diff --check
 
       - name: Preserve build-time generated paths
