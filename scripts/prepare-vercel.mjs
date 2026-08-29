@@ -464,6 +464,96 @@ function forkUnlockProGates() {
   console.log('[prepare-vercel] applied fork pro-unlock patches (panels, dashboards, banner)');
 }
 
+const FORK_VARIANT_PATCHES = [
+  {
+    description: 'variant switcher treats every non-upstream host as local (src/app/panel-layout.ts)',
+    file: join(root, 'src', 'app', 'panel-layout.ts'),
+    marker:
+      "const local = this.ctx.isDesktopApp || location.hostname === 'localhost' || location.hostname === '127.0.0.1';",
+    // Keep href '#' so a non-local click stages & reloads instead of hopping to
+    // a per-variant subdomain that only the upstream deployment serves.
+    replacement:
+      "const _h = location.hostname;\n" +
+      "const local = this.ctx.isDesktopApp || _h === 'localhost' || _h === '127.0.0.1' || (" +
+      "_h !== 'worldmonitor.app' && _h !== 'www.worldmonitor.app' && !_h.endsWith('.worldmonitor.app'));",
+    replaceAll: false,
+  },
+  {
+    description: 'variant click handler treats every non-upstream host as local dev (src/app/event-handlers.ts)',
+    file: join(root, 'src', 'app', 'event-handlers.ts'),
+    marker: "const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';",
+    replacement:
+      "const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || " +
+      "(location.hostname !== 'worldmonitor.app' && location.hostname !== 'www.worldmonitor.app' " +
+      "&& !location.hostname.endsWith('.worldmonitor.app'));",
+    // Surface twice: the inline listener binder and the MobilePrimaryNav helper.
+    replaceAll: true,
+  },
+  {
+    description: 'SITE_VARIANT resolves locally on non-upstream hosts (src/config/variant.ts)',
+    file: join(root, 'src', 'config', 'variant.ts'),
+    marker:
+      "  if (h === 'localhost' || h === '127.0.0.1') {\n" +
+      '    const stored = loadStoredVariant();\n' +
+      '    if (isSiteVariant(stored)) return stored;\n' +
+      '    return buildVariant;\n' +
+      '  }\n' +
+      '\n' +
+      "  return 'full';\n" +
+      '})();',
+    replacement:
+      '  // [fork-patch] Any host other than the upstream worldmonitor.app deployment\n' +
+      '  // (self-hosted, Vercel preview, custom domain) uses local variant selection:\n' +
+      '  // an explicit ?variant= URL param wins, then localStorage, then the build\n' +
+      '  // default — exactly like localhost / the desktop app.\n' +
+      '  const onUpstreamHost =\n' +
+      "    h === 'worldmonitor.app' ||\n" +
+      "    h === 'www.worldmonitor.app' ||\n" +
+      "    h.endsWith('.worldmonitor.app');\n" +
+      "  if (h === 'localhost' || h === '127.0.0.1' || !onUpstreamHost) {\n" +
+      '    try {\n' +
+      "      const urlVariant = new URLSearchParams(window.location.search).get('variant');\n" +
+      '      if (isSiteVariant(urlVariant)) return urlVariant;\n' +
+      '    } catch { /* ignore */ }\n' +
+      '    const stored = loadStoredVariant();\n' +
+      '    if (isSiteVariant(stored)) return stored;\n' +
+      '    return buildVariant;\n' +
+      '  }\n' +
+      '\n' +
+      "  return 'full';\n" +
+      '})();',
+    replaceAll: false,
+  },
+  {
+    description: 'prepaint reads the variant from localStorage on non-upstream hosts (index.html)',
+    file: join(root, 'index.html'),
+    marker:
+      "if(!v&&(h==='localhost'||h==='127.0.0.1'||'__TAURI_INTERNALS__' in window))v=localStorage.getItem('worldmonitor-variant');",
+    replacement:
+      "if(!v&&(h==='localhost'||h==='127.0.0.1'||'__TAURI_INTERNALS__' in window||(" +
+      "h!=='worldmonitor.app'&&h!=='www.worldmonitor.app'&&!h.endsWith('.worldmonitor.app'))))v=localStorage.getItem('worldmonitor-variant');",
+    replaceAll: false,
+  },
+];
+
+function forkVariantSwitchPatches() {
+  for (const { description, file, marker, replacement, replaceAll } of FORK_VARIANT_PATCHES) {
+    const raw = readFileSync(file, 'utf8');
+    if (!raw.includes(marker)) {
+      throw new Error(
+        `[fork-variant] patch marker not found for: ${description}. ` +
+        'Upstream likely changed this code — update scripts/prepare-vercel.mjs so the ' +
+        'Vercel deploy branch keeps the variant switcher local on the fork.',
+      );
+    }
+    writeFileSync(
+      file,
+      replaceAll ? raw.split(marker).join(replacement) : raw.replace(marker, replacement),
+    );
+  }
+  console.log('[prepare-vercel] applied fork variant-switch patches (tabs stay local on fork)');
+}
+
 async function main() {
   if (!(await stat(apiDir).catch(() => null))) {
     throw new Error('api/ directory is missing; the canonical repository layout is required');
@@ -525,6 +615,7 @@ async function main() {
   allowStagedGitignoreExceptions();
   createEmptyMcpDir();
   forkUnlockProGates();
+  forkVariantSwitchPatches();
 
 
   await writeFile(generatedIndex, renderIndex(routes));
