@@ -79,13 +79,13 @@ jobs:
         run: |
           node scripts/prepare-vercel.mjs --force
           # prepare-vercel invokes source-attribution against the adapted tree
-          # and retires route-only hosts. Restore the canonical manifest after
-          # adaptation so Vercel postinstall sees the same ledger as main.
-          git show origin/main:shared/source-attribution-manifest.json > shared/source-attribution-manifest.json
-          # Do not run inventory:facts here: the adapted tree intentionally no
-          # longer contains the original api/ route paths, so its scanner cannot
-          # validate the canonical manifest. Inventory artifacts were already
-          # generated and validated before adaptation.
+          # and retires route-only hosts. Keep that adapted manifest: Vercel's
+          # postinstall scans the adapted checkout, not canonical main.
+          # The source-attribution command must therefore run after adaptation,
+          # and its output must be committed as part of the Vercel branch.
+          node scripts/source-attribution.mjs --write
+          node scripts/generate-inventory-facts.mjs
+          npm run inventory:facts
           git diff --check
 
       - name: Preserve build-time generated paths
