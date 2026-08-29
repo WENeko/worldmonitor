@@ -110,7 +110,9 @@ jobs:
 
           # Create directories that build scripts need to write to
           # These were moved by prepare-vercel.mjs but build scripts still write to api/
+          # Use .gitkeep files so git tracks the empty directories
           mkdir -p api/mcp/skill-extension
+          touch api/mcp/skill-extension/.gitkeep
 
           # Stage all generated files
           git add -A
