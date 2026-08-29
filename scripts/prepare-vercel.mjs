@@ -554,6 +554,74 @@ function forkVariantSwitchPatches() {
   console.log('[prepare-vercel] applied fork variant-switch patches (tabs stay local on fork)');
 }
 
+// The single-function branch stages the ENTIRE api/ tree into .vercel-api-routes/
+// (so Vercel sees one function). source-attribution's SOURCE_ROOTS scan only walks
+// api/, so after staging the scan no longer matches the committed
+// shared/source-attribution-manifest.json (which references api/... paths) and
+// `inventory:facts` / `build:crawlable-corpus` fail the deploy. Make the deploy
+// branch scan .vercel-api-routes as the api/ mirror so scan-parity holds again.
+const FORK_SOURCE_ATTRIBUTION_PATCHES = [
+  {
+    description: 'scan .vercel-api-routes as the api/ mirror (walker tail)',
+    file: join(root, 'scripts', 'source-attribution.mjs'),
+    marker:
+      "  for (const root of SOURCE_ROOTS) visit(root);\n" +
+      '  return files.sort();\n' +
+      '}',
+    replacement:
+      "  for (const root of SOURCE_ROOTS) visit(root);\n" +
+      '  // [fork-patch] single-function branch mirrors api/ into .vercel-api-routes/;\n' +
+      '  // scan it too so scan-parity with the committed api/ manifest holds.\n' +
+      "  visit('.vercel-api-routes');\n" +
+      '  return files.sort();\n' +
+      '}',
+  },
+  {
+    description: 'canonical ref path for files staged under .vercel-api-routes/',
+    file: join(root, 'scripts', 'source-attribution.mjs'),
+    marker:
+      '  for (const relativePath of walkSourceFiles(rootDir)) {\n' +
+      '    const source = read(rootDir, relativePath);',
+    replacement:
+      '  for (const relativePath of walkSourceFiles(rootDir)) {\n' +
+      "    const refPath = relativePath.startsWith('.vercel-api-routes/') ? 'api/' + relativePath.slice('.vercel-api-routes/'.length) : relativePath;\n" +
+      '    const source = read(rootDir, relativePath);',
+  },
+  {
+    description: 'classify staged routes by their canonical api/ path (kind)',
+    file: join(root, 'scripts', 'source-attribution.mjs'),
+    marker: '      const kind = relativePath === STATUS_FILE',
+    replacement: '      const kind = refPath === STATUS_FILE',
+  },
+  {
+    description: 'feed detection uses canonical api/ path',
+    file: join(root, 'scripts', 'source-attribution.mjs'),
+    marker: ': FEED_FILES.has(relativePath)',
+    replacement: ': FEED_FILES.has(refPath)',
+  },
+  {
+    description: 'record reference against canonical api/ path',
+    file: join(root, 'scripts', 'source-attribution.mjs'),
+    marker: 'recordHost(host, kind, relativePath);',
+    replacement: 'recordHost(host, kind, refPath);',
+  },
+];
+
+function forkSourceAttributionScan() {
+  for (const { description, file, marker, replacement } of FORK_SOURCE_ATTRIBUTION_PATCHES) {
+    const raw = readFileSync(file, 'utf8');
+    if (!raw.includes(marker)) {
+      throw new Error(
+        `[fork-attribution] patch marker not found for: ${description}. ` +
+        'Upstream likely changed source-attribution.mjs — update scripts/prepare-vercel.mjs ' +
+        'so the Vercel deploy branch keeps scan-parity after staging into .vercel-api-routes/.',
+      );
+    }
+    writeFileSync(file, raw.replace(marker, replacement));
+  }
+  console.log('[prepare-vercel] applied fork source-attribution scan remap (.vercel-api-routes -> api/)');
+}
+
 async function main() {
   if (!(await stat(apiDir).catch(() => null))) {
     throw new Error('api/ directory is missing; the canonical repository layout is required');
@@ -616,6 +684,7 @@ async function main() {
   createEmptyMcpDir();
   forkUnlockProGates();
   forkVariantSwitchPatches();
+  forkSourceAttributionScan();
 
 
   await writeFile(generatedIndex, renderIndex(routes));
