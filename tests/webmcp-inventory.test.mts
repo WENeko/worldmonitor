@@ -130,7 +130,9 @@ function createBindings(overrides: Record<string, unknown> = {}) {
         panels: { mounted: ['map'], enabled: ['map'] },
       },
     }),
-    applyDashboardAction: async (action: { type: 'open_panel' | 'set_view' | 'set_layers' }) => ({
+    applyDashboardAction: async (action: {
+      type: 'open_panel' | 'set_view' | 'set_layers' | 'set_time_range' | 'focus_country' | 'set_map_mode';
+    }) => ({
       ok: true,
       status: 'applied' as const,
       actionType: action.type,
@@ -211,6 +213,9 @@ const VALID_INPUTS: Record<string, Record<string, unknown>> = {
   set_panel_enabled: { panelId: 'giving', enabled: true },
   set_map_view: { view: 'eu', zoom: 4 },
   set_map_layers: { layers: { weather: true } },
+  set_time_range: { timeRange: '24h' },
+  focus_country: { iso2: 'DE' },
+  set_map_mode: { mode: '2d' },
   search_dashboard: { query: 'germany' },
   open_search_result: { resultKey: `sr_${'a'.repeat(32)}` },
   list_dashboard_tabs: {},
@@ -279,6 +284,9 @@ const WEBMCP_FOCUSED_VERIFICATION_TESTS = [
   'tests/webmcp-dashboard.test.mts',
   'tests/dashboard-tab-actions.test.mts',
   'tests/webmcp-panel-catalog.test.mts',
+  'tests/agent-bus-actions.test.mts',
+  'tests/agent-bus-applier.test.mts',
+  'tests/country-map-focus.test.mts',
   'tests/webmcp-runtime.test.mjs',
   'tests/webmcp-analytics-policy.test.mjs',
   'tests/webmcp-evals.test.mjs',
