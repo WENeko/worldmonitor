@@ -39,42 +39,35 @@ jobs:
           git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
           git fetch --no-tags upstream main
 
-          # Save fork-specific files that don't exist in upstream
           mkdir -p /tmp/fork-files/scripts /tmp/fork-files/deploy
           cp scripts/prepare-vercel.mjs /tmp/fork-files/scripts/ 2>/dev/null || true
           cp scripts/source-attribution.mjs /tmp/fork-files/scripts/ 2>/dev/null || true
           cp -r deploy/oci /tmp/fork-files/deploy/ 2>/dev/null || true
 
-          # Start from origin/main to preserve existing workflow files
           git checkout -B "${CANONICAL_BRANCH}" "origin/main"
 
-          # Apply all non-workflow file changes from upstream/main
           git diff --name-only origin/main upstream/main \
             -- . ':!.github/workflows/' \
             | while IFS= read -r file; do
                 git checkout upstream/main -- "$file" 2>/dev/null || true
               done
 
-          # Also pick up any new files from upstream that aren't workflows
           git diff --diff-filter=A --name-only origin/main upstream/main \
             -- . ':!.github/workflows/' \
             | while IFS= read -r file; do
                 git checkout upstream/main -- "$file" 2>/dev/null || true
               done
 
-          # Remove files deleted in upstream that aren't workflows
           git diff --diff-filter=D --name-only origin/main upstream/main \
             -- . ':!.github/workflows/' \
             | while IFS= read -r file; do
                 git rm "$file" 2>/dev/null || true
               done
 
-          # Restore fork-specific files
           cp /tmp/fork-files/scripts/prepare-vercel.mjs scripts/ 2>/dev/null || true
           cp /tmp/fork-files/scripts/source-attribution.mjs scripts/ 2>/dev/null || true
           cp -r /tmp/fork-files/deploy/oci deploy/ 2>/dev/null || true
 
-          # Commit and push only if there are changes
           git add -A
           git diff --cached --quiet && echo "No changes" && exit 0
           git commit -m "chore: sync application code from upstream/main"
@@ -83,35 +76,29 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Generate Vercel deployment files
-        run: |
-          echo "=== Updating source-attribution manifest ==="
-          node scripts/source-attribution.mjs --write 2>&1 || echo "source-attribution update failed (non-fatal)"
+      - name: Regenerate source attribution manifest
+        run: node scripts/source-attribution.mjs --write
 
-          echo "=== Running prepare-vercel.mjs ==="
-          node scripts/prepare-vercel.mjs --force 2>&1 || {
-            echo "=== prepare-vercel.mjs failed ==="
-            echo "=== Continuing with partial deployment ==="
-          }
+      - name: Generate Vercel deployment files
+        run: node scripts/prepare-vercel.mjs --force
+
+      - name: Prepare build-time generated paths
+        run: |
+          # prepare-vercel stages runtime routes under .vercel-api-routes,
+          # while build-agent-skills-index writes to the original API path.
+          mkdir -p api/mcp/skill-extension
+          cp .vercel-api-routes/mcp/skill-extension/*.ts api/mcp/skill-extension/
 
       - name: Validate generated deployment
         run: |
-          echo "=== Checking generated files ==="
-          ls -la .vercel-api-routes/ 2>/dev/null | head -20 || echo "No .vercel-api-routes"
-          ls -la api/index.ts 2>/dev/null || echo "No api/index.ts"
+          test -f api/index.ts
+          test -f api/mcp/skill-extension/generated.ts
+          test -d .vercel-api-routes
+          git diff --check
 
       - name: Publish adapted Vercel branch
         run: |
-          # Copy api/ files that build scripts need to write to back from staging
-          if [ -d ".vercel-api-routes/mcp/skill-extension" ]; then
-            mkdir -p api/mcp/skill-extension
-            cp .vercel-api-routes/mcp/skill-extension/*.ts api/mcp/skill-extension/ 2>/dev/null || true
-          fi
-
-          # Create or reset vercel branch from current HEAD
           git checkout -B "${VERCEL_BRANCH}" HEAD
-
-          # Stage all files including the restored api/ copies
           git add -A
           git diff --cached --quiet && echo "No changes to vercel branch" && exit 0
           git commit -m 'chore(vercel): regenerate deployment branch from upstream/main'
