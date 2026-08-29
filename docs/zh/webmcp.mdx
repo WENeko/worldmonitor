@@ -50,7 +50,7 @@ Origin Trial 令牌有时限。发布检查必须验证实际部署的响应头�
 1. 打开 `chrome://flags/#enable-webmcp-testing`。
 2. 将 **WebMCP for testing** 设为 **Enabled**。
 3. 完全重新启动 Chrome。
-4. 本地启动 WorldMonitor。打开 `/dashboard` 检查含二十个工具的仪表板；不要使用 `/embed`。若要检查含两个工具的静态首页，请先运行 `npm run build:pro`，再打开 `/pro/welcome.html`。本地 Vite 的 `/` 会加载仪表板 SPA，只有生产环境才把 `/` 重写到欢迎页。
+4. 本地启动 WorldMonitor。打开 `/dashboard` 检查含二十一个工具的仪表板；不要使用 `/embed`。若要检查含两个工具的静态首页，请先运行 `npm run build:pro`，再打开 `/pro/welcome.html`。本地 Vite 的 `/` 会加载仪表板 SPA，只有生产环境才把 `/` 重写到欢迎页。
 5. 在 DevTools 中确认特性检测：
 
 ```js
@@ -78,7 +78,7 @@ Chrome 149–151 虽已暴露 `registerTool()`，但调用已注册回调时只�
 
 在这些版本上，WorldMonitor 仍会执行只读工具和可逆的仪表板视图变更。`openSearch`、`open_dashboard_panel` 与 `set_map_view` 均可正常使用。`set_map_view` 会通过 `history.replaceState` 写入地址栏，生成的分享 URL 与页面复制链接控件生成的相同，并会在刷新时被仪表板还原；这次写入在地址栏中可见，并会被下一次人工移动地图覆盖。
 
-`openCountryBrief`、`switch_monitor`、`set_map_layers`、`select_dashboard_tab`、`create_dashboard_tab`、`rename_dashboard_tab` 与 `delete_dashboard_tab` 会继续被拦截并返回不可用。`openCountryBrief` 可能启动服务器端 LLM 简报生成（`premiumFetch` → `/api/intelligence/v1/get-country-intel-brief` → `callLlm`）；即使浏览器随后取消调用方的 Promise，这次生成仍会消耗调用者的每日额度。`switch_monitor` 可能持久化桌面变体并重新加载，或把当前标签导航到其他源。`set_map_layers` 会把地图图层选择持久化到浏览器存储，启用 AIS 图层时还会建立网络连接。仪表板标签页变更会持久化 `worldmonitor-tabs-v1` 与实时面板工作区。`open_search_result` 是选择器：无标签深链的已启用面板等视图状态结果可以执行；会持久化、消耗配额或离开当前页面的结果仍被拒绝。`panel:consumer-prices@world` 这类标签深链会写入面板设置，因此在没有目标侧信号时保持拦截。这些影响可能在取消后继续存在，因此只有浏览器提供目标侧信号时才可用。只读的 `list_map_layers` 和 `list_dashboard_tabs` 目录仍可调用。
+`openCountryBrief`、`switch_monitor`、`set_panel_enabled`、`set_map_layers`、`select_dashboard_tab`、`create_dashboard_tab`、`rename_dashboard_tab` 与 `delete_dashboard_tab` 会继续被拦截并返回不可用。`openCountryBrief` 可能启动服务器端 LLM 简报生成（`premiumFetch` → `/api/intelligence/v1/get-country-intel-brief` → `callLlm`）；即使浏览器随后取消调用方的 Promise，这次生成仍会消耗调用者的每日额度。`switch_monitor` 可能持久化桌面变体并重新加载，或把当前标签导航到其他源。`set_panel_enabled` 和 `set_map_layers` 会把仪表板状态持久化到浏览器存储，启用 AIS 图层时还会建立网络连接。仪表板标签页变更会持久化 `worldmonitor-tabs-v1` 与实时面板工作区。`open_search_result` 是选择器：无标签深链的已启用面板等视图状态结果可以执行；会持久化、消耗配额或离开当前页面的结果仍被拒绝。`panel:consumer-prices@world` 这类标签深链会写入面板设置，因此在没有目标侧信号时保持拦截。这些影响可能在取消后继续存在，因此只有浏览器提供目标侧信号时才可用。只读的 `list_map_layers` 和 `list_dashboard_tabs` 目录仍可调用。
 
 <Note>
 如果浏览器没有当前 API，包括未暴露 WebMCP 的 Tauri 桌面 WebView，WorldMonitor 会安全地不执行任何操作。它不会安装浏览器 polyfill，也不会退回旧草案 API。
@@ -99,9 +99,9 @@ Chrome 149–151 虽已暴露 `registerTool()`，但调用已注册回调时只�
 
 ### 仪表板命令式工具
 
-六个仪表板变体都注册相同的二十个命令式工具。登录和权益变化不会改变注册集合；每次调用都会重新检查实时状态。
+六个仪表板变体都注册相同的二十一个命令式工具。登录和权益变化不会改变注册集合；每次调用都会重新检查实时状态。
 
-在没有提供目标侧调用信号的浏览器上，可逆的视图状态工具仍会执行：由于此类浏览器无法取消它们，你中止的调用仍会执行完毕，其可见的仪表板变化也会生效。而 `openCountryBrief`、`switch_monitor`、`set_map_layers`、`select_dashboard_tab`、`create_dashboard_tab`、`rename_dashboard_tab` 与 `delete_dashboard_tab` 会返回不可用。`open_search_result` 仍会执行视图状态结果（例如打开已启用的实时摄像头面板），并拒绝持久化、消耗配额或离开当前页面的结果，包括会写入设置的面板标签深链。国家简报工具可能在调用方取消后继续消耗每日 LLM 额度，监视器切换可能持久化并重新加载或导航到其他源，图层写入和标签页变更会在本次会话之外持久化。只读的 `list_map_layers` 和 `list_dashboard_tabs` 目录仍会执行。参见[可用性](#availability)。
+在没有提供目标侧调用信号的浏览器上，可逆的视图状态工具仍会执行：由于此类浏览器无法取消它们，你中止的调用仍会执行完毕，其可见的仪表板变化也会生效。而 `openCountryBrief`、`switch_monitor`、`set_panel_enabled`、`set_map_layers`、`select_dashboard_tab`、`create_dashboard_tab`、`rename_dashboard_tab` 与 `delete_dashboard_tab` 会返回不可用。`open_search_result` 仍会执行视图状态结果（例如打开已启用的实时摄像头面板），并拒绝持久化、消耗配额或离开当前页面的结果，包括会写入设置的面板标签深链。国家简报工具可能在调用方取消后继续消耗每日 LLM 额度，监视器切换可能持久化并重新加载或导航到其他源，面板、图层和标签页变更会在本次会话之外持久化。只读的 `list_map_layers` 和 `list_dashboard_tabs` 目录仍会执行。参见[可用性](#availability)。
 
 | 工具 | 输入 schema | 可见结果 |
 |---|---|---|
@@ -113,7 +113,8 @@ Chrome 149–151 虽已暴露 `registerTool()`，但调用已注册回调时只�
 | `switch_monitor` | 必填字符串 `monitor`；枚举 `full`、`tech`、`finance`、`happy`、`commodity`、`energy`（World、Tech、Finance、Good News、Commodity、Energy）。不允许其他属性。 | 通过页头变体切换器切换可见仪表板，并返回所选目标及有效仪表板状态。 |
 | `open_settings` | 空对象；不允许其他属性。 | 打开设置浮层并停留在 Settings 标签，不修改设置内容。 |
 | `open_alerts` | 空对象；不允许其他属性。 | 打开提醒浮层并停留在 notifications 标签，不修改提醒内容。桌面应用中不可用。 |
-| `open_dashboard_panel` | 必填字符串 `panelId`，长度 1–96，模式 `^[A-Za-z0-9][A-Za-z0-9@_-]*$`；不允许其他属性。 | 经权益感知 UI 路径打开并滚动到当前已启用的可用面板。已禁用面板返回 `panel_disabled`；用户可从仪表板搜索或设置中启用它们。此工具不会自行启用面板。 |
+| `open_dashboard_panel` | 必填字符串 `panelId`，长度 1–96，模式 `^[A-Za-z0-9][A-Za-z0-9@_-]*$`；不允许其他属性。 | 经权益感知 UI 路径打开并滚动到当前已启用的可用面板。已禁用面板返回 `panel_disabled`；使用 `set_panel_enabled` 更改目录面板是否启用。此工具不会自行启用面板。 |
+| `set_panel_enabled` | 必填字符串 `panelId`，长度 1–96，模式 `^[a-z0-9][a-z0-9@_-]*$`；必填布尔值 `enabled`；不允许其他属性。 | 经用户使用的同一设置持久化/应用路径启用或禁用目录面板。返回请求状态、实际状态及是否变更。启用未知、不兼容、无权益或达到免费档上限的面板会被拒绝。需要目标侧取消。 |
 | `set_map_view` | 二选一且只能选一：`view`；或 `lat` 加 `lon`。`view` 可为 `global`、`america`、`mena`、`eu`、`asia`、`latam`、`africa`、`oceania`；`lat` 范围 -85.051129–85.051129，`lon` 范围 -180–180，可选 `zoom` 范围 1–10。 | 移动可见地图。 |
 | `set_map_layers` | 必填对象 `layers`，含 1–10 个布尔项；键长 1–30，匹配 `^[a-z][A-Za-z0-9_-]*$`；顶层不允许其他属性。 | 启用或禁用允许的可见图层，并返回逐图层结果。 |
 | `search_dashboard` | 必填字符串 `query`，长度 1–160；可选 `scope` 为 `all`、`signals`、`map`、`panels`、`actions`，默认 `all`；可选整数 `limit` 为 1–10，默认 8；不允许其他属性。 | 只读、受限地搜索当前国家、信号、地图、面板、金融和动作索引；返回内容标记为不可信。 |
@@ -147,6 +148,7 @@ Chrome 149–151 虽已暴露 `registerTool()`，但调用已注册回调时只�
 | 了解当前标签页 | `get_dashboard_context` | 读取返回的变体、地图状态和面板 ID。若 `*Truncated` 字段为 true，不得把缩短后的列表当作完整列表。 |
 | 枚举全部面板 | `list_dashboard_panels` | 跟随 `nextCursor` 直到 `hasMore` 为 false。已禁用、未挂载和被门禁的面板仍出现在目录中，并带有稳定的 `unavailableReason`。 |
 | 打开已知面板 | `list_dashboard_panels` 或 `get_dashboard_context` → `open_dashboard_panel` | 使用当前页面返回的面板 ID。面板即使已挂载，也可能被禁用或不适用于当前方案。 |
+| 启用或禁用目录面板 | `list_dashboard_panels` → `set_panel_enabled` | 使用返回的稳定面板 ID，而不是标签或 CSS 选择器。检查 `effectiveEnabled` 和 `changed`。重复同一请求会成功且 `changed: false`。若浏览器不能提供目标侧取消，则该工具不可用。 |
 | 切换监视器 | `switch_monitor` | 传入稳定键（`full`、`tech`、`finance`、`happy`、`commodity`、`energy`），不要使用显示标签。确认 `context.variant` 和可见的页头选中项。 |
 | 打开设置 | `open_settings` | 确认设置浮层和 Settings 标签。此工具不会修改设置内容。 |
 | 打开提醒 | `open_alerts` | 确认 notifications 标签。将 `unavailable` 视为终止的门禁结果，不得推断账户细节。此工具不会修改提醒内容。 |
@@ -160,7 +162,7 @@ Chrome 149–151 虽已暴露 `registerTool()`，但调用已注册回调时只�
 | 打开国家简报 | `openCountryBrief` | 使用大写 ISO alpha-2 代码。该路径可能消耗已登录用户的每日 LLM 配额；若浏览器不能提供目标侧取消，则该工具不可用。 |
 | 判断此标签页是已退出、仍在加载，还是已登录 | `get_access_context` | 使用 `accountState`、`clerk`、`productTier`、能力标志和限额。结果绝不包含姓名、电子邮件、账户 ID、令牌或会话详情。 |
 | 打开现有登录对话框 | 在 `accountState` 为 `signed_out` 且 `clerk` 不是 `unavailable` 时，使用 `get_access_context` → `open_sign_in` | `open_sign_in` 永不接受凭据、一次性验证码或身份提供方选择。若 Clerk 不可用或对话框已打开，使用返回的原因。不要通过 WebMCP 收集密码或 OTP。 |
-| 搜索采购机会 | `get_dashboard_context` → 打开已启用的全球采购面板，或请用户启用它 → 发现 `search_procurement` → 调用 | `open_dashboard_panel` 不能启用已禁用的面板。只有当有权益的表单已连接、可见、数据就绪且空闲时，该声明式工具才存在。工具消失表示状态变化，并非注册失败。 |
+| 搜索采购机会 | `list_dashboard_panels` → 如需启用全球采购面板则调用 `set_panel_enabled`，或请用户启用它 → 发现 `search_procurement` → 调用 | `open_dashboard_panel` 不能启用已禁用的面板。只有当有权益的表单已连接、可见、数据就绪且空闲时，该声明式工具才存在。工具消失表示状态变化，并非注册失败。 |
 | 列出仪表板工作区 | `list_dashboard_tabs` | 使用返回的标签页 ID，不要使用显示名称。若 `tabsTruncated` 为 true，则跟随 `nextCursor`。 |
 | 切换仪表板工作区 | `list_dashboard_tabs` → `select_dashboard_tab` | 传入当前标签页 ID。选择已激活标签页是成功的空操作。 |
 | 创建或复用命名工作区 | `list_dashboard_tabs` → `create_dashboard_tab` | 已存在名称会返回该标签页。达到上限时返回 `tab_cap`。 |
@@ -271,7 +273,7 @@ Inspector 的自然语言工作流默认会把提示词发送给外部 Gemini �
 | `getTools()` 一直等待，或 Origin Trial 页面最终没有清单 | 页面可能在注册完成前访问了 provider | 重新加载页面，等待文档加载和 WorldMonitor 注册完成，然后只读取一次清单。不要轮询 `document.modelContext`。 |
 | 只能看到首页工具清单 | 智能体位于静态首页 | 调用 `launchWorldMonitor`，或导航到 `/dashboard` 以使用命令式仪表板清单。 |
 | 能看到命令式仪表板清单，但没有 `search_procurement` | 条件式声明表单当前不符合条件 | 打开并启用全球采购面板，满足权益要求，等待数据稳定，并确保表单可见且空闲。 |
-| 调用返回 `target_cancellation_unsupported` | 浏览器接受了 WebMCP，但没有把调用的 `AbortSignal` 交给页面 | 使用只读工具或可逆视图状态工具。不得绕过 `openCountryBrief`、`switch_monitor`、`set_map_layers` 或仪表板标签页变更的拒绝。对于 `open_search_result`，请选择视图状态结果，或等待能够取消持久化工作的宿主。 |
+| 调用返回 `target_cancellation_unsupported` | 浏览器接受了 WebMCP，但没有把调用的 `AbortSignal` 交给页面 | 使用只读工具或可逆视图状态工具。不得绕过 `openCountryBrief`、`switch_monitor`、`set_panel_enabled`、`set_map_layers` 或仪表板标签页变更的拒绝。对于 `open_search_result`，请选择视图状态结果，或等待能够取消持久化工作的宿主。 |
 | 面板或图层被拒绝 | 当前页面状态未通过实时变体、渲染器、启用状态或权益检查 | 读取 `reason` 和每个目标状态。通过正常可见控件改变状态，或询问用户；不得强制走隐藏路径。 |
 | `open_search_result` 报告键无效、过期、状态已变化或目标不可用 | 一次性能力已失效，或搜索后仪表板状态发生变化 | 重新运行 `search_dashboard`，在打开前向用户展示新结果。不得把键重新解释为 URL。 |
 | 标签页变更返回 `tab_cap`、`last_tab` 或 `confirmation_required` | 仪表板标签栏也会拒绝同一操作 | 重新列出标签页。删除需要 `confirm: true`，且不能移除最后一个标签页。 |
@@ -342,6 +344,7 @@ npm run test:e2e:webmcp:production
 | `src/services/webmcp-map-layer-catalog.ts` | 分页地图图层目录推导、筛选，以及与 `set_map_layers` 对齐的可用性原因。 |
 | `src/services/webmcp-panel-catalog.ts` | 规范面板目录的分页、筛选、权益叠加和稳定不可用原因。 |
 | `src/App.ts` 和 `src/app/webmcp-dashboard.ts` | 启动顺序、UI 就绪门禁、销毁、仪表板上下文、目录快照和人工路径操作绑定。 |
+| `src/config/panel-enablement.ts` 和 `src/app/panel-enablement.ts` | `set_panel_enabled` 使用的面板启用策略，以及现有设置持久化/应用路径。 |
 | `src/app/webmcp-access.ts` 和 `src/services/webmcp-access-snapshot.ts` | 实时访问上下文读取、无个人身份信息的快照构建，以及 Clerk 登录打开。 |
 | `src/app/webmcp-search-controller.ts`、`src/app/webmcp-search-effects.ts` 和 `src/app/search-selection-dispatcher.ts` | 不透明搜索能力、绑定的结果效果类别、失效、实时状态复核和可见结果选择。 |
 | `src/app/panel-layout.ts`、`src/services/tab-store.ts` 和 `src/services/dashboard-tab-actions.ts` | 仪表板标签页持久化、名称和 ID 限制，以及 WebMCP 列出/选择/创建/重命名/删除操作。 |
@@ -371,6 +374,7 @@ npm run docs:check
   tests/webmcp-analytics-policy.test.mjs \
   tests/webmcp-evals.test.mjs \
   tests/webmcp-access.test.mts \
+  tests/webmcp-panel-enablement.test.mts \
   tests/deploy-config.test.mjs
 npm run typecheck
 ```

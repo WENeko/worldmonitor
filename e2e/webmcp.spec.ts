@@ -27,6 +27,7 @@ const DASHBOARD_TOOL_NAMES = [
   'select_dashboard_tab',
   'set_map_layers',
   'set_map_view',
+  'set_panel_enabled',
   'switch_monitor',
 ];
 const HOMEPAGE_TOOL_NAMES = [
@@ -968,6 +969,139 @@ test.describe('top-level WebMCP dashboard contract', () => {
       url: page.url(),
       historyLength: await page.evaluate(() => window.history.length),
     });
+  });
+
+  test('persists set_panel_enabled in dashboard settings across reload', async ({ page }) => {
+    test.skip(productionSmoke, 'Must not mutate production panel settings.');
+    const response = await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });
+    expect(response).not.toBeNull();
+    await expect.poll(async () => page.evaluate(async () => (
+      (await document.modelContext?.getTools())?.map((tool) => tool.name).sort() ?? []
+    )), { timeout: 60_000 }).toEqual(DASHBOARD_TOOL_NAMES);
+
+    const first = await page.evaluate(async () => {
+      type ExecutableModelContext = WebMCP.ModelContext & {
+        executeTool(
+          tool: WebMCP.RegisteredTool,
+          input: string,
+          options?: { signal?: AbortSignal },
+        ): Promise<unknown>;
+      };
+      const provider = document.modelContext as ExecutableModelContext | undefined;
+      if (!provider || typeof provider.executeTool !== 'function') {
+        throw new Error('Chrome WebMCP execution API is unavailable.');
+      }
+      const parseOutput = (value: unknown): unknown => {
+        if (typeof value !== 'string') return value;
+        try {
+          return JSON.parse(value);
+        } catch {
+          return value;
+        }
+      };
+      const tool = (await provider.getTools()).find((candidate) => candidate.name === 'set_panel_enabled');
+      if (!tool) throw new Error('set_panel_enabled was not discovered.');
+      const execute = async (input: { panelId: string; enabled: boolean }) => {
+        const controller = new AbortController();
+        return parseOutput(await provider.executeTool(
+          tool,
+          JSON.stringify(input),
+          { signal: controller.signal },
+        ));
+      };
+      // Default full layouts already sit at the free-tier counted cap, so
+      // enabling a disabled catalog panel first needs a counted slot freed.
+      const disableMarkets = await execute({ panelId: 'markets', enabled: false });
+      if (
+        disableMarkets
+        && typeof disableMarkets === 'object'
+        && (disableMarkets as { reason?: string }).reason === 'target_cancellation_unsupported'
+      ) {
+        return {
+          output: disableMarkets,
+          stored: window.localStorage.getItem('worldmonitor-panels'),
+        };
+      }
+      const enableGiving = await execute({ panelId: 'giving', enabled: true });
+      let openGiving: unknown = null;
+      if (
+        enableGiving
+        && typeof enableGiving === 'object'
+        && (enableGiving as { ok?: boolean }).ok === true
+      ) {
+        const openTool = (await provider.getTools())
+          .find((candidate) => candidate.name === 'open_dashboard_panel');
+        if (!openTool) throw new Error('open_dashboard_panel was not discovered.');
+        const controller = new AbortController();
+        openGiving = parseOutput(await provider.executeTool(
+          openTool,
+          JSON.stringify({ panelId: 'giving' }),
+          { signal: controller.signal },
+        ));
+      }
+      return {
+        output: enableGiving,
+        openOutput: openGiving,
+        stored: window.localStorage.getItem('worldmonitor-panels'),
+      };
+    });
+
+    const output = first.output as {
+      ok?: boolean;
+      reason?: string;
+      effectiveEnabled?: boolean;
+      changed?: boolean;
+    };
+    if (output?.reason === 'target_cancellation_unsupported') {
+      test.skip(true, 'Host omitted the target-side AbortSignal; persist proof requires cancellation.');
+    }
+
+    expect(output).toMatchObject({
+      ok: true,
+      status: 'applied',
+      panelId: 'giving',
+      requestedEnabled: true,
+      effectiveEnabled: true,
+    });
+    expect(first.openOutput).toMatchObject({
+      ok: true,
+      status: 'applied',
+    });
+    const storedBeforeReload = JSON.parse(String(first.stored)) as Record<string, { enabled?: boolean }>;
+    expect(storedBeforeReload.giving?.enabled).toBe(true);
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect.poll(async () => page.evaluate(async () => (
+      (await document.modelContext?.getTools())?.some((tool) => tool.name === 'get_dashboard_context') ?? false
+    )), { timeout: 60_000 }).toBe(true);
+
+    const afterReload = await page.evaluate(async () => {
+      type ExecutableModelContext = WebMCP.ModelContext & {
+        executeTool(tool: WebMCP.RegisteredTool, input: string): Promise<unknown>;
+      };
+      const provider = document.modelContext as ExecutableModelContext;
+      const contextTool = (await provider.getTools())
+        .find((tool) => tool.name === 'get_dashboard_context');
+      if (!contextTool) throw new Error('get_dashboard_context was not discovered.');
+      const raw = await provider.executeTool(contextTool, '{}');
+      let context = raw;
+      if (typeof raw === 'string') {
+        try {
+          context = JSON.parse(raw);
+        } catch {
+          // Preserve non-JSON provider output.
+        }
+      }
+      return {
+        context,
+        stored: window.localStorage.getItem('worldmonitor-panels'),
+      };
+    });
+    const storedAfterReload = JSON.parse(String(afterReload.stored)) as Record<string, { enabled?: boolean }>;
+    expect(storedAfterReload.giving?.enabled).toBe(true);
+    const enabledPanels = (afterReload.context as { panels?: { enabled?: string[] } })
+      .panels?.enabled ?? [];
+    expect(enabledPanels).toContain('giving');
   });
 
   // Production collection is intentionally restricted to this spec. Keep a

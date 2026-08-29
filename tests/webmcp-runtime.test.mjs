@@ -137,6 +137,15 @@ function createBindings(overrides = {}) {
       truncated: false,
     }),
     openSearchResult: async () => ({ ok: true, status: 'opened' }),
+    setPanelEnabled: async () => ({
+      ok: true,
+      status: 'applied',
+      panelId: 'giving',
+      requestedEnabled: true,
+      effectiveEnabled: true,
+      changed: true,
+      message: 'Panel enabled.',
+    }),
     applyDashboardTabAction: async (action) => (
       action.type === 'list'
         ? {
@@ -404,6 +413,7 @@ describe('WebMCP registry behavioral contract', () => {
         'rename_dashboard_tab',
         'select_dashboard_tab',
         'set_map_layers',
+        'set_panel_enabled',
         'switch_monitor',
       ],
       'the gated set includes navigation, persistent writes, and metered country generation',
@@ -411,6 +421,7 @@ describe('WebMCP registry behavioral contract', () => {
     let mutationCalls = 0;
     let openCalls = 0;
     let tabCalls = 0;
+    let panelCalls = 0;
     const provider = new FakeWebMcpModelContext();
     const harness = trackedRuntime(provider);
     registerWebMcpTools(createBindings({
@@ -434,6 +445,18 @@ describe('WebMCP registry behavioral contract', () => {
           activeTabId: 'tab-main01-abc123',
         };
       },
+      setPanelEnabled: async () => {
+        panelCalls += 1;
+        return {
+          ok: true,
+          status: 'applied',
+          panelId: 'giving',
+          requestedEnabled: true,
+          effectiveEnabled: true,
+          changed: true,
+          message: 'Panel enabled.',
+        };
+      },
     }), harness.runtime);
     await settlePromises();
 
@@ -451,6 +474,14 @@ describe('WebMCP registry behavioral contract', () => {
     );
     assert.deepEqual(
       await executeRegistered(provider, 'set_map_layers', JSON.stringify({ layers: { conflicts: true } })),
+      denial,
+    );
+    assert.deepEqual(
+      await executeRegistered(
+        provider,
+        'set_panel_enabled',
+        JSON.stringify({ panelId: 'giving', enabled: true }),
+      ),
       denial,
     );
     for (const [tool, input] of [
@@ -476,6 +507,7 @@ describe('WebMCP registry behavioral contract', () => {
     assert.equal(mutationCalls, 0, 'a gated tool must not reach its binding');
     assert.equal(openCalls, 1, 'result-dependent open_search_result must reach its binding');
     assert.equal(tabCalls, 0, 'persistent dashboard tab tools must not reach their binding');
+    assert.equal(panelCalls, 0, 'persistent panel changes must not reach their binding');
   });
 
   it('runs a dashboard-changing tool when the host omits the target execution signal', async () => {

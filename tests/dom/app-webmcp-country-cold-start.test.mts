@@ -94,6 +94,9 @@ describe('App WebMCP country binding cold start', () => {
         truncated: false,
       }),
       openSearchResult: async () => ({ ok: true, status: 'opened' }),
+      setPanelEnabled: async () => {
+        throw new Error('Unexpected dashboard panel mutation.');
+      },
       applyDashboardTabAction: async () => {
         throw new Error('Unexpected dashboard tab action.');
       },
@@ -209,6 +212,9 @@ describe('App WebMCP country binding cold start', () => {
         truncated: false,
       }),
       openSearchResult: async () => ({ ok: true, status: 'opened' }),
+      setPanelEnabled: async () => {
+        throw new Error('Unexpected dashboard panel mutation.');
+      },
       applyDashboardTabAction: async () => {
         throw new Error('Unexpected dashboard tab action.');
       },

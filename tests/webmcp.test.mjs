@@ -135,6 +135,15 @@ function createBindings(overrides = {}) {
       ok: true,
       status: 'opened',
     }),
+    setPanelEnabled: async () => ({
+      ok: true,
+      status: 'applied',
+      panelId: 'giving',
+      requestedEnabled: true,
+      effectiveEnabled: true,
+      changed: true,
+      message: 'Panel enabled.',
+    }),
     getAccessContext: async () => ({
       accountState: 'signed_out',
       clerk: 'unavailable',
@@ -213,6 +222,7 @@ describe('webmcp.ts: current API contract', () => {
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.openSettings/);
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.openAlerts/);
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.openDashboardPanel/);
+    assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.setPanelEnabled/);
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.setMapView/);
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.setMapLayers/);
     assert.match(src, /name:\s*WEBMCP_SPA_TOOL\.searchDashboard/);
@@ -1255,6 +1265,18 @@ describe('webmcp.ts: current API contract', () => {
         mutationCalls += 1;
         return { ok: true, status: 'opened' };
       },
+      setPanelEnabled: async () => {
+        mutationCalls += 1;
+        return {
+          ok: true,
+          status: 'applied',
+          panelId: 'giving',
+          requestedEnabled: true,
+          effectiveEnabled: true,
+          changed: true,
+          message: 'Panel enabled.',
+        };
+      },
       openSignIn: async () => {
         mutationCalls += 1;
         return { ok: true, status: 'opened' };
@@ -1288,6 +1310,7 @@ describe('webmcp.ts: current API contract', () => {
       open_settings: {},
       open_alerts: {},
       open_dashboard_panel: { panelId: 'markets' },
+      set_panel_enabled: { panelId: 'giving', enabled: true },
       set_map_view: { view: 'eu' },
       set_map_layers: { layers: { conflicts: true } },
       open_search_result: { resultKey: `sr_${'a'.repeat(32)}` },
@@ -1332,6 +1355,7 @@ describe('webmcp.ts: current API contract', () => {
       'openCountryBrief',
       'switch_monitor',
       'set_map_layers',
+      'set_panel_enabled',
       'select_dashboard_tab',
       'create_dashboard_tab',
       'rename_dashboard_tab',
@@ -1415,6 +1439,7 @@ describe('webmcp.ts: current API contract', () => {
         },
       },
       open_dashboard_panel: appliedAction('open_panel'),
+      set_panel_enabled: denial,
       set_map_view: appliedAction('set_view'),
       set_map_layers: denial,
       open_search_result: { ok: true, status: 'opened' },
@@ -2716,6 +2741,94 @@ describe('webmcp App.ts binding invariants', () => {
     );
   });
 
+  it('enables catalog panels through settings after UI readiness and waits until live', () => {
+    const setPanelEnabled = objectPropertyInitializer(bindings, appFile, 'setPanelEnabled');
+    const ready = callByExpression(
+      setPanelEnabled,
+      appFile,
+      'this.waitForDashboardReady',
+      'set_panel_enabled readiness',
+    );
+    assertCallArguments(ready, appFile, ['false', 'execution?.signal']);
+    const apply = callByExpression(
+      setPanelEnabled,
+      appFile,
+      'this.eventHandlers.setPanelEnabledById',
+    );
+    assertCallArguments(apply, appFile, ['panelId', 'enabled']);
+    assert.ok(ready.getStart(appFile) < apply.getStart(appFile));
+    findNode(
+      setPanelEnabled,
+      (node) => (
+        ts.isNewExpression(node)
+        && node.expression.getText(appFile) === 'DashboardBindingError'
+        && node.arguments?.[0]?.getText(appFile) === "'app_destroyed'"
+      ),
+      'set_panel_enabled app_destroyed guard',
+    );
+    findNode(
+      setPanelEnabled,
+      (node) => (
+        ts.isBinaryExpression(node)
+        && node.getText(appFile) === "panelId !== 'map'"
+      ),
+      'skip wait-until-live for the map panel',
+    );
+    const waitLive = callByExpression(setPanelEnabled, appFile, 'waitUntilPanelLive');
+    assert.ok(apply.getStart(appFile) < waitLive.getStart(appFile));
+    assert.equal(waitLive.arguments.length, 1);
+    const waitOptions = waitLive.arguments[0];
+    assert.ok(ts.isObjectLiteralExpression(waitOptions), 'waitUntilPanelLive takes one options object');
+    assert.deepEqual(
+      waitOptions.properties.map((property) => property.name?.getText(appFile)),
+      ['isLive', 'signal'],
+      'post-persist wait takes the App lifecycle signal, not the caller signal',
+    );
+    const waitSignal = waitOptions.properties.find((property) => (
+      property.name?.getText(appFile) === 'signal'
+    ));
+    assert.ok(ts.isPropertyAssignment(waitSignal));
+    assert.equal(
+      waitSignal.initializer.getText(appFile),
+      'this.lifecycleController.signal',
+      'post-persist wait must cancel with App.destroy, not the invocation signal',
+    );
+    assert.equal(
+      findNodes(
+        setPanelEnabled,
+        (node) => (
+          ts.isNewExpression(node)
+          && node.expression.getText(appFile) === 'DashboardBindingError'
+          && node.arguments?.[0]?.getText(appFile) === "'app_destroyed'"
+        ),
+      ).length,
+      2,
+      'destroy during the live wait must translate to app_destroyed',
+    );
+    const abortGuards = findNodes(
+      setPanelEnabled,
+      (node) => ts.isCallExpression(node) && node.expression.getText(appFile) === 'throwIfWebMcpAborted',
+    );
+    assert.equal(abortGuards.length, 1, 'cancellation is gated before persist, not after');
+    assert.ok(abortGuards[0].getStart(appFile) < apply.getStart(appFile));
+    findNode(
+      setPanelEnabled,
+      (node) => (
+        ts.isPropertyAccessExpression(node)
+        && node.getText(appFile) === 'result.effectiveEnabled'
+      ),
+      'wait-until-live only after a successful enable',
+    );
+    findNode(
+      setPanelEnabled,
+      (node) => (
+        ts.isCallExpression(node)
+        && node.expression.getText(appFile) === 'isCatalogPanelLive'
+      ),
+      'live check uses catalog panel presence',
+    );
+  });
+
   it('resolves UI readiness after Phase 4 and wakes pending tools during destroy cleanup', () => {
     const appConstructor = findNode(appClass, ts.isConstructorDeclaration, 'App constructor');
     for (const [promiseName, resolverName] of [
@@ -2788,6 +2901,12 @@ describe('webmcp App.ts binding invariants', () => {
       'destroyed-state assignment',
     );
     const wakeDestroyed = callByExpression(destroy, appFile, 'this.resolveAppDestroyed');
+    const abortLifecycle = callByExpression(
+      destroy,
+      appFile,
+      'this.lifecycleController.abort',
+      'App lifecycle abort',
+    );
     const abortTools = callByExpression(
       destroy,
       appFile,
@@ -2795,7 +2914,8 @@ describe('webmcp App.ts binding invariants', () => {
       'WebMCP controller abort',
     );
     assert.ok(destroyedAssignment.getStart(appFile) < wakeDestroyed.getStart(appFile));
-    assert.ok(wakeDestroyed.getStart(appFile) < abortTools.getStart(appFile));
+    assert.ok(wakeDestroyed.getStart(appFile) < abortLifecycle.getStart(appFile));
+    assert.ok(abortLifecycle.getStart(appFile) < abortTools.getStart(appFile));
     const clearController = findNode(
       destroy,
       (node) => (

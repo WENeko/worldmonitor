@@ -12,6 +12,7 @@
       "open_settings",
       "open_alerts",
       "open_dashboard_panel",
+      "set_panel_enabled",
       "set_map_view",
       "set_map_layers",
       "search_dashboard",
@@ -63,7 +64,8 @@
         "select_dashboard_tab",
         "create_dashboard_tab",
         "rename_dashboard_tab",
-        "delete_dashboard_tab"
+        "delete_dashboard_tab",
+        "set_panel_enabled"
       ]
     },
     {
@@ -99,7 +101,8 @@
         "select_dashboard_tab",
         "create_dashboard_tab",
         "rename_dashboard_tab",
-        "delete_dashboard_tab"
+        "delete_dashboard_tab",
+        "set_panel_enabled"
       ]
     },
     {
@@ -186,7 +189,8 @@
         "select_dashboard_tab",
         "create_dashboard_tab",
         "rename_dashboard_tab",
-        "delete_dashboard_tab"
+        "delete_dashboard_tab",
+        "set_panel_enabled"
       ]
     },
     {
@@ -241,7 +245,8 @@
         "select_dashboard_tab",
         "create_dashboard_tab",
         "rename_dashboard_tab",
-        "delete_dashboard_tab"
+        "delete_dashboard_tab",
+        "set_panel_enabled"
       ]
     },
     {
@@ -277,7 +282,8 @@
         "select_dashboard_tab",
         "create_dashboard_tab",
         "rename_dashboard_tab",
-        "delete_dashboard_tab"
+        "delete_dashboard_tab",
+        "set_panel_enabled"
       ]
     },
     {
@@ -336,7 +342,8 @@
         "select_dashboard_tab",
         "create_dashboard_tab",
         "rename_dashboard_tab",
-        "delete_dashboard_tab"
+        "delete_dashboard_tab",
+        "set_panel_enabled"
       ]
     },
     {
@@ -381,7 +388,8 @@
         "select_dashboard_tab",
         "create_dashboard_tab",
         "rename_dashboard_tab",
-        "delete_dashboard_tab"
+        "delete_dashboard_tab",
+        "set_panel_enabled"
       ]
     },
     {
@@ -416,7 +424,8 @@
         "select_dashboard_tab",
         "create_dashboard_tab",
         "rename_dashboard_tab",
-        "delete_dashboard_tab"
+        "delete_dashboard_tab",
+        "set_panel_enabled"
       ]
     },
     {
@@ -458,7 +467,8 @@
         "select_dashboard_tab",
         "create_dashboard_tab",
         "rename_dashboard_tab",
-        "delete_dashboard_tab"
+        "delete_dashboard_tab",
+        "set_panel_enabled"
       ]
     },
     {
@@ -494,7 +504,8 @@
         "select_dashboard_tab",
         "create_dashboard_tab",
         "rename_dashboard_tab",
-        "delete_dashboard_tab"
+        "delete_dashboard_tab",
+        "set_panel_enabled"
       ]
     },
     {
@@ -528,7 +539,8 @@
         "select_dashboard_tab",
         "create_dashboard_tab",
         "rename_dashboard_tab",
-        "delete_dashboard_tab"
+        "delete_dashboard_tab",
+        "set_panel_enabled"
       ]
     },
     {
@@ -560,7 +572,8 @@
         "select_dashboard_tab",
         "create_dashboard_tab",
         "rename_dashboard_tab",
-        "delete_dashboard_tab"
+        "delete_dashboard_tab",
+        "set_panel_enabled"
       ]
     },
     {
@@ -600,7 +613,8 @@
         "select_dashboard_tab",
         "create_dashboard_tab",
         "rename_dashboard_tab",
-        "delete_dashboard_tab"
+        "delete_dashboard_tab",
+        "set_panel_enabled"
       ],
       "failure": {
         "atStep": 2,
@@ -615,7 +629,8 @@
           "select_dashboard_tab",
           "create_dashboard_tab",
           "rename_dashboard_tab",
-          "delete_dashboard_tab"
+          "delete_dashboard_tab",
+          "set_panel_enabled"
         ]
       }
     },
@@ -655,7 +670,8 @@
         "select_dashboard_tab",
         "create_dashboard_tab",
         "rename_dashboard_tab",
-        "delete_dashboard_tab"
+        "delete_dashboard_tab",
+        "set_panel_enabled"
       ],
       "failure": {
         "atStep": 2,
@@ -703,7 +719,8 @@
         "select_dashboard_tab",
         "create_dashboard_tab",
         "rename_dashboard_tab",
-        "delete_dashboard_tab"
+        "delete_dashboard_tab",
+        "set_panel_enabled"
       ],
       "failure": {
         "atStep": 1,
@@ -717,7 +734,8 @@
           "select_dashboard_tab",
           "create_dashboard_tab",
           "rename_dashboard_tab",
-          "delete_dashboard_tab"
+          "delete_dashboard_tab",
+          "set_panel_enabled"
         ]
       }
     },
@@ -1153,6 +1171,33 @@
           "open_dashboard_panel"
         ]
       }
+    },
+    {
+      "id": "panel_enablement_direct",
+      "category": "dashboard_control",
+      "promptKind": "direct",
+      "prompt": "Enable the giving panel.",
+      "expectedPlans": [
+        [
+          {
+            "tool": "set_panel_enabled",
+            "arguments": {
+              "panelId": "giving",
+              "enabled": true
+            }
+          }
+        ]
+      ],
+      "forbiddenTools": [
+        "openCountryBrief",
+        "openSearch",
+        "open_dashboard_panel",
+        "set_map_view",
+        "set_map_layers",
+        "search_dashboard",
+        "open_search_result",
+        "search_procurement"
+      ]
     }
   ]
 }
