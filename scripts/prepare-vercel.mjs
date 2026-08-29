@@ -2,7 +2,6 @@ import { cp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadManifest, runSourceAttribution, scanUpstreamHosts } from './source-attribution.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiDir = join(root, 'api');
@@ -232,25 +231,6 @@ export default async function handler(req, res) {
   }
 }
 `;
-}  // Historical note: route staging must not regenerate the source-attribution
-  // manifest. The scanner only looks at scripts/, server/, api/ and src/;
-  // moved routes would look like retired sources even though they remain in
-  // .vercel-api-routes/ and are still deployed.
-function refreshSourceAttribution() {
-  const inventory = scanUpstreamHosts(root);
-  const previous = loadManifest(root);
-  const scannedHosts = new Set(inventory.map((entry) => entry.host));
-  const retireHosts = (previous.entries || [])
-    .filter((entry) => entry && entry.observed === true && !scannedHosts.has(entry.host))
-    .map((entry) => entry.host);
-
-  const args = ['--write'];
-  for (const host of retireHosts) args.push('--retire', host);
-  const exitCode = runSourceAttribution({ rootDir: root, args });
-  if (exitCode !== 0) {
-    throw new Error(`source-attribution regeneration failed (exit ${exitCode}) after staging api routes`);
-  }
-  return retireHosts.length;
 }
 
 // Vercel discovers functions from api/ before the build command runs, so the
@@ -548,10 +528,8 @@ async function main() {
   createEmptyMcpDir();
   forkUnlockProGates();
 
-  // The manifest remains the canonical source ledger. Route staging is a
-  // deployment-layout transform, not a source lifecycle event: retiring hosts
-  // here makes Vercel's postinstall disagree with the source manifest shipped
-  // by main. The workflow validates and commits the ledger before staging.
+  // Validate the source manifest before adaptation; route staging is a
+  // deployment-layout transform and must not alter attribution metadata.
 
   await writeFile(generatedIndex, renderIndex(routes));
   rewriteVercelDestinations();
