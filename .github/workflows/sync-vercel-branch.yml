@@ -63,9 +63,7 @@ jobs:
           cp /tmp/fork-files/scripts/source-attribution.mjs scripts/ 2>/dev/null || true
           cp -r /tmp/fork-files/deploy/oci deploy/ 2>/dev/null || true
 
-          # Prepare the Vercel tree before committing main. The adapted tree
-          # must retain its own source manifest because Vercel runs
-          # postinstall after cloning that exact tree.
+          # Validate canonical main before generating the adapted branch.
           npm ci --ignore-scripts
           node scripts/source-attribution.mjs --write
           node scripts/generate-inventory-facts.mjs
@@ -78,8 +76,8 @@ jobs:
       - name: Generate Vercel deployment files
         run: |
           node scripts/prepare-vercel.mjs --force
-          # The adaptation script leaves the manifest generated for the
-          # adapted tree; do not replace it with main's manifest.
+          # prepare-vercel regenerates the manifest after staging, matching the
+          # exact tree that Vercel clones before its postinstall.
           git diff --check
 
       - name: Preserve build-time generated paths
