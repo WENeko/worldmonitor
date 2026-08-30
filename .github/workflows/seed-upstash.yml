@@ -63,6 +63,14 @@ jobs:
       - name: Install seeder dependencies
         run: npm --prefix scripts ci --prefer-offline
 
+      # scripts/run-seeders.sh is synced from upstream and carries fork-only
+      # patches (consumer-prices --force, heavy/monthly exclusion, failure
+      # diagnostic). An upstream sync can wipe them; this step re-applies them
+      # idempotently right before the run so the fork behavior is guaranteed
+      # (fails loudly if upstream refactored the file and an anchor is missing).
+      - name: Ensure fork patches in run-seeders.sh
+        run: node scripts/fork-ensure-run-seeders-patches.mjs
+
       - name: Run seeders against Upstash
         env:
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
@@ -81,6 +89,13 @@ jobs:
           AVIATIONSTACK_API: ${{ secrets.AVIATIONSTACK_API }}
           OPENAQ_API_KEY: ${{ secrets.OPENAQ_API_KEY }}
           WAQI_API_KEY: ${{ secrets.WAQI_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          WINDY_API_KEY: ${{ secrets.WINDY_API_KEY }}
+          USDA_FAS_PSD_API_KEY: ${{ secrets.USDA_FAS_PSD_API_KEY }}
+          EXA_API_KEYS: ${{ secrets.EXA_API_KEYS }}
+          EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+          COMTRADE_API_KEYS: ${{ secrets.COMTRADE_API_KEYS }}
+          WORLDMONITOR_SEED_REFRESH_KEY: ${{ secrets.WORLDMONITOR_SEED_REFRESH_KEY }}
           # Fork wiring for seed-insights: warm the news digest from THIS
           # fork's own Vercel deployment instead of the upstream API, using a
           # relay key that matches Vercel's WORLDMONITOR_VALID_KEYS.

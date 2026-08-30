@@ -86,7 +86,9 @@ fi
 # cron on this fork. Skips are reported (not silent) so they don't look like
 # crashes.
 # NOTE: this file is synced from upstream — an upstream sync can overwrite this
-# section. If it needs re-applying, re-add the three names in monthly_skip below.
+# section. It is re-applied automatically by
+# scripts/fork-ensure-run-seeders-patches.mjs (wired into
+# .github/workflows/seed-upstash.yml) before every seed run.
 is_monthly_heavy() {
   case "$1" in
     *seed-climate-zone-normals.mjs|*seed-fatf-listing.mjs) return 0 ;;
