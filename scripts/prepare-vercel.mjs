@@ -784,6 +784,53 @@ function forkCorsAllowlistPatch() {
 }
 
 
+// Fork patch: on a personal/self-hosted deployment the Upstash Redis may be
+// absent, unconfigured, or unreachable. The anonymous wm-session mint used
+// `failClosed: true`, so any Redis blip made the WHOLE dashboard show
+// "Anonymous data is temporarily unavailable" and left panels empty, even
+// though the public bootstrap tier and all per-route data handlers stay
+// availability-first (`failClosed: false`). Make the mint fail OPEN so the
+// dashboard populates regardless. Safe for a fork: wms_ tokens are
+// anonymous-only and rejected by every forceKey route.
+const FORK_RATE_LIMIT_PATCHES = [
+  {
+    description: 'wm-session anonymous mint fails OPEN on Redis outage (staged wm-session.js)',
+    file: join(root, '.vercel-api-routes', 'wm-session.js'),
+    marker:
+      '    failClosed: true,\n' +
+      '    ctx,\n' +
+      '    scope: SESSION_RATE_LIMIT_SCOPE,\n',
+    replacement:
+      '    // [fork-patch] Availability-first on fork deployments: the anonymous\n' +
+      '    // session mint must not fail closed when Upstash Redis is unreachable\n' +
+      '    // or unconfigured. Failing open is safe here — wms_ tokens are\n' +
+      '    // anonymous-only and rejected by forceKey routes — and keeps the\n' +
+      '    // dashboard populating on a personal/self-hosted fork.\n' +
+      '    failClosed: false,\n' +
+      '    ctx,\n' +
+      '    scope: SESSION_RATE_LIMIT_SCOPE,\n',
+    replaceAll: false,
+  },
+];
+
+function forkSessionRateLimitFailOpen() {
+  for (const { description, file, marker, replacement } of FORK_RATE_LIMIT_PATCHES) {
+    const raw = readFileSync(file, 'utf8');
+    if (!raw.includes(marker)) {
+      throw new Error(
+        `[fork-ratelimit] patch marker not found in ${file}: ${description}. ` +
+          'Upstream likely changed the wm-session rate-limit call — update scripts/prepare-vercel.mjs so the ' +
+          'Vercel deploy branch stays availability-first for the anonymous session mint.',
+      );
+    }
+    if (!raw.includes('failClosed: false')) {
+      writeFileSync(file, raw.replace(marker, replacement));
+    }
+  }
+  console.log('[prepare-vercel] applied fork rate-limit patch (wm-session anonymous mint fails open)');
+}
+
+
 async function main() {
   if (!(await stat(apiDir).catch(() => null))) {
     throw new Error('api/ directory is missing; the canonical repository layout is required');
@@ -848,6 +895,7 @@ async function main() {
   forkVariantSwitchPatches();
   forkSourceAttributionScan();
   forkCorsAllowlistPatch();
+  forkSessionRateLimitFailOpen();
 
 
   await writeFile(generatedIndex, renderIndex(routes));
