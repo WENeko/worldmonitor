@@ -23,6 +23,14 @@
 name: Populate Upstash Redis
 
 on:
+  schedule:
+    # Fork housekeeping: re-seed Upstash so the dashboard's seed-backed panels
+    # (sanctions, conflict, market quotes, weather, ...) stay populated. The
+    # fork repo is public, so GitHub Actions minutes are free; the binding
+    # constraints are the Upstash free-tier command meter (500k/month) and
+    # upstream API rate limits. Every 6h keeps most TTLs alive; drop to
+    # '0 */12 * * *' or '0 3 * * *' if the Upstash meter climbs.
+    - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
       branch:
