@@ -98,11 +98,21 @@ run_seed() {
     node_file="$(cygpath -w "$node_file")"
   fi
 
+  # seed-consumer-prices.mjs is a manual-fallback seeder that refuses to run
+  # without --force: its normal guard protects the authoritative consumer-
+  # prices-core publish.ts pipeline (26h TTLs) from being stomped by the seed's
+  # short TTLs. This fork has no publish.ts pipeline, so the seed workflow MUST
+  # pass --force or the consumer-price panels stay permanently empty.
+  extra_args=""
+  case "$1" in
+    *seed-consumer-prices.mjs) extra_args="--force" ;;
+  esac
+
   if caps_seed "$1"; then
     # -k: if it ignores SIGTERM, SIGKILL it 30s later so the run can move on.
-    timeout -k 30 "$SEED_TIMEOUT" node "$node_file" 2>&1
+    timeout -k 30 "$SEED_TIMEOUT" node "$node_file" $extra_args 2>&1
   else
-    node "$node_file" 2>&1
+    node "$node_file" $extra_args 2>&1
   fi
 }
 
