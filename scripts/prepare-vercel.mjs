@@ -283,8 +283,23 @@ function rewriteBuildCommand() {
 function ensureApiCatchAllRewrite() {
   const vercelPath = join(root, 'vercel.json');
   const raw = readFileSync(vercelPath, 'utf8');
-  // Idempotent: bail if a rewrite already captures the whole /api namespace.
-  if (/"source"\s*:\s*"\/api\/\(\.\*\)"/.test(raw)) return;
+  let obj;
+  try {
+    obj = JSON.parse(raw);
+  } catch {
+    throw new Error('[prepare-vercel] vercel.json is not valid JSON; cannot add the /api catch-all rewrite');
+  }
+  const rewrites = Array.isArray(obj.rewrites) ? obj.rewrites : [];
+  // Exact string comparison: the canonical catch-all rewrite carries the literal
+  // source '/api/(.*)' (the parens are data, not regex), routed to the router.
+  const alreadyRouted = rewrites.some(
+    (rewrite) =>
+      rewrite &&
+      rewrite.source === '/api/(.*)' &&
+      typeof rewrite.destination === 'string' &&
+      rewrite.destination.includes('/api/index'),
+  );
+  if (alreadyRouted) return;
   const marker = '"rewrites": [';
   if (!raw.includes(marker)) {
     throw new Error(
