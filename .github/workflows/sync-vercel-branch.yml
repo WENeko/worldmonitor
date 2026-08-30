@@ -92,16 +92,16 @@ jobs:
 
       - name: Preserve build-time generated paths
         run: |
-          if [ -d "vercel-api-routes/mcp/skill-extension" ]; then
+          if [ -d ".vercel-api-routes/mcp/skill-extension" ]; then
             mkdir -p api/mcp/skill-extension
-            cp vercel-api-routes/mcp/skill-extension/*.ts api/mcp/skill-extension/
+            cp .vercel-api-routes/mcp/skill-extension/*.ts api/mcp/skill-extension/
           fi
 
       - name: Validate generated deployment
         run: |
           test -f api/index.ts
           test -f api/mcp/skill-extension/generated.ts
-          test -d vercel-api-routes
+          test -d .vercel-api-routes
           git diff --check
 
       - name: Publish adapted Vercel branch
