@@ -267,6 +267,35 @@ function rewriteBuildCommand() {
   if (rewritten !== raw) writeFileSync(vercelPath, rewritten);
 }
 
+// The single-function branch keeps only api/index.ts (plus api/mcp.ts) as real
+// Vercel Serverless Functions. Vercel maps a request to /api/<path> against an
+// api/<path> file, and the consolidated branch no longer has those files (they
+// moved into .vercel-api-routes/ so the free plan stays under the function
+// limit). Without a catch-all rewrite, every direct frontend call to /api/
+// — /api/wm-session, /api/bootstrap, /api/*/v1/*, /api/health — returns 404 and
+// the dashboard renders empty. Add { source: '/api/(.*)', destination:
+// '/api/index' } so the generated router receives the whole /api namespace and
+// restores the original path from the x-matched-path header Vercel attaches to
+// rewrite destinations. The destination intentionally carries NO query so
+// Vercel keeps forwarding the caller's original query string, which the router
+// re-applies alongside the restored path. api/mcp.ts stays a real function and
+// takes route precedence, so /api/mcp is unaffected.
+function ensureApiCatchAllRewrite() {
+  const vercelPath = join(root, 'vercel.json');
+  const raw = readFileSync(vercelPath, 'utf8');
+  // Idempotent: bail if a rewrite already captures the whole /api namespace.
+  if (/"source"\s*:\s*"\/api\/\(\.\*\)"/.test(raw)) return;
+  const marker = '"rewrites": [';
+  if (!raw.includes(marker)) {
+    throw new Error(
+      '[prepare-vercel] vercel.json has no "rewrites" array; cannot add the /api catch-all rewrite',
+    );
+  }
+  const insertion = '\n    { "source": "/api/(.*)", "destination": "/api/index" },';
+  writeFileSync(vercelPath, raw.replace(marker, marker + insertion));
+  console.log('[prepare-vercel] ensured /api/(.*) -> /api/index catch-all rewrite');
+}
+
 // docs-stats (used by inventory:facts in postinstall) reads api/bootstrap.js,
 // api/health.js, and api/mcp/* files, all of which move into .vercel-api-routes/.
 // Add a fallback in its read() helper so the moved reads resolve against the
@@ -689,6 +718,7 @@ async function main() {
 
   await writeFile(generatedIndex, renderIndex(routes));
   rewriteVercelDestinations();
+  ensureApiCatchAllRewrite();
   rewriteBuildCommand();
 
   const stagedCount = files.filter((relativePath) => !staysInApi(relativePath) && !/\.(test|spec)\./.test(relativePath)).length;
