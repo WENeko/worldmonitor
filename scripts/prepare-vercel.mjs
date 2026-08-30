@@ -601,6 +601,16 @@ const FORK_VARIANT_PATCHES = [
     replaceAll: true,
   },
   {
+    description: 'mobile primary-nav variant click treats non-upstream hosts as local (src/app/mobile-primary-nav.ts)',
+    file: join(root, 'src', 'app', 'mobile-primary-nav.ts'),
+    marker: "const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';",
+    replacement:
+      "const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || " +
+      "(location.hostname !== 'worldmonitor.app' && location.hostname !== 'www.worldmonitor.app' " +
+      "&& !location.hostname.endsWith('.worldmonitor.app'));",
+    replaceAll: false,
+  },
+  {
     description: 'SITE_VARIANT resolves locally on non-upstream hosts (src/config/variant.ts)',
     file: join(root, 'src', 'config', 'variant.ts'),
     marker:
