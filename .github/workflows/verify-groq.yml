@@ -36,10 +36,14 @@ jobs:
             const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}`, 'User-Agent': 'worldmonitor-fork-diagnostic/1.0' },
+              // Replicate seed-insights' exact Groq call: the default model
+              // and reasoning_effort:'low' body it sends (see
+              // scripts/lib/llm-model-policy.cjs).
               body: JSON.stringify({
-                model: 'llama-3.1-8b-instant',
+                model: 'openai/gpt-oss-20b',
                 messages: [{ role: 'user', content: 'Reply with the single word: OK' }],
-                max_tokens: 8,
+                max_tokens: 64,
+                reasoning_effort: 'low',
               }),
               signal: AbortSignal.timeout(20_000),
             });
