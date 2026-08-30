@@ -1,0 +1,92 @@
+# Fork-local one-shot diagnostic: verify the ACLED token path used by
+# seed-conflict-intel.mjs WITHOUT running the whole ~1h seed workflow.
+#
+# It replicates fetchAcledToken() exactly (OAuth password grant to
+# acleddata.com/oauth/token) and then performs one small ACLED read, printing
+# the real HTTP status / error so we can see WHY seed-conflict-intel fails even
+# though ACLED_EMAIL / ACLED_PASSWORD are set in the repo secrets.
+#
+# Trigger from the GitHub UI: Actions -> "Verify ACLED token" -> Run workflow.
+# The access token is never printed — only its length and the HTTP statuses.
+
+name: Verify ACLED token
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: verify-acled
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Test ACLED OAuth + read
+        env:
+          ACLED_EMAIL: ${{ secrets.ACLED_EMAIL }}
+          ACLED_PASSWORD: ${{ secrets.ACLED_PASSWORD }}
+        run: |
+          node --input-type=module <<'EOF'
+          const email = (process.env.ACLED_EMAIL || '').trim();
+          const password = (process.env.ACLED_PASSWORD || '').trim();
+
+          if (!email || !password) {
+            console.log('NO_CREDS: ACLED_EMAIL/ACLED_PASSWORD are NOT set as repo secrets');
+            process.exit(2);
+          }
+
+          // Replicates fetchAcledToken() Priority 1 (OAuth password grant).
+          console.log('ACLED_EMAIL set:', email.length > 0, ' ACLED_PASSWORD set:', password.length > 0);
+          const body = new URLSearchParams({
+            username: email, password, grant_type: 'password', client_id: 'acled',
+          });
+          try {
+            const resp = await fetch('https://acleddata.com/oauth/token', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0' },
+              body,
+              signal: AbortSignal.timeout(15_000),
+            });
+            console.log('OAUTH HTTP', resp.status);
+            const text = await resp.text();
+            if (!resp.ok) {
+              console.log('OAUTH_BODY', text.slice(0, 300));
+              process.exit(3);
+            }
+            const accessToken = JSON.parse(text).access_token;
+            if (!accessToken) {
+              console.log('OAUTH_MISSING_TOKEN');
+              process.exit(3);
+            }
+            console.log('OAUTH_OK token_len', String(accessToken).length);
+
+            // One small ACLED read, same shape as fetchAcledPage().
+            const params = new URLSearchParams({
+              event_type: 'Battles',
+              event_date: '2026-07-30|2026-08-30',
+              event_date_where: 'BETWEEN',
+              limit: '5',
+              _format: 'json',
+            });
+            const readResp = await fetch(`https://acleddata.com/api/acled/read?${params}`, {
+              headers: { Accept: 'application/json', Authorization: `Bearer ${accessToken}`, 'User-Agent': 'Mozilla/5.0' },
+              signal: AbortSignal.timeout(15_000),
+            });
+            console.log('READ HTTP', readResp.status);
+            const readText = await readResp.text();
+            console.log('READ_BODY', readText.slice(0, 300));
+            if (!readResp.ok) process.exit(3);
+            const data = JSON.parse(readText);
+            const count = Array.isArray(data.data) ? data.data.length : (data.count || 0);
+            console.log(`READ_OK event_count=${count}`);
+          } catch (e) {
+            console.log('ERROR', String((e && e.message) || e));
+            process.exit(3);
+          }
+          EOF
