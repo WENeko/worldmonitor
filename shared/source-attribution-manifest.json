@@ -7506,9 +7506,9 @@
       "provider": "registry.modelcontextprotocol.io",
       "kind": "structured",
       "observed": true,
-      "license": "Provider terms for this upstream API/dataset; verify before redistribution",
-      "attribution": "Credit registry.modelcontextprotocol.io and link to the original upstream API/dataset.",
-      "status": "terms-review",
+      "license": "Excluded: first-party, control-plane, UI, or rendering transport",
+      "attribution": "Excluded from the external-provider count: not an ingested upstream dataset.",
+      "status": "excluded",
       "references": [
         {
           "path": "scripts/publish-mcp-registry.mjs"
