@@ -831,6 +831,49 @@ function forkSessionRateLimitFailOpen() {
 }
 
 
+// Fork patch: surface the real Upstash per-command error when the health
+// verdict's SET-NX refresh lock fails. Upstream hides it behind a generic
+// "Redis snapshot lock failed", but on a fork deployment the interesting fact
+// is often the Upstash error string (e.g. a READ-ONLY token: reads/GET work but
+// writes/SET are rejected). The compact health `error` field is err.message, so
+// enriching the thrown message makes `?compact=1` show the exact cause.
+const FORK_HEALTH_DIAGNOSTIC_PATCHES = [
+  {
+    description: 'surface Upstash error when the health snapshot refresh lock fails (staged health.js)',
+    file: join(root, '.vercel-api-routes', 'health.js'),
+    marker: "    if (!lockResult || lockResult[0]?.error) throw new Error('Redis snapshot lock failed');",
+    replacement:
+      '    if (!lockResult || lockResult[0]?.error) {\n' +
+      '      // [fork-patch] Surface the Upstash per-command error so a fork\n' +
+      '      // operator can see WHY the write lock fails (e.g. a read-only token).\n' +
+      '      const redisErr = lockResult?.[0]?.error;\n' +
+      '      throw new Error(\n' +
+      "        'Redis snapshot lock failed' +\n" +
+      "        (redisErr ? `: ${String(redisErr)}` : ' (empty Upstash pipeline reply)')\n" +
+      '      );\n' +
+      '    }',
+    replaceAll: false,
+  },
+];
+
+function forkHealthDiagnostic() {
+  for (const { description, file, marker, replacement } of FORK_HEALTH_DIAGNOSTIC_PATCHES) {
+    const raw = readFileSync(file, 'utf8');
+    if (!raw.includes(marker)) {
+      throw new Error(
+        `[fork-health] patch marker not found in ${file}: ${description}. ` +
+          'Upstream likely changed the health lock error — update scripts/prepare-vercel.mjs so the ' +
+          'Vercel deploy branch surfaces the real Upstash error.',
+      );
+    }
+    if (!raw.includes('surface the Upstash per-command error')) {
+      writeFileSync(file, raw.replace(marker, replacement));
+    }
+  }
+  console.log('[prepare-vercel] applied fork health-diagnostic patch (lock failure surfaces Upstash error)');
+}
+
+
 async function main() {
   if (!(await stat(apiDir).catch(() => null))) {
     throw new Error('api/ directory is missing; the canonical repository layout is required');
@@ -896,6 +939,7 @@ async function main() {
   forkSourceAttributionScan();
   forkCorsAllowlistPatch();
   forkSessionRateLimitFailOpen();
+  forkHealthDiagnostic();
 
 
   await writeFile(generatedIndex, renderIndex(routes));
