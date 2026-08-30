@@ -271,8 +271,31 @@ function bundleGeneratedFunctions() {
       allowOverwrite: true,
       logLevel: 'warning',
     });
+    // esbuild preserves trailing whitespace and space-before-tab from embedded
+    // sources (comments, Lua/SQL templates). The workflow's `git diff --check`
+    // validation rejects both, so normalize the bundled output.
+    cleanBundleWhitespace(generatedIndex);
+    cleanBundleWhitespace(join(apiDir, 'mcp.ts'));
     console.log('[prepare-vercel] bundled api/index.ts (node) and api/mcp.ts (edge) into self-contained functions');
   })();
+}
+
+// Strip trailing whitespace and space-before-tab indentation from a generated
+// bundle so `git diff --check` stays green in the sync workflow. Only leading
+// indentation and end-of-line whitespace are touched; bundled content is
+// otherwise byte-identical, so semantics never change.
+function cleanBundleWhitespace(file) {
+  const source = readFileSync(file, 'utf8');
+  const cleaned = source
+    .split('\n')
+    .map((line) => {
+      const leading = line.match(/^[ \t]*/)[0];
+      const rest = line.slice(leading.length);
+      const fixedLeading = leading.replace(/ +\t/g, '\t');
+      return fixedLeading + rest.replace(/[ \t]+$/, '');
+    })
+    .join('\n');
+  if (cleaned !== source) writeFileSync(file, cleaned);
 }
 
 // Vercel discovers functions from api/ before the build command runs, so the
