@@ -81,6 +81,11 @@ jobs:
           AVIATIONSTACK_API: ${{ secrets.AVIATIONSTACK_API }}
           OPENAQ_API_KEY: ${{ secrets.OPENAQ_API_KEY }}
           WAQI_API_KEY: ${{ secrets.WAQI_API_KEY }}
+          # Fork wiring for seed-insights: warm the news digest from THIS
+          # fork's own Vercel deployment instead of the upstream API, using a
+          # relay key that matches Vercel's WORLDMONITOR_VALID_KEYS.
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          WORLDMONITOR_RELAY_KEY: ${{ secrets.WORLDMONITOR_RELAY_KEY }}
         run: |
           if [ -z "$UPSTASH_REDIS_REST_URL" ] || [ -z "$UPSTASH_REDIS_REST_TOKEN" ]; then
             echo "::error::UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN are required repo secrets."
