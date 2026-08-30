@@ -289,10 +289,12 @@ function cleanBundleWhitespace(file) {
   const cleaned = source
     .split('\n')
     .map((line) => {
+      // Fix "space before tab" inside the leading indentation first.
       const leading = line.match(/^[ \t]*/)[0];
-      const rest = line.slice(leading.length);
       const fixedLeading = leading.replace(/ +\t/g, '\t');
-      return fixedLeading + rest.replace(/[ \t]+$/, '');
+      // Strip trailing whitespace from the full line so whitespace-only
+      // lines (which live entirely in the leading match) are emptied too.
+      return (fixedLeading + line.slice(leading.length)).replace(/[ \t]+$/, '');
     })
     .join('\n');
   if (cleaned !== source) writeFileSync(file, cleaned);
