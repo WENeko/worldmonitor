@@ -731,7 +731,48 @@ function forkSourceAttributionScan() {
     writeFileSync(file, raw.replace(marker, replacement));
   }
   console.log('[prepare-vercel] applied fork source-attribution scan remap (.vercel-api-routes -> api/)');
+}// The API CORS allowlist only permits upstream hosts and the "eliewm" Vercel
+// team scope. On the fork deployment, the browser app is same-origin with the
+// API, and the browser sends Origin on every fetch, so every dashboard request
+// 403s with "Forbidden" unless the fork's own hosts are allowed. Patch both the
+// surviving api/_cors.js helper and its staged copy (the bundle inlines the
+// staged tree).
+const FORK_CORS_ALLOWLIST_PATCHES = [
+  {
+    description: 'fork hosts in API CORS allowlist (api/_cors.js + staged copy)',
+    file: join(root, 'api', '_cors.js'),
+    marker: "// Tight on purpose: never a bare *.vercel.app (this is a security allowlist).",
+    replacement:
+      "// Tight on purpose: never a bare *.vercel.app (this is a security allowlist).\n" +
+      "  // [fork-patch] WENeko fork deployment hosts: stable domain and the\n" +
+      "  // fork team's Vercel preview/deployment URLs. The fork browser app is\n" +
+      "  // same-origin with its API and must not 403 on its own Origin.\n" +
+      "  /^https:\\/\\/worldmonitor-weneko\\.vercel\\.app$/,\n" +
+      "  /^https:\\/\\/worldmonitor-[a-z0-9-]+-worldmonitor-weneko\\.vercel\\.app$/,\n",
+    replaceAll: false,
+  },
+];
+
+function forkCorsAllowlistPatch() {
+  for (const { description, file, marker, replacement } of FORK_CORS_ALLOWLIST_PATCHES) {
+    const staged = file.replace('/api/_cors.js', '/.vercel-api-routes/_cors.js');
+    for (const target of [file, staged]) {
+      const raw = readFileSync(target, 'utf8');
+      if (!raw.includes(marker)) {
+        throw new Error(
+          `[fork-cors] patch marker not found in ${target}: ${description}. ` +
+          'Upstream likely changed the allowlist — update scripts/prepare-vercel.mjs so the ' +
+          'Vercel deploy branch keeps the fork hosts allowed.',
+        );
+      }
+      if (!raw.includes('worldmonitor-weneko.vercel.app')) {
+        writeFileSync(target, raw.replace(marker, replacement));
+      }
+    }
+  }
+  console.log('[prepare-vercel] applied fork CORS allowlist patch (fork hosts permitted)');
 }
+
 
 async function main() {
   if (!(await stat(apiDir).catch(() => null))) {
@@ -796,6 +837,7 @@ async function main() {
   forkUnlockProGates();
   forkVariantSwitchPatches();
   forkSourceAttributionScan();
+  forkCorsAllowlistPatch();
 
 
   await writeFile(generatedIndex, renderIndex(routes));
