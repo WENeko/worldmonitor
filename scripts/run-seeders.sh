@@ -139,6 +139,11 @@ for f in "$SCRIPT_DIR"/seed-*.mjs; do
     ok=$((ok + 1))
   else
     printf "FAIL (%s)\n" "$last"
+    # Fork diagnostic: a standalone seeder's failure reason (e.g. "ACLED
+    # failed: HTTP 401") is printed by the seeder well before its final line,
+    # but the previous capture dropped everything but $last. Surface the tail
+    # so the workflow log shows the REAL cause instead of a bare FAIL.
+    echo "$output" | tail -6
     fail=$((fail + 1))
   fi
 done
