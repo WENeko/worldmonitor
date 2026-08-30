@@ -258,6 +258,7 @@ function bundleGeneratedFunctions() {
       format: 'esm',
       target: ['node20'],
       outfile: generatedIndex,
+      allowOverwrite: true,
       logLevel: 'warning',
     });
     await build({
@@ -267,6 +268,7 @@ function bundleGeneratedFunctions() {
       format: 'esm',
       target: ['es2022'],
       outfile: join(apiDir, 'mcp.ts'),
+      allowOverwrite: true,
       logLevel: 'warning',
     });
     console.log('[prepare-vercel] bundled api/index.ts (node) and api/mcp.ts (edge) into self-contained functions');
