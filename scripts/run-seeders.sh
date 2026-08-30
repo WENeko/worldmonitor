@@ -77,6 +77,23 @@ else
   timeout_enabled=false
 fi
 
+# FORK PATCH (exclusion of heavy/monthly seeders from the 6h loop).
+# climate-zone-normals re-fetches 30 years of Open-Meteo daily archive (1991–
+# 2020) for ~176 zones and blows the 240s fetch-phase deadline every run
+# (upstream issue #4786); fatf-listing is a MONTHLY dataset (3x/year FATF
+# plenary) that loop runs waste a 53s slot on, and its source blocks GitHub
+# runner IPs with HTTP 403 anyway. Neither belongs in a 6-hourly sequential
+# cron on this fork. Skips are reported (not silent) so they don't look like
+# crashes.
+# NOTE: this file is synced from upstream — an upstream sync can overwrite this
+# section. If it needs re-applying, re-add the three names in monthly_skip below.
+is_monthly_heavy() {
+  case "$1" in
+    *seed-climate-zone-normals.mjs|*seed-fatf-listing.mjs) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Bundle seeders self-bound per section — never wrap them in the outer cap.
 is_bundle() {
   case "$1" in
@@ -120,6 +137,11 @@ ok=0 fail=0 skip=0 timedout=0
 
 for f in "$SCRIPT_DIR"/seed-*.mjs; do
   name="$(basename "$f")"
+  if is_monthly_heavy "$f"; then
+    echo "→ $name ... SKIP (heavy/monthly seed not run in the 6h loop — fork exclusion)"
+    skip=$((skip + 1))
+    continue
+  fi
   printf "→ %s ... " "$name"
   output=$(run_seed "$f")
   rc=$?
