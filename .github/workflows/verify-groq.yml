@@ -1,0 +1,57 @@
+# Fork-local one-shot diagnostic: verify the GROQ API key used by
+# seed-insights.mjs (and seed-forecasts.mjs) WITHOUT running the full seed
+# workflow. Sends one minimal chat completion and prints the real status, so
+# we know whether a missing/expired key is part of the newsInsights failure.
+
+name: Verify GROQ key
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: verify-groq
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Test GROQ chat completion
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          node --input-type=module <<'EOF'
+          const key = (process.env.GROQ_API_KEY || '').trim();
+          if (!key) {
+            console.log('NO_KEY: GROQ_API_KEY is NOT set as a repo secret');
+            process.exit(2);
+          }
+          console.log('GROQ_API_KEY set:', key.length > 0, '(len', key.length + ')');
+          try {
+            const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}`, 'User-Agent': 'worldmonitor-fork-diagnostic/1.0' },
+              body: JSON.stringify({
+                model: 'llama-3.1-8b-instant',
+                messages: [{ role: 'user', content: 'Reply with the single word: OK' }],
+                max_tokens: 8,
+              }),
+              signal: AbortSignal.timeout(20_000),
+            });
+            console.log('GROQ HTTP', resp.status);
+            const text = await resp.text();
+            console.log('GROQ_BODY', text.slice(0, 300));
+            if (!resp.ok) process.exit(3);
+            const data = JSON.parse(text);
+            const content = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+            console.log('GROQ_OK model=', data.model || '?', ' reply=', JSON.stringify((content || '').trim().slice(0, 40)));
+          } catch (e) {
+            console.log('GROQ_NETWORK_ERROR', String((e && e.message) || e));
+            process.exit(3);
+          }
+          EOF
