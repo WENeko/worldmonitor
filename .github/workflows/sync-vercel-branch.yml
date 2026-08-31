@@ -39,7 +39,7 @@ jobs:
           git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
           git fetch --no-tags upstream main
 
-          mkdir -p /tmp/fork-files/scripts /tmp/fork-files/deploy
+          mkdir -p /tmp/fork-files/scripts
           cp scripts/prepare-vercel.mjs /tmp/fork-files/scripts/ 2>/dev/null || true
           cp scripts/build-crawlable-corpus.mjs /tmp/fork-files/scripts/ 2>/dev/null || true
           cp scripts/fork-ensure-run-seeders-patches.mjs /tmp/fork-files/scripts/ 2>/dev/null || true
