@@ -1811,6 +1811,16 @@
       "loading": "正在连接Telegram中继...",
       "empty": "暂无消息",
       "disabled": "Telegram中继未激活",
+      "watchlistPlaceholder": "通过 @username 添加公开频道",
+      "resolving": "正在查找频道...",
+      "invalidUsername": "请使用公开的 Telegram @username",
+      "resolveFailed": "找不到频道",
+      "watchlistLimit": "最多可关注 {{count}} 个自定义频道",
+      "previewMembers": "{{count}} 位成员",
+      "addChannel": "添加频道",
+      "added": "已添加",
+      "remove": "移除",
+      "custom": "自定义",
       "filterAll": "全部",
       "filterBreaking": "突发",
       "filterConflict": "冲突",
@@ -2022,6 +2032,22 @@
       "metals": {
         "gold": "Gold",
         "silver": "Silver"
+      },
+      "divergence": {
+        "compositeValue": "物理压力指数：{{value}} / 100",
+        "fiveDayTrend": "五个交易日溢价趋势",
+        "regimes": {
+          "normal": "正常",
+          "elevated": "升高",
+          "stressed": "受压",
+          "extreme": "极端"
+        },
+        "states": {
+          "insufficientHistory": "预热中：{{count}} / {{required}} 个交易点",
+          "staleInput": "物理基准数据已过期",
+          "missingInput": "分歧信号不可用"
+        },
+        "twentyDayTrend": "二十个交易日溢价趋势"
       }
     },
     "crypto": {
@@ -2173,6 +2199,25 @@
         "failedToLoad": "加载失败"
       },
       "cissStale": "欧洲中央银行尚未发布新数值 — 此读数可能已过期。"
+    },
+    "supplyVulnerability": {
+      "title": "大宗商品脆弱性",
+      "help": "基于供应商集中度、海运通道和可用战略缓冲评估各国分商品风险敞口。",
+      "loading": "正在加载大宗商品脆弱性…",
+      "unavailable": "大宗商品脆弱性数据不可用",
+      "noCoverage": "该国家的证据不足",
+      "unknown": "未知",
+      "concentration": "集中度",
+      "transit": "运输通道",
+      "buffer": "战略缓冲",
+      "sources": "来源",
+      "methodology": "方法论",
+      "hormuzTitle": "大宗商品依赖",
+      "dependentCountries": "依赖国家",
+      "dependentCommodities": "依赖商品",
+      "stateOk": "当前",
+      "stateStale": "输入已过期",
+      "stateInsufficient": "数据不足"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>霍尔木兹贸易追踪器</strong> 通过全球最关键的石油咽喉要道霍尔木兹海峡的AIS船舶实时追踪。监控油轮数量、中断事件和每周流量变化。全球约20%的石油供应每天经此通过。",

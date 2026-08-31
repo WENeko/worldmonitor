@@ -1,4 +1,5 @@
 import COUNTRY_BBOXES from '../../../shared/country-bboxes.js';
+import { resolveCountryCode } from '../../../shared/country-code-resolve';
 import { isOpenSkyProvider } from '../../../shared/provider-redistribution';
 import {
   CHINA_DECISION_SIGNAL_GROUP_IDS,
@@ -39,6 +40,58 @@ type McpBriefSource = {
   url: string;
   publishedAt?: string;
 };
+
+/** Bound on the caller-supplied value echoed back in a resolution failure. */
+const MAX_ECHOED_COUNTRY_INPUT = 64;
+
+function echoCountryInput(raw: unknown): string {
+  // Never stringify a non-string. `String(x)` runs the value's own toString /
+  // valueOf, and `{"toString":"x"}` is legal JSON a caller can send: the
+  // shadowed, non-callable toString makes String() throw
+  // `TypeError: Cannot convert object to primitive value`. That turns this
+  // guard — whose whole job is to produce a clean 400 — into a 500. Describing
+  // the type is also more useful to the caller than `[object Object]`.
+  const text = typeof raw === 'string' ? raw.trim() : `<non-string ${typeof raw}>`;
+  return text.length > MAX_ECHOED_COUNTRY_INPUT
+    ? `${text.slice(0, MAX_ECHOED_COUNTRY_INPUT)}…`
+    : text;
+}
+
+const COUNTRY_ARG_HINT =
+  'Pass an ISO 3166-1 alpha-2 code (e.g. "IQ"), an alpha-3 code ("IRQ"), or an English country name ("Iraq").';
+
+// Two shapes for the same fault, each forced by the tool's own output schema —
+// not an accident of which branch was easier to edit. get_country_brief and
+// get_country_risk mirror their proto responses verbatim (a schema-coverage
+// guard fails the build if a declared field stops existing on the wire), so
+// they have nowhere to put an `error` field and throw RpcValidationError,
+// which dispatch maps to JSON-RPC -32602 with `error.data.violations[]`.
+// get_airspace and get_maritime_activity already declared a result-level
+// `error` property for the no-bounding-box case, so resolution failures reuse
+// it. A new country-scoped tool should follow whichever rule its schema forces,
+// not pick freely.
+
+/**
+ * Resolve a `country_code` tool argument, or throw the same structured 400 the
+ * downstream proto would have raised — reaching the agent as JSON-RPC -32602
+ * with `error.data.violations[]`.
+ *
+ * The argument comes from an LLM, so it arrives as alpha-2, alpha-3, a country
+ * name, or an alias interchangeably. It was previously coerced with
+ * `.toUpperCase().slice(0, 2)`, which is silently wrong rather than lossy: the
+ * proto only enforces `^[A-Z]{2}$`, so a truncated NAME passes validation and
+ * answers for a different country — `Iraq` was served as Iran, `China` as
+ * Switzerland (WORLDMONITOR-Y2). Failing loudly on the genuinely unresolvable
+ * remainder is what lets an agent correct itself.
+ */
+function requireCountryCode(raw: unknown, operation: string): string {
+  const resolved = resolveCountryCode(raw);
+  if (resolved) return resolved;
+  throw new RpcValidationError(operation, [{
+    field: 'country_code',
+    description: `Could not resolve ${JSON.stringify(echoCountryInput(raw))} to a country. ${COUNTRY_ARG_HINT}`,
+  }]);
+}
 
 type DigestItemForBrief = {
   title?: string;
@@ -691,12 +744,108 @@ const DEMOGRAPHICS_OBSERVATION_OUTPUT_SCHEMA = {
   },
 };
 
+const RESILIENCE_INDICATOR_SOURCE_OUTPUT_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    key: { type: 'string' as const },
+    name: { type: 'string' as const },
+    attribution: { type: 'string' as const },
+    license: { type: 'string' as const },
+    url: { type: 'string' as const },
+    licenseUrl: { type: 'string' as const },
+    attributionUrl: { type: 'string' as const },
+    observationProvenance: { type: 'boolean' as const, description: 'True only for a source recorded for the selected-country observation.' },
+  },
+};
+
+const RESILIENCE_INDICATOR_RAW_VALUE_OUTPUT_SCHEMA = {
+  type: 'object' as const,
+  description: 'Selectively exposed raw observation. Read availability fields before numeric or text values.',
+  properties: {
+    available: { type: 'boolean' as const },
+    numericValue: { type: 'number' as const },
+    numericValueAvailable: { type: 'boolean' as const },
+    textValue: { type: 'string' as const },
+    textValueAvailable: { type: 'boolean' as const },
+    unit: { type: 'string' as const },
+    status: { type: 'string' as const, description: 'available, absent, restricted, audit-incomplete, conditional, ineligible-observation, or unknown-indicator.' },
+    reason: { type: 'string' as const },
+  },
+};
+
+const RESILIENCE_INDICATOR_OUTPUT_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    id: { type: 'string' as const },
+    dimension: { type: 'string' as const },
+    tier: { type: 'string' as const, description: 'core, enrichment, or experimental.' },
+    active: { type: 'boolean' as const },
+    includedInDimensionScore: { type: 'boolean' as const },
+    state: { type: 'string' as const, description: 'observed, imputed, missing, fallback, source-failure, inactive, retired, or not-applicable.' },
+    reason: { type: 'string' as const, description: 'Explains exclusion, inactivity, retirement, or fallback.' },
+    normalizedScoreAvailable: { type: 'boolean' as const },
+    normalizedScore: { type: 'number' as const },
+    nominalWeight: { type: 'number' as const },
+    runtimeWeightAvailable: { type: 'boolean' as const },
+    runtimeWeight: { type: 'number' as const },
+    scoringWeightShareAvailable: { type: 'boolean' as const },
+    scoringWeightShare: { type: 'number' as const },
+    literalContribution: { type: 'number' as const },
+    effectiveContribution: { type: 'number' as const, description: 'Reconciled effective contribution to the exposed dimension score.' },
+    imputationClass: { type: 'string' as const },
+    sourceYearAvailable: { type: 'boolean' as const },
+    sourceYear: { type: 'integer' as const },
+    observationAgeAvailable: { type: 'boolean' as const },
+    observationAgeValue: { type: 'integer' as const },
+    observationAgeUnit: { type: 'string' as const, description: 'days or years.' },
+    observationAgeBasis: { type: 'string' as const, description: 'observation-timestamp or source-year; never retrieval time.' },
+    retrievedAtAvailable: { type: 'boolean' as const },
+    retrievedAt: { type: 'string' as const },
+    observedAtAvailable: { type: 'boolean' as const },
+    observedAt: { type: 'string' as const },
+    sources: { type: 'array' as const, items: RESILIENCE_INDICATOR_SOURCE_OUTPUT_SCHEMA },
+    rawValue: RESILIENCE_INDICATOR_RAW_VALUE_OUTPUT_SCHEMA,
+  },
+};
+
+const RESILIENCE_INDICATOR_DIMENSION_OUTPUT_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    id: { type: 'string' as const },
+    score: { type: 'number' as const },
+    coverage: { type: 'number' as const },
+    prePolicyScore: { type: 'number' as const },
+    policyCapName: { type: 'string' as const },
+    policyCapFactor: { type: 'number' as const },
+    literalContributionTotal: { type: 'number' as const },
+    effectiveContributionTotal: { type: 'number' as const, description: 'Reconciles exactly to score.' },
+    active: { type: 'boolean' as const },
+    reconciliationAvailable: { type: 'boolean' as const, description: 'False for retired or runtime-disabled placeholder dimensions.' },
+    reason: { type: 'string' as const },
+  },
+};
+
 const SCORECARD_PILLAR_VALUES = ['food', 'energy', 'demographics', 'technology', 'defense'];
 const SCORECARD_BAND_VALUES = ['', 'severe-deficit', 'material-deficit', 'mixed-capability', 'strong-capability', 'high-capability'];
 const SCORECARD_AGGREGATION_VALUES = ['country-weighted-components', 'aggregate-physical-inputs', 'population-weighted-continuous-score'];
 const SCORECARD_EVIDENCE_REASON_VALUES = ['', 'source-unavailable', 'country-unavailable', 'invalid-value', 'stale', 'coverage-below-floor', 'required-group-missing', 'missing-population', 'redistribution-blocked'];
 const SCORECARD_REASON_VALUES = SCORECARD_EVIDENCE_REASON_VALUES.slice(1);
 const SCORECARD_TOP_LEVEL_REASON_VALUES = ['', 'country-unavailable', 'bloc-members-unavailable', 'scorecard-snapshot-unavailable'];
+
+// Closed vocabularies emitted by scripts/shared/supply-vulnerability-score.mjs.
+// `band` includes '' because the redistribution-blocked path clears it rather
+// than nulling it (server/.../_vulnerability-projection.ts).
+const VULNERABILITY_BAND_VALUES = ['', 'low', 'moderate', 'high', 'critical'];
+const VULNERABILITY_STATE_VALUES = ['ok', 'stale_input', 'insufficient_data'];
+const VULNERABILITY_REASON_VALUES = [
+  'missing_source_concentration',
+  'missing_transit_exposure',
+  'missing_transit_status',
+  'stale_source_concentration',
+  'stale_transit_exposure',
+  'stale_buffer',
+  'redistribution_blocked',
+];
 
 const SCORECARD_OBSERVATION_OUTPUT_SCHEMA = {
   type: 'object' as const,
@@ -867,7 +1016,38 @@ const FIVE_FACTOR_SCORECARD_LIST_OUTPUT_SCHEMA = {
     unavailableReason: { type: 'string' as const, enum: ['', 'scorecard-snapshot-unavailable'] },
   },
 };
+const VULNERABILITY_INPUT_OUTPUT_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    sourceKey: { type: 'string' as const }, sourceName: { type: 'string' as const }, sourceUrl: { type: 'string' as const },
+    value: { type: ['number', 'null'] }, year: { type: ['integer', 'null'] }, fetchedAt: { type: 'string' as const },
+    stale: { type: 'boolean' as const }, detail: { type: 'string' as const },
+  },
+};
 
+const VULNERABILITY_COMPONENTS_OUTPUT_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    sourceConcentration: { type: 'object' as const, properties: {
+      value: { type: ['number', 'null'] }, importHhi: { type: ['number', 'null'] },
+      mineHhi: { type: ['number', 'null'] }, refineryHhi: { type: ['number', 'null'] },
+      productionHhi: { type: ['number', 'null'] }, productionCoverage: { type: 'string' as const },
+      coverage: { type: 'string' as const }, inputs: { type: 'array' as const, items: VULNERABILITY_INPUT_OUTPUT_SCHEMA },
+    } },
+    transitExposure: { type: 'object' as const, properties: {
+      value: { type: ['number', 'null'] },
+      chokepoints: { type: 'array' as const, items: { type: 'object' as const, properties: {
+        id: { type: 'string' as const }, name: { type: 'string' as const },
+        transitShare: { type: ['number', 'null'] }, weightedTransitShare: { type: ['number', 'null'] },
+        status: { type: 'string' as const }, inputs: { type: 'array' as const, items: VULNERABILITY_INPUT_OUTPUT_SCHEMA },
+      } } },
+    } },
+    buffer: { type: 'object' as const, properties: {
+      state: { type: 'string' as const }, vulnerability: { type: ['number', 'null'] }, kind: { type: 'string' as const },
+      inputs: { type: 'array' as const, items: VULNERABILITY_INPUT_OUTPUT_SCHEMA },
+    } },
+  },
+};
 export const RPC_TOOLS: ToolDef[] = [
   {
     name: 'get_defense_industrial_base',
@@ -1335,7 +1515,7 @@ export const RPC_TOOLS: ToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        country_code: { type: 'string', description: 'ISO 3166-1 alpha-2 country code, e.g. "US", "DE", "CN", "IR"' },
+        country_code: { type: 'string', description: 'ISO 3166-1 alpha-2 code (e.g. "IQ"), alpha-3 code ("IRQ"), or English country name ("Iraq")' },
         framework: { type: 'string', description: 'Optional analytical framework instructions to shape the analysis lens (e.g. Ray Dalio debt cycle, PMESII-PT)' },
         allow_stale: { type: 'boolean', description: 'Ground the brief on a retained (stale) news digest when the live rebuild has failed. Defaults to false, which drops the stale grounding and returns an ungrounded brief rather than failing; time-sensitive automated decisions should leave this disabled. Retained content is at most six hours old.' },
       },
@@ -1405,7 +1585,7 @@ export const RPC_TOOLS: ToolDef[] = [
     _uiResourceUri: COUNTRY_BRIEF_UI_URI,
     _execute: async (params, base, context) => {
       const UA = 'worldmonitor-mcp-edge/1.0';
-      const countryCode = String(params.country_code ?? '').toUpperCase().slice(0, 2);
+      const countryCode = requireCountryCode(params.country_code, 'get-country-intel-brief');
 
       // Fetch current geopolitical headlines to ground the LLM (budget: 2 s — cached endpoint).
       // Without context the model hallucinates events — real headlines anchor it.
@@ -1543,7 +1723,7 @@ export const RPC_TOOLS: ToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        country_code: { type: 'string', description: 'ISO 3166-1 alpha-2 country code, e.g. "RU", "IR", "CN", "UA"' },
+        country_code: { type: 'string', description: 'ISO 3166-1 alpha-2 code (e.g. "IQ"), alpha-3 code ("IRQ"), or English country name ("Iraq")' },
       },
       required: ['country_code'],
     },
@@ -1606,7 +1786,7 @@ export const RPC_TOOLS: ToolDef[] = [
     // truth — the ui:// resource is registered in ../ui/registry.ts.
     _uiResourceUri: COUNTRY_RISK_UI_URI,
     _execute: async (params, base, context) => {
-      const code = String(params.country_code ?? '').toUpperCase().slice(0, 2);
+      const code = requireCountryCode(params.country_code, 'get-country-risk');
       const url = `${base}/api/intelligence/v1/get-country-risk?country_code=${encodeURIComponent(code)}`;
       const auth = await buildAuthHeaders(context, 'GET', url, null);
       const res = await fetch(url, {
@@ -1863,6 +2043,68 @@ export const RPC_TOOLS: ToolDef[] = [
     ],
   },
   {
+    name: 'get_resilience_indicators',
+    _outputBudgetBytes: 262144,
+    _jmespathDisabled: true,
+    description: 'Explain one country\'s resilience score across all 72 registered indicators. Returns normalized scores, observed or imputed state, runtime weights, contributions reconciled to each dimension, observation age and source provenance. Raw values are included only when redistribution is permitted. Requires an ISO-2 country code and a WorldMonitor Pro subscription.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        country_code: {
+          type: 'string',
+          description: 'Required ISO 3166-1 alpha-2 country code (for example "DE"). Case-insensitive.',
+        },
+      },
+      required: ['country_code'],
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        countryCode: { type: 'string' },
+        methodology: { type: 'string', description: 'Stable contribution-reconciliation method identifier.' },
+        formula: { type: 'string', description: 'Active score formula tag, for example d6 or pc.' },
+        dataVersion: { type: 'string', description: 'Source snapshot version used for the score.' },
+        schemaVersion: { type: 'string', description: 'Public resilience score schema version.' },
+        constructVersions: {
+          type: 'object',
+          properties: {
+            energy: { type: 'string', description: 'Active energy construct version.' },
+            education: { type: 'string', description: 'Active education construct version.' },
+            financialSystemExposure: { type: 'string', description: 'Active financial-system construct version.' },
+          },
+        },
+        dimensions: { type: 'array', items: RESILIENCE_INDICATOR_DIMENSION_OUTPUT_SCHEMA },
+        indicators: { type: 'array', items: RESILIENCE_INDICATOR_OUTPUT_SCHEMA },
+      },
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _coverageKeys: [
+      'resilience:low-carbon-generation:v1',
+      'resilience:power-losses:v1',
+      'resilience:education-attainment:v1',
+      'resilience:recovery:fiscal-space:v1',
+      'resilience:recovery:reserve-adequacy:v1',
+      'resilience:recovery:reexport-share:v1',
+      'resilience:recovery:sovereign-wealth:v1',
+      'resilience:recovery:external-debt:v1',
+      'resilience:recovery:import-hhi:v1',
+    ],
+    _execute: async (params, base, context) => {
+      const countryCode = String(params.country_code ?? '').trim().toUpperCase();
+      const url = `${base}/api/resilience/v1/get-resilience-indicators?countryCode=${encodeURIComponent(countryCode)}`;
+      const auth = await buildAuthHeaders(context, 'GET', url, null);
+      const res = await fetch(url, {
+        headers: { ...auth, 'User-Agent': 'worldmonitor-mcp-edge/1.0' },
+        signal: AbortSignal.timeout(20_000),
+      });
+      await assertToolFetchOk(res, 'get-resilience-indicators');
+      return res.json();
+    },
+    _apiPaths: [
+      'GET /api/resilience/v1/get-resilience-indicators',
+    ],
+  },
+  {
     name: 'get_five_factor_scorecard',
     _outputBudgetBytes: 1_048_576,
     description: 'Return the frozen v1 food, energy, demographics, technology, and defense scorecard for exactly one country or bloc. Select a country_code, one official preset, or a custom members list. Read every hasScore, available, and hasValue flag before numeric fields; zero is a proto3 placeholder when its flag is false. Requires a WorldMonitor subscription.',
@@ -2110,7 +2352,7 @@ export const RPC_TOOLS: ToolDef[] = [
       properties: {
         country_code: {
           type: 'string',
-          description: 'ISO 3166-1 alpha-2 country code (e.g. "AE", "US", "GB", "JP")',
+          description: 'ISO 3166-1 alpha-2 code (e.g. "IQ"), alpha-3 code ("IRQ"), or English country name ("Iraq")',
         },
         type: {
           type: 'string',
@@ -2153,9 +2395,15 @@ export const RPC_TOOLS: ToolDef[] = [
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     _execute: async (params, base, context) => {
-      const code = String(params.country_code ?? '').toUpperCase().slice(0, 2);
+      // Resolve before the bbox lookup: truncation used to yield a VALID code
+      // for the wrong country, so this guard passed and served Iran's airspace
+      // for a request that said "Iraq" (WORLDMONITOR-Y2).
+      const code = resolveCountryCode(params.country_code);
+      if (!code) {
+        return { error: `Could not resolve ${JSON.stringify(echoCountryInput(params.country_code))} to a country. ${COUNTRY_ARG_HINT}` };
+      }
       const bbox = COUNTRY_BBOXES[code];
-      if (!bbox) return { error: `Unknown country code: ${code}. Use ISO 3166-1 alpha-2 (e.g. "AE", "US", "GB").` };
+      if (!bbox) return { error: `No airspace coverage for ${code}: that country has no bounding box in the dataset.` };
       const [sw_lat, sw_lon, ne_lat, ne_lon] = bbox;
       const type = String(params.type ?? 'all');
       const UA = 'worldmonitor-mcp-edge/1.0';
@@ -2267,7 +2515,7 @@ export const RPC_TOOLS: ToolDef[] = [
       properties: {
         country_code: {
           type: 'string',
-          description: 'ISO 3166-1 alpha-2 country code (e.g. "AE", "SA", "JP", "EG")',
+          description: 'ISO 3166-1 alpha-2 code (e.g. "IQ"), alpha-3 code ("IRQ"), or English country name ("Iraq")',
         },
       },
       required: ['country_code'],
@@ -2297,9 +2545,13 @@ export const RPC_TOOLS: ToolDef[] = [
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     _execute: async (params, base, context) => {
-      const code = String(params.country_code ?? '').toUpperCase().slice(0, 2);
+      // Resolve before the bbox lookup — see the get_airspace note above.
+      const code = resolveCountryCode(params.country_code);
+      if (!code) {
+        return { error: `Could not resolve ${JSON.stringify(echoCountryInput(params.country_code))} to a country. ${COUNTRY_ARG_HINT}` };
+      }
       const bbox = COUNTRY_BBOXES[code];
-      if (!bbox) return { error: `Unknown country code: ${code}. Use ISO 3166-1 alpha-2 (e.g. "AE", "SA", "JP").` };
+      if (!bbox) return { error: `No maritime coverage for ${code}: that country has no bounding box in the dataset.` };
       const [sw_lat, sw_lon, ne_lat, ne_lon] = bbox;
       // Deliberately NO bbox on the inner fetch: the handler rejects any bbox
       // dimension >10° (BboxValidationError → HTTP 400), and 67 of the 167
@@ -2677,6 +2929,118 @@ export const RPC_TOOLS: ToolDef[] = [
       'GET /api/supply-chain/v1/get-mineral-production',
     ],
   },
+  {
+    name: 'get_supply_vulnerabilities',
+    // Payload carries BGS mineral evidence under an attribution-required,
+    // redistribution-restricted licence; a projection could strip the
+    // source/licence/retrieval fields that authorise reuse.
+    _jmespathDisabled: true,
+    // A full reviewed portfolio currently carries 23 commodities and the
+    // complete 13-route provenance set per commodity. Production-shape
+    // dispatch tests measure ~321 KiB, so 512 KiB preserves the evidence with
+    // useful growth headroom instead of charging quota for a budget envelope.
+    _outputBudgetBytes: 524288,
+    description: 'An absent score means insufficient evidence, never zero risk. Returns one country commodity-vulnerability portfolio with absolute 0-100 bands, concentration, transit, buffer, coverage, staleness, method version, and source provenance; read state and reasons to see why a score is absent.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        country_code: { type: 'string', pattern: '^[A-Za-z]{2}$', description: 'ISO 3166-1 alpha-2 country code, such as AE, JP, or DE.' },
+      },
+      required: ['country_code'],
+    },
+    outputSchema: {
+      type: 'object',
+      required: ['iso2', 'country', 'vulnerabilities', 'generatedAt', 'methodologyVersion', 'upstreamUnavailable'],
+      properties: {
+        iso2: { type: 'string' },
+        country: { type: 'string' },
+        vulnerabilities: { type: 'array', items: { type: 'object', properties: {
+          commodityId: { type: 'string' }, commodity: { type: 'string' },
+          score: { type: ['number', 'null'] },
+          band: { type: 'string', enum: VULNERABILITY_BAND_VALUES },
+          state: { type: 'string', enum: VULNERABILITY_STATE_VALUES },
+          reasons: { type: 'array', items: { type: 'string', enum: VULNERABILITY_REASON_VALUES } },
+          coverage: { type: 'array', items: { type: 'string' } },
+          components: VULNERABILITY_COMPONENTS_OUTPUT_SCHEMA, methodologyVersion: { type: 'string' },
+        } } },
+        generatedAt: { type: 'string' },
+        methodologyVersion: { type: 'string' },
+        upstreamUnavailable: { type: 'boolean' },
+      },
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _execute: async (params, base, context) => {
+      const countryCode = argStr(params.country_code).trim().toUpperCase();
+      const url = `${base}/api/supply-chain/v1/get-country-vulnerabilities?iso2=${encodeURIComponent(countryCode)}`;
+      const auth = await buildAuthHeaders(context, 'GET', url, null);
+      const response = await fetch(url, {
+        headers: { ...auth, 'User-Agent': 'worldmonitor-mcp-edge/1.0' },
+        signal: AbortSignal.timeout(8_000),
+      });
+      await assertToolFetchOk(response, 'get-country-vulnerabilities');
+      return response.json();
+    },
+    _coverageKeys: [
+      'supply-chain:vulnerability:cohort:v1',
+      'supply-chain:vulnerability:v1',
+    ],
+    _apiPaths: ['GET /api/supply-chain/v1/get-country-vulnerabilities'],
+  },
+  {
+    name: 'get_chokepoint_dependencies',
+    // Payload carries BGS mineral evidence under an attribution-required,
+    // redistribution-restricted licence; a projection could strip the
+    // source/licence/retrieval fields that authorise reuse.
+    _jmespathDisabled: true,
+    _outputBudgetBytes: 131072,
+    description: 'An absent score means insufficient coverage, never zero risk. Returns the highest-scoring country and commodity dependencies for one maritime chokepoint, from the same snapshot as country vulnerabilities; read state and reasons before drawing conclusions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        chokepoint_id: { type: 'string', pattern: '^[a-z0-9_-]+$', description: 'Canonical chokepoint id, such as hormuz_strait or malacca_strait.' },
+        page_size: { type: 'integer', minimum: 1, maximum: 100, description: 'Maximum dependencies. Defaults to 25.' },
+      },
+      required: ['chokepoint_id'],
+    },
+    outputSchema: {
+      type: 'object',
+      required: ['chokepointId', 'chokepoint', 'dependencies', 'generatedAt', 'methodologyVersion', 'upstreamUnavailable'],
+      properties: {
+        chokepointId: { type: 'string' }, chokepoint: { type: 'string' },
+        dependencies: { type: 'array', items: { type: 'object', properties: {
+          countryIso2: { type: 'string' }, countryName: { type: 'string' },
+          commodityId: { type: 'string' }, commodity: { type: 'string' },
+          transitShare: { type: 'number' }, weightedTransitShare: { type: 'number' },
+          score: { type: ['number', 'null'] },
+          band: { type: 'string', enum: VULNERABILITY_BAND_VALUES },
+          state: { type: 'string', enum: VULNERABILITY_STATE_VALUES },
+          reasons: { type: 'array', items: { type: 'string', enum: VULNERABILITY_REASON_VALUES } },
+          methodologyVersion: { type: 'string' },
+        } } },
+        generatedAt: { type: 'string' }, methodologyVersion: { type: 'string' },
+        upstreamUnavailable: { type: 'boolean' },
+      },
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _execute: async (params, base, context) => {
+      const chokepointId = argStr(params.chokepoint_id).trim().toLowerCase();
+      const query = new URLSearchParams({ chokepointId });
+      if (params.page_size) query.set('pageSize', String(params.page_size));
+      const url = `${base}/api/supply-chain/v1/get-chokepoint-dependencies?${query}`;
+      const auth = await buildAuthHeaders(context, 'GET', url, null);
+      const response = await fetch(url, {
+        headers: { ...auth, 'User-Agent': 'worldmonitor-mcp-edge/1.0' },
+        signal: AbortSignal.timeout(8_000),
+      });
+      await assertToolFetchOk(response, 'get-chokepoint-dependencies');
+      return response.json();
+    },
+    _coverageKeys: [
+      'supply-chain:vulnerability:cohort:v1',
+      'supply-chain:chokepoint-dependencies:v1',
+    ],
+    _apiPaths: ['GET /api/supply-chain/v1/get-chokepoint-dependencies'],
+  },
   ...ANALYSIS_TOOLS,
   {
     name: 'search_intel_history',
@@ -2862,7 +3226,7 @@ export const RPC_TOOLS: ToolDef[] = [
     // long-form text in `description`. Uses the SAME buildPublicTool helper
     // as tools/list so the two surfaces can never drift.
     name: 'describe_tool',
-    _outputBudgetBytes: 8192,
+    _outputBudgetBytes: 16384,
     description: 'Return the full uncompressed definition of one tool by name. Use when the compressed tools/list entry is ambiguous about behaviour or argument semantics.',
     inputSchema: {
       type: 'object',

@@ -1967,6 +1967,16 @@
       "loading": "Povezivanje na Telegram relej...",
       "empty": "Nema dostupnih poruka",
       "disabled": "Telegram relej nije aktivan",
+      "watchlistPlaceholder": "Dodaj javni kanal putem @username",
+      "resolving": "Traženje kanala...",
+      "invalidUsername": "Upotrijebite javno Telegram @username",
+      "resolveFailed": "Kanal nije pronađen",
+      "watchlistLimit": "Možete pratiti do {{count}} prilagođenih kanala",
+      "previewMembers": "{{count}} članova",
+      "addChannel": "Dodaj kanal",
+      "added": "Dodano",
+      "remove": "Ukloni",
+      "custom": "Prilagođeno",
       "filterAll": "Sve",
       "filterBreaking": "Hitne vijesti",
       "filterConflict": "Sukobi",
@@ -2114,6 +2124,22 @@
       "metals": {
         "gold": "Gold",
         "silver": "Silver"
+      },
+      "divergence": {
+        "compositeValue": "Indeks fizičkog stresa: {{value}} / 100",
+        "fiveDayTrend": "Trend premije za pet trgovačkih dana",
+        "regimes": {
+          "normal": "Normalno",
+          "elevated": "Povišeno",
+          "stressed": "Opterećeno",
+          "extreme": "Ekstremno"
+        },
+        "states": {
+          "insufficientHistory": "Zagrijavanje: {{count}} / {{required}} trgovačkih točaka",
+          "staleInput": "Fizička referenca je zastarjela",
+          "missingInput": "Signal divergencije nije dostupan"
+        },
+        "twentyDayTrend": "Trend premije za dvadeset trgovačkih dana"
       }
     },
     "crypto": {
@@ -2407,6 +2433,25 @@
       }
     },
     "energyCrisis": {},
+    "supplyVulnerability": {
+      "title": "Ranjivost na robu",
+      "help": "Izloženost države po robi na temelju koncentracije dobavljača, pomorskog tranzita i dostupnih strateških zaliha.",
+      "loading": "Učitavanje ranjivosti na robu…",
+      "unavailable": "Podaci o ranjivosti na robu nisu dostupni",
+      "noCoverage": "Nedovoljno dokaza za ovu državu",
+      "unknown": "Nepoznato",
+      "concentration": "Koncentracija",
+      "transit": "Tranzit",
+      "buffer": "Zaliha",
+      "sources": "Izvori",
+      "methodology": "Metodologija",
+      "hormuzTitle": "Ovisnosti o robi",
+      "dependentCountries": "Ovisne države",
+      "dependentCommodities": "Ovisna roba",
+      "stateOk": "Trenutačno",
+      "stateStale": "Zastarjeli ulaz",
+      "stateInsufficient": "Nedovoljno podataka"
+    },
     "hormuzTracker": {
       "infoTooltip": "<strong>Hormuz Trade Tracker</strong> Praćenje živih AIS plovila kroz Hormuzanski tjesnac, svjetski najkritičnije prometno usko grlo za naftu. Prati broj tankera, događaje prekida i tjedne promjene protoka. Približno 20% svjetske opskrbe naftom prolazi ovdje dnevno.",
       "title": "Hormuz Trade Tracker",

@@ -439,7 +439,21 @@ function json(data, status = 200, extraHeaders = {}) {
 }
 
 function canCompress(headers, body) {
-  return body.length > 1024 && !headers['content-encoding'];
+  if (!(body.length > 1024) || headers['content-encoding']) return false;
+  const contentType = String(headers['content-type'] || '').toLowerCase();
+  // Already-compressed rasters/media gain nothing from gzip/br and waste CPU (#7382).
+  // SVG (image/svg+xml) is text and still compresses — keep it eligible.
+  if (
+    /^image\/(jpeg|jpg|png|gif|webp|avif|heic|heif|bmp|tiff)(?:;|$)/.test(contentType)
+    || contentType.startsWith('audio/')
+    || contentType.startsWith('video/')
+    || contentType.includes('zip')
+    || contentType.includes('gzip')
+    || contentType.includes('octet-stream')
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function appendVary(existing, token) {
@@ -711,6 +725,9 @@ const cloudPreferredPrefixes = !process.env.WS_RELAY_URL
 const cloudPreferredExact = new Set([
   '/api/bootstrap',
   '/api/military/v1/get-defense-industrial-base',
+  '/api/supply-chain/v1/get-country-vulnerabilities',
+  '/api/supply-chain/v1/get-chokepoint-dependencies',
+  '/api/supply-chain/v1/list-vulnerability-rankings',
 ]);
 const cloudPreferredAlwaysPrefixes = ['/api/scorecard/v1/'];
 
@@ -1807,6 +1824,7 @@ async function dispatch(requestUrl, req, routes, context) {
 // Production code never calls this.
 export const __testing__ = {
   isCloudPreferred,
+  canCompress,
   setUpstreamIdleTimeoutMs(ms) {
     _upstreamIdleTimeoutMs = ms;
   },

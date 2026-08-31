@@ -60,11 +60,12 @@ import { toFlagEmoji } from '@/utils/country-flag';
 import { iso2ToIso3, iso2ToComtradeReporterCode } from '@/utils/country-codes';
 import { buildDependencyGraph } from '@/services/infrastructure-cascade';
 import { getActiveFrameworkForPanel, subscribeFrameworkChange } from '@/services/analysis-framework-store';
-import { fetchMultiSectorExposure, fetchCountryProducts, fetchMultiSectorCostShock } from '@/services/supply-chain';
+import { fetchMultiSectorExposure, fetchCountryProducts, fetchMultiSectorCostShock, fetchCountryVulnerabilities } from '@/services/supply-chain';
 import { getImfCountryBundle, buildImfEconomicIndicators, type ImfCountryBundle } from '@/services/imf-country-data';
 import { getChinaDecisionSignalsData } from '@/services/china-decision-signals';
 import { EconomicServiceClient, IntelligenceServiceClient, MarketServiceClient, MilitaryServiceClient, TradeServiceClient } from '@/services/generated-rpc-clients';
 import { CHINA_DECISION_SIGNAL_GROUP_IDS } from '../../shared/china-decision-signals';
+import { showToast as showGlobalToast } from '@/utils/toast';
 
 // Iran-events domain sunset (war ended 2026-07). Default OFF: no strikes in the
 // country deep-dive or the AI brief. Set VITE_ENABLE_IRAN_ATTACKS=true to restore.
@@ -767,6 +768,7 @@ export class CountryIntelManager implements AppModule {
       if (hasPremiumAccess(getAuthState())) {
         this.fetchProSections(code);
       }
+      this.fetchCommodityVulnerability(code);
 
       this.mountCountryTimeline(code, country);
 
@@ -946,6 +948,19 @@ export class CountryIntelManager implements AppModule {
     if (!page?.isVisible()) return false;
     const activeCode = page.getCode();
     return !!activeCode && activeCode !== '__loading__' && activeCode !== '__error__';
+  }
+
+  private fetchCommodityVulnerability(code: string): void {
+    const page = this.ctx.countryBriefPage;
+    const signal = page?.signal;
+    fetchCountryVulnerabilities(code, { signal }).then(resp => {
+      if (signal?.aborted || this.ctx.countryBriefPage !== page || page?.getCode() !== code) return;
+      page.updateCommodityVulnerabilities?.(resp);
+    }).catch(() => {
+      if (!signal?.aborted && this.ctx.countryBriefPage === page && page?.getCode() === code) {
+        page.updateCommodityVulnerabilities?.(null);
+      }
+    });
   }
 
   private fetchProSections(code: string): void {
@@ -1725,13 +1740,7 @@ export class CountryIntelManager implements AppModule {
   }
 
   showToast(msg: string): void {
-    document.querySelector('.toast-notification')?.remove();
-    const el = document.createElement('div');
-    el.className = 'toast-notification';
-    el.textContent = msg;
-    document.body.appendChild(el);
-    requestAnimationFrame(() => el.classList.add('visible'));
-    setTimeout(() => { el.classList.remove('visible'); setTimeout(() => el.remove(), 300); }, 3000);
+    showGlobalToast(msg, 3000);
   }
 
   private getCountryStrikes(code: string, hasGeoShape: boolean): typeof this.ctx.intelligenceCache.iranEvents & object {

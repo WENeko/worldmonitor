@@ -61,6 +61,7 @@ import {
   loadFromStorage,
   markStorageQuotaExceeded,
   parseMapUrlState,
+  readDashboardSearchQuery,
   saveToStorage,
   showToast,
 } from '@/utils';
@@ -184,6 +185,7 @@ import {
 import type { MapLayerRuntimeAvailability } from '@/services/map-layer-runtime-availability';
 import { getWebMcpAccessContext, openWebMcpSignIn } from '@/app/webmcp-access';
 import { runDashboardActionBinding } from '@/app/dashboard-action-binding';
+import { selectWebMcpPanelTab } from '@/app/webmcp-panel-tab-binding';
 import { refreshDataFreshnessFromHealth } from '@/services/health-freshness';
 import { scheduleAfterFirstPaint } from '@/utils/after-paint';
 import type { SearchManager } from '@/app/search-manager';
@@ -287,6 +289,7 @@ export class App {
   private pendingDeepLinkExpanded = false;
   private pendingDeepLinkStoryCode: string | null = null;
   private pendingDeepLinkChokepoint: string | null = null;
+  private pendingDeepLinkSearchQuery: string | null = null;
   private chokepointDeepLinkTimer: number | null = null;
   private stockDeepLinkTimer: number | null = null;
 
@@ -1751,6 +1754,7 @@ export class App {
     replaceOverlayId?: OverlayId;
     historyPending?: boolean;
     signal?: AbortSignal;
+    initialQuery?: string;
   } = {}): Promise<boolean> {
     // Concurrency model: each press registers its intent, then claims a
     // monotonic epoch. After the lazy load resolves, only the latest epoch acts
@@ -1802,6 +1806,7 @@ export class App {
       if (!modal) throw new Error('Search modal is not initialised');
       throwIfWebMcpAborted(options.signal);
       modal.open(pendingGate ? pendingId : options.replaceOverlayId);
+      if (options.initialQuery) modal.applyQuery(options.initialQuery);
       return modal.isOpen();
     } catch (error) {
       const actionWasCancelled = pendingGate !== null && !pendingGate.isCurrent();
@@ -1996,6 +2001,17 @@ export class App {
             requireMapModePersistence: true,
           },
           syncUrlStateNow: () => this.eventHandlers.syncUrlStateNow(),
+        });
+      },
+      selectPanelTab: async (panelId, tab, execution) => {
+        return selectWebMcpPanelTab(this.state.panels, panelId, tab, {
+          waitForUiReady: () => this.waitForDashboardReady(false, execution?.signal),
+          prepareTab: (_selectedPanelId, selectedTab, signal) => (
+            selectedTab === 'physical'
+              ? this.dataLoader.loadPhysicalPremiumComparison(signal)
+              : undefined
+          ),
+          signal: execution?.signal,
         });
       },
       searchDashboard: async (query, scope, limit, execution) => {
@@ -2660,6 +2676,7 @@ export class App {
     this.pendingDeepLinkChokepoint = initState.chokepoint ?? null;
     const earlyParams = new URLSearchParams(window.location.search);
     this.pendingDeepLinkStoryCode = earlyParams.get('c') ?? null;
+    this.pendingDeepLinkSearchQuery = readDashboardSearchQuery(window.location.search);
     this.eventHandlers.setupUrlStateSync();
     if (import.meta.env.VITE_E2E === '1') {
       document.documentElement.dataset.wmEventHandlersReady = 'true';
@@ -3447,6 +3464,19 @@ export class App {
   private handleDeepLinks(): void {
     const url = new URL(window.location.href);
     const DEEP_LINK_INITIAL_DELAY_MS = 1500;
+
+    // SearchAction lands on /dashboard?q=… after URL sync has already rewritten
+    // the address bar. Consume the captured term through the same lazy path as
+    // Cmd+K so the modal is created only when a query is actually present.
+    const searchQuery = this.pendingDeepLinkSearchQuery;
+    this.pendingDeepLinkSearchQuery = null;
+    if (
+      searchQuery
+      && (url.pathname === '/dashboard' || url.pathname === '/dashboard/')
+    ) {
+      void this.openSearch({ initialQuery: searchQuery });
+      return;
+    }
 
     // Check for country brief deep link: ?c=IR (captured early before URL sync)
     const storyCode = this.pendingDeepLinkStoryCode ?? url.searchParams.get('c');

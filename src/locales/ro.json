@@ -1819,6 +1819,16 @@
       "loading": "Se conectează la releul Telegram...",
       "empty": "Nu există mesaje disponibile",
       "disabled": "Telegram releu nu este activ",
+      "watchlistPlaceholder": "Adaugă un canal public prin @username",
+      "resolving": "Se caută canalul...",
+      "invalidUsername": "Folosește un @username public de Telegram",
+      "resolveFailed": "Canalul nu a putut fi găsit",
+      "watchlistLimit": "Poți urmări până la {{count}} canale personalizate",
+      "previewMembers": "{{count}} membri",
+      "addChannel": "Adaugă canal",
+      "added": "Adăugat",
+      "remove": "Elimină",
+      "custom": "Personalizat",
       "filterAll": "Toate",
       "filterBreaking": "Ultimă oră",
       "filterConflict": "Conflict",
@@ -2030,6 +2040,22 @@
       "metals": {
         "gold": "Gold",
         "silver": "Silver"
+      },
+      "divergence": {
+        "compositeValue": "Indice de stres fizic: {{value}} / 100",
+        "fiveDayTrend": "Tendință premium pe cinci zile de tranzacționare",
+        "regimes": {
+          "normal": "Normal",
+          "elevated": "Ridicat",
+          "stressed": "Sub stres",
+          "extreme": "Extrem"
+        },
+        "states": {
+          "insufficientHistory": "Încălzire: {{count}} / {{required}} puncte de tranzacționare",
+          "staleInput": "Benchmark-ul fizic este depășit",
+          "missingInput": "Semnal de divergență indisponibil"
+        },
+        "twentyDayTrend": "Tendința primei de pe o perioadă de douăzeci de zile de tranzacționare"
       }
     },
     "crypto": {
@@ -2191,6 +2217,25 @@
         "failedToLoad": "Încărcarea a eșuat"
       },
       "cissStale": "BCE nu a publicat o valoare mai nouă — această lectură poate fi depășită."
+    },
+    "supplyVulnerability": {
+      "title": "Vulnerabilitate la materii prime",
+      "help": "Expunerea țării pe materie primă, bazată pe concentrarea furnizorilor, tranzitul maritim și rezervele strategice disponibile.",
+      "loading": "Se încarcă vulnerabilitatea la materii prime…",
+      "unavailable": "Datele privind vulnerabilitatea la materii prime nu sunt disponibile",
+      "noCoverage": "Dovezi insuficiente pentru această țară",
+      "unknown": "Necunoscut",
+      "concentration": "Concentrare",
+      "transit": "Tranzit",
+      "buffer": "Rezervă",
+      "sources": "Surse",
+      "methodology": "Metodologie",
+      "hormuzTitle": "Dependențe de materii prime",
+      "dependentCountries": "Țări dependente",
+      "dependentCommodities": "Materii prime dependente",
+      "stateOk": "Actual",
+      "stateStale": "Date de intrare învechite",
+      "stateInsufficient": "Date insuficiente"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Tracker comercial Hormuz</strong> Urmărire AIS a navelor în timp real prin Strâmtoarea Hormuz, cel mai critic punct de blocaj petrolier din lume. Monitorizează numărul de tancuri petroliere, evenimente de perturbare și schimbări săptămânale ale fluxurilor. Aproximativ 20% din aprovizionarea globală cu petrol tranzitează zilnic aici.",

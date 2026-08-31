@@ -1629,6 +1629,16 @@
       "loading": "Conectando al relé de Telegram...",
       "empty": "No hay mensajes disponibles",
       "disabled": "Relé de Telegram no activo",
+      "watchlistPlaceholder": "Añadir canal público por @username",
+      "resolving": "Buscando canal...",
+      "invalidUsername": "Usa un @username público de Telegram",
+      "resolveFailed": "No se pudo encontrar el canal",
+      "watchlistLimit": "Puedes seguir hasta {{count}} canales personalizados",
+      "previewMembers": "{{count}} miembros",
+      "addChannel": "Añadir canal",
+      "added": "Añadido",
+      "remove": "Eliminar",
+      "custom": "Personalizado",
       "filterAll": "Todos",
       "filterBreaking": "Urgente",
       "filterConflict": "Conflictos",
@@ -2030,6 +2040,22 @@
       "metals": {
         "gold": "Gold",
         "silver": "Silver"
+      },
+      "divergence": {
+        "compositeValue": "Índice de estrés físico: {{value}} / 100",
+        "fiveDayTrend": "Tendencia de prima de cinco días de negociación",
+        "regimes": {
+          "normal": "Normal",
+          "elevated": "Elevado",
+          "stressed": "Estresado",
+          "extreme": "Extremo"
+        },
+        "states": {
+          "insufficientHistory": "Calentamiento: {{count}} / {{required}} puntos de negociación",
+          "staleInput": "Referencia física obsoleta",
+          "missingInput": "Señal de divergencia no disponible"
+        },
+        "twentyDayTrend": "Tendencia de prima en veinte días de negociación"
       }
     },
     "crypto": {
@@ -2191,6 +2217,25 @@
         "failedToLoad": "Error al cargar"
       },
       "cissStale": "El BCE no ha publicado un valor más reciente — esta lectura podría estar desactualizada."
+    },
+    "supplyVulnerability": {
+      "title": "Vulnerabilidad de materias primas",
+      "help": "Exposición del país por materia prima según la concentración de proveedores, el tránsito marítimo y las reservas estratégicas disponibles.",
+      "loading": "Cargando vulnerabilidad de materias primas…",
+      "unavailable": "Datos de vulnerabilidad de materias primas no disponibles",
+      "noCoverage": "No hay evidencia suficiente para este país",
+      "unknown": "Desconocido",
+      "concentration": "Concentración",
+      "transit": "Tránsito",
+      "buffer": "Reserva",
+      "sources": "Fuentes",
+      "methodology": "Metodología",
+      "hormuzTitle": "Dependencias de materias primas",
+      "dependentCountries": "Países dependientes",
+      "dependentCommodities": "Materias primas dependientes",
+      "stateOk": "Actual",
+      "stateStale": "Entrada obsoleta",
+      "stateInsufficient": "Datos insuficientes"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Rastreador comercial de Ormuz</strong> Seguimiento AIS de buques en tiempo real a través del estrecho de Ormuz, el punto de estrangulamiento petrolero más crítico del mundo. Monitorea recuentos de petroleros, eventos de interrupción y cambios semanales de flujo. Aproximadamente el 20% del suministro mundial de petróleo transita aquí diariamente.",

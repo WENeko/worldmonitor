@@ -1969,6 +1969,16 @@
       "loading": "Connecting to Telegram relay...",
       "empty": "No messages available",
       "disabled": "Telegram relay not active",
+      "watchlistPlaceholder": "Додати публічний канал за @username",
+      "resolving": "Пошук каналу...",
+      "invalidUsername": "Використовуйте публічне ім’я @username у Telegram",
+      "resolveFailed": "Не вдалося знайти канал",
+      "watchlistLimit": "Можна стежити щонайбільше за {{count}} власними каналами",
+      "previewMembers": "{{count}} учасників",
+      "addChannel": "Додати канал",
+      "added": "Додано",
+      "remove": "Видалити",
+      "custom": "Власний",
       "filterAll": "All",
       "filterBreaking": "Breaking",
       "filterConflict": "Conflict",
@@ -2116,6 +2126,22 @@
       "metals": {
         "gold": "Gold",
         "silver": "Silver"
+      },
+      "divergence": {
+        "compositeValue": "Індекс фізичного стресу: {{value}} / 100",
+        "fiveDayTrend": "Тренд премії за п'ять торгових днів",
+        "regimes": {
+          "normal": "Нормальний",
+          "elevated": "Підвищений",
+          "stressed": "Напружений",
+          "extreme": "Екстремальний"
+        },
+        "states": {
+          "insufficientHistory": "Прогрівання: {{count}} / {{required}} торгових точок",
+          "staleInput": "Фізичний орієнтир застарілий",
+          "missingInput": "Сигнал дивергенції недоступний"
+        },
+        "twentyDayTrend": "Тренд премії за двадцять торгових днів"
       }
     },
     "crypto": {
@@ -2412,6 +2438,25 @@
         "unavailable": "FSI data unavailable",
         "failedToLoad": "Failed to load"
       }
+    },
+    "supplyVulnerability": {
+      "title": "Сировинна вразливість",
+      "help": "Вразливість країни за товаром на основі концентрації постачальників, морського транзиту та доступних стратегічних резервів.",
+      "loading": "Завантаження даних про сировинну вразливість…",
+      "unavailable": "Дані про сировинну вразливість недоступні",
+      "noCoverage": "Недостатньо доказів для цієї країни",
+      "unknown": "Невідомо",
+      "concentration": "Концентрація",
+      "transit": "Транзит",
+      "buffer": "Резерв",
+      "sources": "Джерела",
+      "methodology": "Методологія",
+      "hormuzTitle": "Сировинні залежності",
+      "dependentCountries": "Залежні країни",
+      "dependentCommodities": "Залежні товари",
+      "stateOk": "Актуально",
+      "stateStale": "Застарілі вхідні дані",
+      "stateInsufficient": "Недостатньо даних"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Hormuz Trade Tracker</strong> Live AIS vessel tracking through the Strait of Hormuz, the world's most critical oil chokepoint. Monitors tanker counts, disruption events, and weekly flow changes. Approximately 20% of global oil supply transits here daily.",

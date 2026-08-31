@@ -87,16 +87,12 @@ describe('SEO crawl-directive hygiene (#7380)', () => {
     assert.equal(res, undefined);
   });
 
-  it('serves differentiated AI-crawler stubs with uncapped robots on variant roots', async () => {
+  it('passes AI crawlers through to the canonical variant dashboard', () => {
     const res = middleware(
       new Request('https://tech.worldmonitor.app/', {
         headers: { 'user-agent': 'Mozilla/5.0 GPTBot/1.1' },
       }),
     );
-    assert.ok(res instanceof Response);
-    const html = await res.text();
-    assert.match(html, new RegExp(`name="robots" content="${INDEXABLE_ROBOTS_CONTENT}"`));
-    assert.match(html, /Tech Monitor is the World Monitor variant/);
-    assert.ok(html.split(/\s+/).length > 300, 'AI crawler stub should carry substantial unique prose');
+    assert.equal(res, undefined);
   });
 });

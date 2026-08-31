@@ -1626,6 +1626,16 @@
       "loading": "Verbindung zum Telegram-Relay wird hergestellt...",
       "empty": "Keine Nachrichten verfügbar",
       "disabled": "Telegram-Relay nicht aktiv",
+      "watchlistPlaceholder": "Öffentlichen Kanal per @username hinzufügen",
+      "resolving": "Kanal wird geprüft...",
+      "invalidUsername": "Verwende einen öffentlichen Telegram-@username",
+      "resolveFailed": "Kanal konnte nicht gefunden werden",
+      "watchlistLimit": "Du kannst bis zu {{count}} eigene Kanäle verfolgen",
+      "previewMembers": "{{count}} Mitglieder",
+      "addChannel": "Kanal hinzufügen",
+      "added": "Hinzugefügt",
+      "remove": "Entfernen",
+      "custom": "Eigener Kanal",
       "filterAll": "Alle",
       "filterBreaking": "Eilmeldung",
       "filterConflict": "Konflikte",
@@ -2026,6 +2036,22 @@
       "metals": {
         "gold": "Gold",
         "silver": "Silver"
+      },
+      "divergence": {
+        "compositeValue": "Physischer Stressindex: {{value}} / 100",
+        "fiveDayTrend": "Fünf-Handelstage-Prämientrend",
+        "regimes": {
+          "normal": "Normal",
+          "elevated": "Erhöht",
+          "stressed": "Angespannt",
+          "extreme": "Extrem"
+        },
+        "states": {
+          "insufficientHistory": "Wird aufgewärmt: {{count}} / {{required}} Handelspunkte",
+          "staleInput": "Physische Benchmark ist veraltet",
+          "missingInput": "Divergenzsignal nicht verfügbar"
+        },
+        "twentyDayTrend": "Aufschlag-Trend über 20 Handelstage"
       }
     },
     "crypto": {
@@ -2182,6 +2208,25 @@
         "failedToLoad": "Fehler beim Laden"
       },
       "cissStale": "EZB hat keinen neueren Wert veröffentlicht – dieser Messwert könnte veraltet sein."
+    },
+    "supplyVulnerability": {
+      "title": "Rohstoffverwundbarkeit",
+      "help": "Länderexposition nach Rohstoff, abgeleitet aus Lieferantenkonzentration, Seetransit und verfügbaren strategischen Reserven.",
+      "loading": "Rohstoffverwundbarkeit wird geladen…",
+      "unavailable": "Daten zur Rohstoffverwundbarkeit sind nicht verfügbar",
+      "noCoverage": "Unzureichende Nachweise für dieses Land",
+      "unknown": "Unbekannt",
+      "concentration": "Konzentration",
+      "transit": "Transitverkehr",
+      "buffer": "Reserve",
+      "sources": "Quellen",
+      "methodology": "Methodik",
+      "hormuzTitle": "Rohstoffabhängigkeiten",
+      "dependentCountries": "Abhängige Länder",
+      "dependentCommodities": "Abhängige Rohstoffe",
+      "stateOk": "Aktuell",
+      "stateStale": "Veraltete Eingabe",
+      "stateInsufficient": "Unzureichende Daten"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Hormuz-Handelstracker</strong> AIS-Schiffsverfolgung in Echtzeit durch die Straße von Hormuz, den kritischsten Öl-Engpass der Welt. Überwacht Tankeranzahl, Störungsereignisse und wöchentliche Flussänderungen. Etwa 20 % der globalen Ölversorgung passiert hier täglich.",

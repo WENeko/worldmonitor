@@ -1108,6 +1108,16 @@
       "loading": "Verbinding maken met Telegram-relay...",
       "empty": "Geen berichten beschikbaar",
       "disabled": "Telegram-relay niet actief",
+      "watchlistPlaceholder": "Openbaar kanaal toevoegen via @username",
+      "resolving": "Kanaal opzoeken...",
+      "invalidUsername": "Gebruik een openbare Telegram-@username",
+      "resolveFailed": "Kanaal kon niet worden gevonden",
+      "watchlistLimit": "Je kunt maximaal {{count}} aangepaste kanalen volgen",
+      "previewMembers": "{{count}} leden",
+      "addChannel": "Kanaal toevoegen",
+      "added": "Toegevoegd",
+      "remove": "Verwijderen",
+      "custom": "Aangepast",
       "filterAll": "Alles",
       "filterBreaking": "Belangrijk",
       "filterConflict": "Conflicten",
@@ -1649,6 +1659,22 @@
       "metals": {
         "gold": "Gold",
         "silver": "Silver"
+      },
+      "divergence": {
+        "compositeValue": "Fysieke stressindex: {{value}} / 100",
+        "fiveDayTrend": "Trend premie vijf handelsdagen",
+        "regimes": {
+          "normal": "Normaal",
+          "elevated": "Verhoogd",
+          "stressed": "Onder spanning",
+          "extreme": "Extreem"
+        },
+        "states": {
+          "insufficientHistory": "Opwarmfase: {{count}} / {{required}} handelspunten",
+          "staleInput": "Fysieke benchmark is verouderd",
+          "missingInput": "Divergentiesignaal niet beschikbaar"
+        },
+        "twentyDayTrend": "Premiumtrend over twintig handelsdagen"
       }
     },
     "crypto": {
@@ -1805,6 +1831,25 @@
         "failedToLoad": "Laden mislukt"
       },
       "cissStale": "ECB heeft geen nieuwere waarde gepubliceerd — deze waarde kan verouderd zijn."
+    },
+    "supplyVulnerability": {
+      "title": "Kwetsbaarheid voor grondstoffen",
+      "help": "Blootstelling per grondstof op basis van leveranciersconcentratie, maritieme doorvoer en beschikbare strategische buffers.",
+      "loading": "Kwetsbaarheid voor grondstoffen laden…",
+      "unavailable": "Gegevens over grondstoffenkwetsbaarheid niet beschikbaar",
+      "noCoverage": "Onvoldoende bewijs voor dit land",
+      "unknown": "Onbekend",
+      "concentration": "Concentratie",
+      "transit": "Doorvoer",
+      "buffer": "Bufferreserve",
+      "sources": "Bronnen",
+      "methodology": "Methodologie",
+      "hormuzTitle": "Grondstofafhankelijkheden",
+      "dependentCountries": "Afhankelijke landen",
+      "dependentCommodities": "Afhankelijke grondstoffen",
+      "stateOk": "Actueel",
+      "stateStale": "Verouderde invoer",
+      "stateInsufficient": "Onvoldoende gegevens"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Hormuz-handelstracker</strong> Live AIS-scheepvaarttracking door de Straat van Hormuz, het meest kritieke olieknelpunt ter wereld. Monitort tankeraantallen, verstoringsevenementen en wekelijkse stroomwijzigingen. Ongeveer 20% van de wereldwijde olietoevoer passeert hier dagelijks.",

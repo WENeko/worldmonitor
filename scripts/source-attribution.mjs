@@ -30,9 +30,6 @@ import {
 } from './source-catalog-identity.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SOURCE_SCAN_ROOT = process.env.WM_CANONICAL_ROOT
-  ? join(process.env.WM_CANONICAL_ROOT)
-  : ROOT;
 const MANIFEST_PATH = 'shared/source-attribution-manifest.json';
 const DOCS_PATH = 'docs/source-attribution.mdx';
 // MDX comments, not HTML ones: Mintlify parses docs/source-attribution.mdx as MDX v3,
@@ -95,6 +92,12 @@ const publisherMetadataFeed = (provider) => ({
  * become a provider rename or regroup.
  */
 export const PROVIDER_IDENTITY_GROUPS = Object.freeze({
+  bgs: Object.freeze({
+    provider: 'British Geological Survey World Mineral Statistics',
+    memberHosts: Object.freeze(['ogcapi.bgs.ac.uk', 'www.bgs.ac.uk']),
+    reason: 'The BGS OGC API supplies the observations and the BGS statistics page supplies the required public attribution link.',
+    reviewReference: 'Issue #6449 commodity-vulnerability provenance review',
+  }),
   bbc: Object.freeze({
     provider: 'BBC',
     memberHosts: Object.freeze(['feeds.bbci.co.uk', 'www.bbc.com']),
@@ -184,6 +187,12 @@ const PROVIDER_OVERRIDES = {
   'api.x.com': { provider: 'X API' },
   'atbackend.sipri.org': { provider: 'SIPRI Arms Transfers Database' },
   'opendata.adsb.fi': { provider: 'adsb.fi Open Data' },
+  'query.wikidata.org': {
+    provider: 'Wikidata',
+    license: 'Creative Commons CC0 1.0 Universal',
+    attribution: 'Wikidata structured data is CC0. Credit Wikidata and link each reused entity identifier as a best practice.',
+    status: 'reviewed',
+  },
   'population.un.org': {
     provider: 'United Nations Population Division',
     license: 'UN World Population Prospects 2024 is licensed under CC BY 3.0 IGO.',
@@ -392,6 +401,14 @@ const PROVIDER_OVERRIDES = {
   },
   'ogcapi.bgs.ac.uk': {
     provider: 'British Geological Survey World Mineral Statistics',
+    identityGroup: 'bgs',
+    license: 'BGS mineral statistics terms; attribution required; redistribution restricted',
+    attribution: 'British Geological Survey (BGS) World Mineral Production; credit BGS and link to https://www.bgs.ac.uk/mineralsuk/statistics/world-mineral-statistics/.',
+    status: 'reviewed',
+  },
+  'www.bgs.ac.uk': {
+    provider: 'British Geological Survey World Mineral Statistics',
+    identityGroup: 'bgs',
     license: 'BGS mineral statistics terms; attribution required; redistribution restricted',
     attribution: 'British Geological Survey (BGS) World Mineral Production; credit BGS and link to https://www.bgs.ac.uk/mineralsuk/statistics/world-mineral-statistics/.',
     status: 'reviewed',
@@ -850,13 +867,13 @@ const PROVIDER_OVERRIDES = {
 // a provider-bearing override a separate, explicit lifecycle event instead of
 // something `--write` can silently normalize into the manifest.
 export const PROVIDER_IDENTITY_REVIEW = Object.freeze({
-  sha256: '824486c88b8da9a37f53719e4b8f870985b7176406a4b65b7fbbc1d19909d7a2',
-  reason: 'Group api.imd.gov.in, rsmcnewdelhi.imd.gov.in, and mausam.imd.gov.in as India Meteorological Department so cyclone and marine product attribution is one provider identity.',
+  sha256: '77fe5d378bb92d98998a2ec5ce74cea31e4bdaf58f50dfe3228bba39f83059f8',
+  reason: 'Group the BGS observation API and required attribution page under one reviewed, redistribution-restricted provider identity for issue #6449.',
   // A URL cited here is scanned like any other: this file sits inside
   // SOURCE_ROOTS, so citing a host that is not already a registered source
   // invents a provider row for it. The B.C. catalogue URLs above are safe
   // because that host is itself an observed source; parallel.ai is not.
-  reviewReference: 'Issue #7005 IMD cyclone/marine source-rights probe; plus Issues #7012 and #6682 Toronto safety sources; plus Issue #7000 publisher-centric source catalog; plus Issue #7001, Issue #6437, Issue #6622, Issue #6659, and PR #6447 identity reviews.',
+  reviewReference: 'Issue #6449 BGS provenance review; plus Issue #7371 country corpus identity review; plus Issue #7005 IMD cyclone/marine source-rights probe; plus Issues #7012 and #6682 Toronto safety sources; plus Issue #7000 publisher-centric source catalog; plus Issue #7001, Issue #6437, Issue #6622, Issue #6659, and PR #6447 identity reviews.',
 });
 
 export function providerIdentityDigest(providerOverrides = PROVIDER_OVERRIDES) {
@@ -940,8 +957,6 @@ const EXCLUDED_HOSTS = new Set([
   // Release links, documentation links, and repository links are control/UI
   // surfaces; GitHub API and raw-content hosts remain tracked separately.
   'github.com',
-  // MCP registry discovery is a first-party control-plane surface, not an
-  // ingested upstream dataset; keep it out of the provider count.
   'registry.modelcontextprotocol.io',
   // Provider landing-page link in MapPopup; the ingested Wingbits endpoints
   // are tracked as customer-api.wingbits.com and ecs-api.wingbits.com.

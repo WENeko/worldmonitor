@@ -33,6 +33,53 @@ test('keeps seed-owned defense snapshots cloud-preferred regardless of relay con
   assert.equal(__testing__.isCloudPreferred('/api/scorecard/v1/list-five-factor-scorecards'), true);
 });
 
+test('keeps seed-owned commodity vulnerability snapshots cloud-preferred', async () => {
+  const endpoints = [
+    '/api/supply-chain/v1/get-country-vulnerabilities',
+    '/api/supply-chain/v1/get-chokepoint-dependencies',
+    '/api/supply-chain/v1/list-vulnerability-rankings',
+  ];
+  for (const endpoint of endpoints) {
+    assert.equal(__testing__.isCloudPreferred(endpoint), true);
+  }
+
+  const remote = await setupRemoteServer();
+  const unavailableHandler = `
+    export default async function handler() {
+      return new Response(JSON.stringify({ source: 'local-empty', upstreamUnavailable: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+  `;
+  const localApi = await setupApiDir(Object.fromEntries(
+    endpoints.map((endpoint) => [`${endpoint.slice('/api/'.length)}.js`, unavailableHandler]),
+  ));
+  const app = await createLocalApiServer({
+    port: 0,
+    apiDir: localApi.apiDir,
+    remoteBase: remote.remoteBase,
+    cloudFallback: 'true',
+    allowPrivateRemoteBase: true,
+    logger: { log() { }, warn() { }, error() { } },
+  });
+  const { port } = await app.start();
+
+  try {
+    for (const endpoint of endpoints) {
+      const response = await authFetch(`http://127.0.0.1:${port}${endpoint}`);
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.equal(body.source, 'remote');
+    }
+    assert.deepEqual(remote.hits, endpoints);
+  } finally {
+    await app.close();
+    await localApi.cleanup();
+    await remote.close();
+  }
+});
+
 // The sidecar default-denies when LOCAL_API_TOKEN is unset (security fix:
 // previously "unset" meant "auth disabled", which made any standalone run
 // an open local-HTTP proxy). Set a stable test token + an authFetch helper
@@ -2117,6 +2164,32 @@ test('uses gzip compression when Brotli is unavailable but gzip is accepted', as
     await remote.close();
   }
 });
+
+test('skips gzip/br for already-compressed raster image payloads (#7382)', () => {
+  const jpegBody = Buffer.alloc(2048, 0xff);
+  assert.equal(
+    __testing__.canCompress({ 'content-type': 'image/jpeg' }, jpegBody),
+    false,
+  );
+  assert.equal(
+    __testing__.canCompress({ 'content-type': 'image/png' }, jpegBody),
+    false,
+  );
+  assert.equal(
+    __testing__.canCompress({ 'content-type': 'image/webp' }, jpegBody),
+    false,
+  );
+  // SVG is text — still worth compressing (e.g. /api/og-story).
+  assert.equal(
+    __testing__.canCompress({ 'content-type': 'image/svg+xml' }, Buffer.from('x'.repeat(2048))),
+    true,
+  );
+  assert.equal(
+    __testing__.canCompress({ 'content-type': 'application/json' }, Buffer.from('x'.repeat(2048))),
+    true,
+  );
+});
+
 
 // ── Security hardening tests ────────────────────────────────────────────
 

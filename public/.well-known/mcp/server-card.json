@@ -3,12 +3,12 @@
   "kind": "product",
   "description": "WorldMonitor's live global-intelligence stack as an MCP server: real-time markets, conflict events, aviation, maritime, energy, climate, health, displacement, supply chain, and AI-generated regional briefs.",
   "icon": "https://www.worldmonitor.app/favico/apple-touch-icon.png",
-  "version": "1.17.0",
+  "version": "1.18.0",
   "url": "https://worldmonitor.app/mcp",
   "serverUrl": "https://worldmonitor.app/mcp",
   "serverInfo": {
     "name": "worldmonitor",
-    "version": "1.17.0",
+    "version": "1.18.0",
     "description": "WorldMonitor's live global-intelligence stack as an MCP server: real-time markets, conflict events, aviation, maritime, energy, climate, health, displacement, supply chain, and AI-generated regional briefs.",
     "vendor": "WorldMonitor",
     "homepage": "https://www.worldmonitor.app"
@@ -48,7 +48,7 @@
     },
     {
       "name": "get_market_data",
-      "description": "Real-time equity quotes, commodity prices (including SGE physical-vs-COMEX gold and silver premiums), crypto prices, forex FX rates, sector performance and valuation coverage, ETF flows, and Gulf market quotes from WorldMonitor's curated bootstrap cache. Covers the curated symbol universe only — it filters that snapshot rather than looking up arbitrary tickers.",
+      "description": "Real-time equity quotes, commodity prices, SGE physical-vs-COMEX premiums, physical-divergence regimes and trends, crypto, FX, sectors with explicit valuation coverage, ETF flows, and Gulf markets. Covers the curated symbol universe only — it filters that snapshot rather than looking up arbitrary tickers.",
       "_meta": {
         "worldmonitor/access": "free-account"
       }
@@ -69,7 +69,7 @@
     },
     {
       "name": "get_news_intelligence",
-      "description": "AI-classified geopolitical threat news summaries, GDELT intelligence signals, cross-source signals, and security advisories from WorldMonitor's intelligence layer. Each top story carries full corroboration metadata — uniqueSourceCount, corroborationSourceCount, entityCorroboration, sourceTier, the contributing outlet names, every clustered headline, and credibilityScore (0-100 source reliability, distinct from importance).",
+      "description": "AI-classified geopolitical threat news summaries, GDELT intelligence signals, cross-source signals including physical-premium regime transitions, and security advisories from WorldMonitor's intelligence layer. Each top story carries full corroboration metadata — uniqueSourceCount, corroborationSourceCount, entityCorroboration, sourceTier, the contributing outlet names, every clustered headline, and credibilityScore (0-100 source reliability, distinct from importance).",
       "_meta": {
         "worldmonitor/access": "free-account"
       }
@@ -334,6 +334,13 @@
       }
     },
     {
+      "name": "get_resilience_indicators",
+      "description": "Explain one country's resilience score across all 72 registered indicators. Returns normalized scores, observed or imputed state, runtime weights, contributions reconciled to each dimension, observation age and source provenance. Raw values are included only when redistribution is permitted. Requires an ISO-2 country code and a WorldMonitor Pro subscription.",
+      "_meta": {
+        "worldmonitor/access": "subscription"
+      }
+    },
+    {
       "name": "get_five_factor_scorecard",
       "description": "Return the frozen v1 food, energy, demographics, technology, and defense scorecard for exactly one country or bloc. Select a country_code, one official preset, or a custom members list. Read every hasScore, available, and hasValue flag before numeric fields; zero is a proto3 placeholder when its flag is false. Requires a WorldMonitor subscription.",
       "_meta": {
@@ -406,6 +413,20 @@
     {
       "name": "get_mineral_production",
       "description": "Who mines and who refines a commodity, with country shares and HHI. Answers \"who refines cobalt\" or \"what does Chile produce\". USGS Mineral Commodity Summaries plus BGS fill. Complements get_commodity_geo (deposit locations).",
+      "_meta": {
+        "worldmonitor/access": "subscription"
+      }
+    },
+    {
+      "name": "get_supply_vulnerabilities",
+      "description": "An absent score means insufficient evidence, never zero risk. Returns one country commodity-vulnerability portfolio with absolute 0-100 bands, concentration, transit, buffer, coverage, staleness, method version, and source provenance; read state and reasons to see why a score is absent.",
+      "_meta": {
+        "worldmonitor/access": "subscription"
+      }
+    },
+    {
+      "name": "get_chokepoint_dependencies",
+      "description": "An absent score means insufficient coverage, never zero risk. Returns the highest-scoring country and commodity dependencies for one maritime chokepoint, from the same snapshot as country vulnerabilities; read state and reasons before drawing conclusions.",
       "_meta": {
         "worldmonitor/access": "subscription"
       }

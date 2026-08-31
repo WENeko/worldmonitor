@@ -197,6 +197,14 @@
       "publisher": {
         "@id": "https://www.worldmonitor.app/#organization"
       },
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": {
+          "@type": "EntryPoint",
+          "urlTemplate": "https://www.worldmonitor.app/dashboard?q={search_term_string}"
+        },
+        "query-input": "required name=search_term_string"
+      },
       "inLanguage": "en"
     }
     </script>
@@ -213,6 +221,9 @@
       "publisher": {
         "@id": "https://www.worldmonitor.app/#organization"
       },
+      "isBasedOn": {
+        "@id": "https://www.worldmonitor.app/#source"
+      },
       "sameAs": [
         "https://github.com/koala73/worldmonitor",
         "https://www.npmjs.com/package/worldmonitor",
@@ -228,7 +239,7 @@
         "sameAs": [
           "https://x.com/eliehabib",
           "https://github.com/koala73",
-          "https://www.linkedin.com/in/elie-habib-7047b931",
+          "https://www.linkedin.com/in/eliashabib",
           "https://www.wikidata.org/wiki/Q121365724",
           "https://www.crunchbase.com/person/elie-habib-2"
         ]
@@ -277,6 +288,22 @@
         }
       ],
       "featureList": "Real-time global map with registry-backed data layers, curated news feeds, Country Instability Index for the Tier-1 registry, live conflict tracking, market quotes and sector heatmaps, shipping chokepoints with vessel transit intelligence, real-time satellite tracking, GPS jamming zones, submarine cable map, AI datacenter map, daily AI brief, Scenario Engine, custom monitors and alerts, MCP server, desktop apps, Android TV app, and localized interfaces"
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareSourceCode",
+      "@id": "https://www.worldmonitor.app/#source",
+      "name": "World Monitor source code",
+      "description": "Source code for the World Monitor real-time global intelligence platform.",
+      "codeRepository": "https://github.com/koala73/worldmonitor",
+      "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+      "programmingLanguage": ["TypeScript", "JavaScript", "Rust"],
+      "runtimePlatform": ["Web", "Windows", "macOS", "Linux"],
+      "targetProduct": {
+        "@id": "https://www.worldmonitor.app/#software"
+      }
     }
     </script>
     <script type="application/ld+json">

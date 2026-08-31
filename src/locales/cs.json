@@ -1802,6 +1802,16 @@
       "loading": "Připojování k relé Telegramu...",
       "empty": "Nejsou k dispozici žádné zprávy",
       "disabled": "Relé Telegramu není aktivní",
+      "watchlistPlaceholder": "Přidat veřejný kanál pomocí @username",
+      "resolving": "Ověřování kanálu...",
+      "invalidUsername": "Použijte veřejné @username na Telegramu",
+      "resolveFailed": "Kanál se nepodařilo najít",
+      "watchlistLimit": "Můžete sledovat až {{count}} vlastních kanálů",
+      "previewMembers": "Počet členů: {{count}}",
+      "addChannel": "Přidat kanál",
+      "added": "Přidáno",
+      "remove": "Odebrat",
+      "custom": "Vlastní",
       "filterAll": "Vše",
       "filterBreaking": "Bleskové zprávy",
       "filterConflict": "Konflikt",
@@ -2034,6 +2044,22 @@
       "metals": {
         "gold": "Gold",
         "silver": "Silver"
+      },
+      "divergence": {
+        "compositeValue": "Index fyzického tlaku: {{value}} / 100",
+        "fiveDayTrend": "Trend prémie za pět obchodních dní",
+        "regimes": {
+          "normal": "Normální",
+          "elevated": "Zvýšený",
+          "stressed": "Napjatý",
+          "extreme": "Extrémní"
+        },
+        "states": {
+          "insufficientHistory": "Zahřívání: {{count}} / {{required}} obchodních bodů",
+          "staleInput": "Fyzická reference je zastaralá",
+          "missingInput": "Signál divergence není k dispozici"
+        },
+        "twentyDayTrend": "Trend prémie za dvacet obchodních dní"
       }
     },
     "crypto": {
@@ -2200,6 +2226,25 @@
         "failedToLoad": "Načtení se nezdařilo"
       },
       "cissStale": "ECB nezveřejnila novější hodnotu — toto čtení může být zastaralé."
+    },
+    "supplyVulnerability": {
+      "title": "Zranitelnost komodit",
+      "help": "Expozice země podle komodit z koncentrace dodavatelů, námořního tranzitu a dostupných strategických zásob.",
+      "loading": "Načítání zranitelnosti komodit…",
+      "unavailable": "Data o zranitelnosti komodit nejsou dostupná",
+      "noCoverage": "Pro tuto zemi nejsou dostatečné důkazy",
+      "unknown": "Neznámé",
+      "concentration": "Koncentrace",
+      "transit": "Tranzit",
+      "buffer": "Rezerva",
+      "sources": "Zdroje",
+      "methodology": "Metodika",
+      "hormuzTitle": "Závislosti na komoditách",
+      "dependentCountries": "Závislé země",
+      "dependentCommodities": "Závislé komodity",
+      "stateOk": "Aktuální",
+      "stateStale": "Zastaralý vstup",
+      "stateInsufficient": "Nedostatečná data"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>Sledování obchodu v Hormuzu</strong> Sledování AIS plavidel v reálném čase přes Hormuzský průliv, nejkritičtější ropný úzký profil na světě. Monitoruje počty tankerů, narušení a týdenní změny toků. Přibližně 20 % světových dodávek ropy tudy denně prochází.",

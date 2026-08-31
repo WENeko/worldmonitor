@@ -733,16 +733,20 @@ describe('deploy/cache configuration guardrails', () => {
     // path-to-regexp source-pattern parser rejects `(?:...)` in `source` fields
     // (deploy-fail PR #3646 round-2 review).
     //
-    // The header uses `private, no-cache, must-revalidate` rather than the
-    // previous `no-cache, no-store, must-revalidate` (PR #4004 / issue #3993).
-    // `no-store` fully disabled Chrome's bfcache (Lighthouse flagged 7 failure
-    // reasons rooted in this header). `no-cache` without `no-store` still
-    // revalidates on every navigation but lets bfcache restore on back/forward.
-    // `private` keeps shared caches (CDN, corporate proxies) from holding
-    // personalized HTML.
+    // The header uses `public, max-age=0, must-revalidate` for HTML entry
+    // routes (issue #7382): CDN-cacheable with always-revalidate, which cuts
+    // shared-cache TTFB vs `private` while still revalidating on navigation.
+    // `no-store` remains forbidden — it disables Chrome bfcache (#3993/#4004).
     const spaNoCache = getCacheHeaderValue(SPA_HTML_CACHE_SOURCE);
     assert.equal(spaNoCache, 'private, no-cache, must-revalidate');
     assert.ok(!spaNoCache.includes('no-store'), 'HTML must not set no-store — it disables bfcache');
+    for (const route of ['/', '/dashboard', '/dashboard.html']) {
+      assert.equal(
+        effectiveCacheControl(route),
+        'public, max-age=0, must-revalidate',
+        `${route} must keep the public revalidation policy after all matching rules apply`,
+      );
+    }
   });
 
   it('disables caching for the apex /mcp-grant Pro-MCP consent page (both URL forms)', () => {
@@ -797,6 +801,15 @@ describe('deploy/cache configuration guardrails', () => {
     );
     assert.doesNotMatch(viteConfigSource, /globPatterns:\s*\['\*\*\/\*\.\{js,css,html/);
   });
+
+  it('emits public sourcemaps for preview attribution while production stays opt-in (#7382)', () => {
+    assert.match(
+      viteConfigSource,
+      /const emitPublicSourceMaps = process\.env\.WM_EMIT_SOURCEMAPS === '1'[\s\S]*\|\| process\.env\.VERCEL_ENV === 'preview'/,
+    );
+    assert.match(viteConfigSource, /sourcemap:\s*emitPublicSourceMaps/);
+  });
+
 
   it('keeps off-page public assets out of the PWA precache', () => {
     const assertGlobIgnore = (pattern) => {
@@ -980,7 +993,7 @@ describe('welcome landing page routing', () => {
     }
   });
 
-  it('keeps variant crawler-stub canonicals aligned with variant metadata', () => {
+  it('keeps variant social-preview canonicals aligned with variant metadata', () => {
     const variantUrls = getVariantUrls();
     const nonFullUrls = Object.entries(variantUrls).filter(([variant]) => variant !== 'full');
 
@@ -988,38 +1001,26 @@ describe('welcome landing page routing', () => {
       assert.match(
         middlewareSource,
         new RegExp(`\\b${variant}:\\s*\\{[\\s\\S]*?url:\\s*'${escapeRegExp(url)}'`),
-        `${variant} crawler-stub OG/canonical URL must match variant-meta.ts`
+        `${variant} social-preview OG/canonical URL must match variant-meta.ts`
       );
     }
 
-    assert.ok(
-      middlewareSource.includes(`href="${variantUrls.full}"`),
-      'AI crawler body must link the full dashboard canonical',
-    );
     assert.match(
       middlewareSource,
-      /const AI_CRAWLER_VARIANT_LINKS = Object\.values\(VARIANT_HOST_MAP\)/,
-      'AI crawler body links must be derived from the canonical variant host map',
-    );
-    assert.match(
-      middlewareSource,
-      /const og = VARIANT_OG\[variant\]/,
-      'AI crawler body link labels and URLs must come from variant metadata',
+      /const og = VARIANT_OG\[variant as keyof typeof VARIANT_OG\]/,
+      'social-preview metadata must come from the variant registry',
     );
     assert.match(
       middlewareSource,
       /escHtml\(og\.url\)/,
-      'AI crawler body link URLs must stay HTML-escaped',
+      'social-preview URLs must stay HTML-escaped',
     );
     assert.match(
       middlewareSource,
-      /escHtml\(og\.name\)/,
-      'AI crawler body link labels must stay HTML-escaped',
+      /path === '\/' && SOCIAL_PREVIEW_UA\.test\(ua\)/,
+      'only social preview bots may receive the variant root stub',
     );
-    assert.ok(
-      middlewareSource.includes('${AI_CRAWLER_VARIANT_LINKS}'),
-      'AI crawler body must render the generated variant links',
-    );
+    assert.doesNotMatch(middlewareSource, /AI_CRAWLER_UA|AI_CRAWLER_VARIANT_LINKS/);
   });
 
   it('redirects legacy root map-state deep links to /dashboard before welcome routing', () => {
@@ -1142,20 +1143,29 @@ describe('welcome landing page routing', () => {
 
   it('requires revalidation for /dashboard HTML without disabling bfcache', () => {
     const dashboardCache = getCacheHeaderValue('/dashboard');
-    assert.equal(dashboardCache, 'private, no-cache, must-revalidate');
+    assert.equal(dashboardCache, 'public, max-age=0, must-revalidate');
     assert.ok(!dashboardCache.includes('no-store'), 'HTML must not set no-store — it disables bfcache');
   });
 
   it('requires revalidation for root welcome HTML without disabling bfcache', () => {
     const welcomeCache = getCacheHeaderValue('/');
-    assert.equal(welcomeCache, 'private, no-cache, must-revalidate');
+    assert.equal(welcomeCache, 'public, max-age=0, must-revalidate');
     assert.ok(!welcomeCache.includes('no-store'), 'HTML must not set no-store — it disables bfcache');
   });
 
   it('requires revalidation for direct dashboard.html without disabling bfcache', () => {
     const dashboardCache = getCacheHeaderValue('/dashboard.html');
-    assert.equal(dashboardCache, 'private, no-cache, must-revalidate');
+    assert.equal(dashboardCache, 'public, max-age=0, must-revalidate');
     assert.ok(!dashboardCache.includes('no-store'), 'HTML must not set no-store — it disables bfcache');
+  });
+
+  it('redirects bare /api to the docs API reference hub (#7382)', () => {
+    for (const source of ['/api', '/api/']) {
+      const apiRedirect = vercelConfig.redirects.find((r) => r.source === source);
+      assert.ok(apiRedirect, `expected a redirect for ${source}`);
+      assert.equal(apiRedirect.destination, '/docs/api-reference');
+      assert.equal(apiRedirect.permanent, false);
+    }
   });
 
   it('starts installed PWAs on /dashboard, not the public welcome page', () => {
@@ -4559,8 +4569,10 @@ describe('variant-host canonicalization (#6833–#6836)', () => {
     const catchAllHeader = vercelConfig.headers.find((r) => r.source === SPA_HTML_CACHE_SOURCE);
     assert.ok(catchAllHeader, 'expected the pinned SPA cache-header rule');
     assert.equal(getCacheHeaderValue(SPA_HTML_CACHE_SOURCE), 'private, no-cache, must-revalidate');
-    // The enumerated SPA entry routes keep the no-cache policy.
-    for (const path of ['/dashboard', '/stocks', '/stocks/AAPL', '/story']) {
+    // Explicit /dashboard entry uses public revalidate (#7382); other SPA
+    // pretty-URLs still inherit the catch-all private policy.
+    assert.equal(effectiveCacheControl('/dashboard'), 'public, max-age=0, must-revalidate');
+    for (const path of ['/stocks', '/stocks/AAPL', '/story']) {
       assert.equal(effectiveCacheControl(path), 'private, no-cache, must-revalidate', path + ' must stay no-cache');
     }
   });

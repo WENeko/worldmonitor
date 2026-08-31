@@ -1811,6 +1811,16 @@
       "loading": "Telegram 릴레이에 연결 중...",
       "empty": "사용 가능한 메시지 없음",
       "disabled": "Telegram 릴레이가 비활성 상태입니다",
+      "watchlistPlaceholder": "@username으로 공개 채널 추가",
+      "resolving": "채널 검색 중...",
+      "invalidUsername": "공개 Telegram @username을 사용하세요",
+      "resolveFailed": "채널을 찾을 수 없습니다",
+      "watchlistLimit": "맞춤 채널은 최대 {{count}}개까지 팔로우할 수 있습니다",
+      "previewMembers": "멤버 {{count}}명",
+      "addChannel": "채널 추가",
+      "added": "추가됨",
+      "remove": "삭제",
+      "custom": "맞춤",
       "filterAll": "전체",
       "filterBreaking": "속보",
       "filterConflict": "분쟁",
@@ -2022,6 +2032,22 @@
       "metals": {
         "gold": "Gold",
         "silver": "Silver"
+      },
+      "divergence": {
+        "compositeValue": "물리적 스트레스 지수: {{value}} / 100",
+        "fiveDayTrend": "5거래일 프리미엄 추세",
+        "regimes": {
+          "normal": "정상",
+          "elevated": "상승",
+          "stressed": "스트레스",
+          "extreme": "극심"
+        },
+        "states": {
+          "insufficientHistory": "워밍업 중: {{count}} / {{required}} 거래 데이터 포인트",
+          "staleInput": "물리적 벤치마크 만료됨",
+          "missingInput": "발산 신호 불가능"
+        },
+        "twentyDayTrend": "20거래일 프리미엄 추세"
       }
     },
     "crypto": {
@@ -2173,6 +2199,25 @@
         "failedToLoad": "로드 실패"
       },
       "cissStale": "ECB가 더 최신 값을 발표하지 않았습니다 — 이 수치가 최신이 아닐 수 있습니다."
+    },
+    "supplyVulnerability": {
+      "title": "원자재 취약성",
+      "help": "공급자 집중도, 해상 운송 및 이용 가능한 전략 비축량을 바탕으로 한 국가별 원자재 노출도입니다.",
+      "loading": "원자재 취약성을 불러오는 중…",
+      "unavailable": "원자재 취약성 데이터를 사용할 수 없습니다",
+      "noCoverage": "이 국가에 대한 근거가 부족합니다",
+      "unknown": "알 수 없음",
+      "concentration": "집중도",
+      "transit": "운송",
+      "buffer": "비축량",
+      "sources": "출처",
+      "methodology": "방법론",
+      "hormuzTitle": "원자재 의존도",
+      "dependentCountries": "의존 국가",
+      "dependentCommodities": "의존 원자재",
+      "stateOk": "현재",
+      "stateStale": "오래된 입력",
+      "stateInsufficient": "데이터 부족"
     },
     "hormuzTracker": {
       "infoTooltip": "<strong>호르무즈 무역 추적기</strong> 세계에서 가장 중요한 석유 병목지점인 호르무즈 해협을 통과하는 AIS 선박 실시간 추적. 유조선 수, 중단 이벤트, 주간 흐름 변화를 모니터링. 전 세계 석유 공급의 약 20%가 매일 이곳을 통과.",
