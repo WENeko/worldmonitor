@@ -5,6 +5,9 @@ import { fetchHormuzTracker } from '@/services/hormuz-tracker';
 import type { HormuzTrackerData, HormuzChart, HormuzSeries } from '@/services/hormuz-tracker';
 import { fetchChokepointDependencies } from '@/services/supply-chain';
 import type { GetChokepointDependenciesResponse } from '@/services/supply-chain';
+import { hasPremiumAccess } from '@/services/panel-gating';
+import { getAuthState, subscribeAuthState } from '@/services/auth-state';
+import { onEntitlementChange } from '@/services/entitlements';
 
 const CHART_COLORS = ['#e67e22', '#1abc9c', '#9b59b6', '#27ae60'];
 const ZERO_COLOR = 'rgba(231,76,60,0.5)';
@@ -63,20 +66,33 @@ function renderChart(chart: HormuzChart, idx: number): string {
 export class HormuzPanel extends Panel {
   private data: HormuzTrackerData | null = null;
   private dependencies: GetChokepointDependenciesResponse | null = null;
-  private dependencyState: 'loading' | 'loaded' | 'unavailable' = 'loading';
+  private dependencyState: 'loading' | 'loaded' | 'unavailable' | 'pro-locked' = 'loading';
   private tooltipBound = false;
   private fetchGeneration = 0;
+  private dependencyGeneration = 0;
+  private dependencyAbortController: AbortController | null = null;
+  private dependencyAbortCleanup: (() => void) | null = null;
+  private authUnsubscribe: (() => void) | null = null;
+  private entitlementUnsubscribe: (() => void) | null = null;
+  private lastHadPremium = false;
 
   constructor() {
     super({ id: 'hormuz-tracker', title: t('components.hormuzTracker.title'), showCount: false, infoTooltip: t('components.hormuzTracker.infoTooltip') });
+    this.lastHadPremium = hasPremiumAccess(getAuthState());
+    this.authUnsubscribe = subscribeAuthState(() => this.handlePremiumAccessChange());
+    this.entitlementUnsubscribe = onEntitlementChange(() => this.handlePremiumAccessChange());
   }
 
   public async fetchData(): Promise<boolean> {
     const generation = ++this.fetchGeneration;
+    this.invalidateDependencyRequest();
     this.showLoading();
-    this.dependencyState = 'loading';
-    const dependenciesPromise = fetchChokepointDependencies('hormuz_strait', 25, { signal: this.signal })
-      .catch(() => null);
+    // The Hormuz tape itself stays free; only the commodity-dependency fan-out
+    // over it is Pro (#6449). Gate just that leg so a free viewer keeps the
+    // tracker and sees an upgrade line where the dependencies would be.
+    const isPro = hasPremiumAccess(getAuthState());
+    this.dependencyState = isPro ? 'loading' : 'pro-locked';
+    let dependencyRequest = isPro ? this.startDependencyRequest() : null;
     try {
       const data = await fetchHormuzTracker();
       if (generation !== this.fetchGeneration) return false;
@@ -86,10 +102,25 @@ export class HormuzPanel extends Panel {
       }
       this.data = data;
       this.dependencies = null;
+      const currentIsPro = hasPremiumAccess(getAuthState());
+      if (currentIsPro) {
+        this.dependencyState = 'loading';
+        if (!dependencyRequest || dependencyRequest.generation !== this.dependencyGeneration) {
+          dependencyRequest = this.startDependencyRequest();
+        }
+      } else {
+        this.invalidateDependencyRequest();
+        this.dependencyState = 'pro-locked';
+      }
       this.renderPanel();
       this.bindTooltip();
-      void dependenciesPromise.then((dependencies) => {
-        if (this.signal.aborted || generation !== this.fetchGeneration) return;
+      void dependencyRequest?.promise.then((dependencies) => {
+        if (
+          this.signal.aborted ||
+          generation !== this.fetchGeneration ||
+          dependencyRequest?.generation !== this.dependencyGeneration ||
+          !hasPremiumAccess(getAuthState())
+        ) return;
         this.dependencies = dependencies;
         this.dependencyState = dependencies?.upstreamUnavailable === false
           ? 'loaded'
@@ -102,6 +133,82 @@ export class HormuzPanel extends Panel {
       this.showError(e instanceof Error ? e.message : t('components.hormuzTracker.errors.failedToLoad'), () => void this.fetchData());
       return false;
     }
+  }
+
+  public override destroy(): void {
+    this.authUnsubscribe?.();
+    this.authUnsubscribe = null;
+    this.entitlementUnsubscribe?.();
+    this.entitlementUnsubscribe = null;
+    this.invalidateDependencyRequest();
+    super.destroy();
+  }
+
+  private handlePremiumAccessChange(): void {
+    const hasPremium = hasPremiumAccess(getAuthState());
+    if (hasPremium === this.lastHadPremium) return;
+    this.lastHadPremium = hasPremium;
+
+    if (hasPremium) {
+      if (!this.data) return;
+      this.dependencies = null;
+      this.dependencyState = 'loading';
+      this.renderPanel();
+      const dependencyRequest = this.startDependencyRequest();
+      void dependencyRequest.promise.then((dependencies) => {
+        if (
+          this.signal.aborted ||
+          dependencyRequest.generation !== this.dependencyGeneration ||
+          !hasPremiumAccess(getAuthState())
+        ) return;
+        this.dependencies = dependencies;
+        this.dependencyState = dependencies?.upstreamUnavailable === false
+          ? 'loaded'
+          : 'unavailable';
+        this.renderPanel();
+      });
+      return;
+    }
+
+    this.invalidateDependencyRequest();
+    this.dependencies = null;
+    this.dependencyState = 'pro-locked';
+    if (this.data) this.renderPanel();
+  }
+
+  private invalidateDependencyRequest(): void {
+    this.dependencyGeneration += 1;
+    this.dependencyAbortController?.abort();
+    this.dependencyAbortController = null;
+    this.dependencyAbortCleanup?.();
+    this.dependencyAbortCleanup = null;
+  }
+
+  private startDependencyRequest(): {
+    generation: number;
+    promise: Promise<GetChokepointDependenciesResponse | null>;
+  } {
+    this.invalidateDependencyRequest();
+    const generation = ++this.dependencyGeneration;
+    const controller = new AbortController();
+    const abortWithPanel = () => controller.abort();
+    if (this.signal.aborted) {
+      controller.abort();
+    } else {
+      this.signal.addEventListener('abort', abortWithPanel, { once: true });
+    }
+    const cleanup = () => this.signal.removeEventListener('abort', abortWithPanel);
+    this.dependencyAbortController = controller;
+    this.dependencyAbortCleanup = cleanup;
+    const promise = fetchChokepointDependencies('hormuz_strait', 25, { signal: controller.signal })
+      .catch(() => null)
+      .finally(() => {
+        if (this.dependencyAbortController !== controller) return;
+        this.dependencyAbortController = null;
+        this.dependencyAbortCleanup = null;
+        cleanup();
+      });
+    return { generation, promise };
   }
 
   private bindTooltip(): void {
@@ -164,10 +271,12 @@ export class HormuzPanel extends Panel {
     if (this.dependencyState === 'loading') {
       return `<div class="hz-dependencies" data-state="loading" style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.08)"><div class="hz-dependencies-title" style="font-size:calc(10px * var(--wm-panel-effective-scale, 1));font-weight:700;text-transform:uppercase;letter-spacing:0.04em">${escapeHtml(t('components.supplyVulnerability.hormuzTitle'))}</div><div class="hz-dependencies-empty" style="margin-top:5px;color:var(--text-dim);font-size:calc(10px * var(--wm-panel-effective-scale, 1))">${escapeHtml(t('components.supplyVulnerability.loading'))}</div></div>`;
     }
-    if (!response || response.upstreamUnavailable || response.dependencies.length === 0) {
-      const emptyMessage = !response || response.upstreamUnavailable
-        ? t('components.supplyVulnerability.unavailable')
-        : t('components.supplyVulnerability.noCoverage');
+    if (this.dependencyState === 'pro-locked' || !response || response.upstreamUnavailable || response.dependencies.length === 0) {
+      const emptyMessage = this.dependencyState === 'pro-locked'
+        ? t('components.supplyVulnerability.proLocked')
+        : !response || response.upstreamUnavailable
+          ? t('components.supplyVulnerability.unavailable')
+          : t('components.supplyVulnerability.noCoverage');
       return `<div class="hz-dependencies" data-state="${this.dependencyState}" style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.08)"><div class="hz-dependencies-title" style="font-size:calc(10px * var(--wm-panel-effective-scale, 1));font-weight:700;text-transform:uppercase;letter-spacing:0.04em">${escapeHtml(t('components.supplyVulnerability.hormuzTitle'))}</div><div class="hz-dependencies-empty" style="margin-top:5px;color:var(--text-dim);font-size:calc(10px * var(--wm-panel-effective-scale, 1))">${escapeHtml(emptyMessage)}</div></div>`;
     }
 

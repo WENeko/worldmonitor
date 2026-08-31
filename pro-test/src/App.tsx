@@ -9,7 +9,7 @@ import {
   Bell, Brain, Key, Plug, PanelTop, ExternalLink,
   BarChart3, Clock, Radio, Ship, Plane, Flame,
   Cable, Wifi, MapPin, TrendingUp,
-  Filter, Lightbulb, SlidersHorizontal, Telescope,
+  Boxes, Filter, Lightbulb, SlidersHorizontal, Telescope,
   LineChart, Search, Shield, Building2,
   Landmark, Fuel
 } from 'lucide-react';
@@ -20,7 +20,7 @@ import { startClerkUserStateSync, type ClerkUserState } from './services/clerk-u
 import { hasLiveClientSession } from './services/clerk-session';
 import { createTimeoutSignal, isTimeoutOrAbortError } from './services/timeout-signal';
 import { PricingSection } from './components/PricingSection';
-import { SoonBadge } from './components/SoonBadge';
+import { WhatsNew } from './components/WhatsNew';
 import { Logo } from './components/Logo';
 import { WiredBadge } from './components/WiredBadge';
 import { Footer } from './components/Footer';
@@ -41,7 +41,7 @@ import { isInternalSourceTag } from '../../shared/referral-namespaces';
 import { readMcpAttributionFromSearch } from '../../shared/mcp-attribution';
 import { LegalFooterNav } from './components/LegalFooterNav';
 import { PressFooterNav } from './components/PressFooterNav';
-import { ABOUT_DOCS_PATH, SOMEONE_CEO_URL } from '../../shared/press';
+import { ABOUT_DOCS_PATH } from '../../shared/press';
 
 const API_BASE = 'https://api.worldmonitor.app/api';
 const TURNSTILE_SITE_KEY = '0x4AAAAAACnaYgHIyxclu8Tj';
@@ -534,7 +534,7 @@ const TwoPathSplit = () => (
         <h3 className="font-display text-2xl font-bold mb-2">{t('twoPath.proTitle')}</h3>
         <p className="text-sm text-wm-muted mb-6">{t('twoPath.proDesc')}</p>
         <ul className="space-y-3 mb-8">
-          {[t('twoPath.proF1'), t('twoPath.proF2'), t('twoPath.proF3'), t('twoPath.proF4'), t('twoPath.proF5'), t('twoPath.proF6'), t('twoPath.proF7'), t('twoPath.proF8'), t('twoPath.proF9')].map((f, i) => (
+          {[t('twoPath.proF1'), t('twoPath.proF2'), t('twoPath.proF3'), t('twoPath.proF4'), t('twoPath.proF5'), t('twoPath.proF6'), t('twoPath.proF7'), t('twoPath.proF8'), t('twoPath.proF9'), t('twoPath.proF10')].map((f, i) => (
             <li key={i} className="flex items-start gap-3 text-sm">
               <Check className="w-4 h-4 shrink-0 mt-0.5 text-wm-green" aria-hidden="true" />
               <span className="text-wm-muted">{f}</span>
@@ -776,13 +776,10 @@ const ProShowcase = () => (
             </div>
           </div>
           <div className="flex gap-4">
-            <Telescope className="w-6 h-6 text-wm-green shrink-0" aria-hidden="true" />
+            <Boxes className="w-6 h-6 text-wm-green shrink-0" aria-hidden="true" />
             <div>
-              <h4 className="font-bold mb-1">
-                {t('proShowcase.orbitalSurveillance')}
-                <SoonBadge />
-              </h4>
-              <p className="text-sm text-wm-muted">{t('proShowcase.orbitalSurveillanceDesc').replace(/^\(Soon\)\s*/, '')}</p>
+              <h4 className="font-bold mb-1">{t('proShowcase.supplyChainLab')}</h4>
+              <p className="text-sm text-wm-muted">{t('proShowcase.supplyChainLabDesc')}</p>
             </div>
           </div>
           <div className="flex gap-4">
@@ -800,6 +797,8 @@ const ProShowcase = () => (
             </div>
           </div>
         </div>
+
+        <p className="mt-6 text-xs text-wm-muted">{t('proShowcase.roadmapNote')}</p>
 
         <div className="mt-10 pt-8 border-t border-wm-border">
           <p className="font-mono text-xs text-wm-muted uppercase tracking-widest mb-4">{t('proShowcase.deliveryLabel')}</p>
@@ -1168,7 +1167,7 @@ const EnterprisePage = () => (
   <div className="min-h-screen selection:bg-wm-green/30 selection:text-wm-green">
     <nav data-wm-nav="primary" className="fixed top-0 left-0 right-0 z-50 glass-panel border-b-0 border-x-0 rounded-none" aria-label="Main navigation">
       <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-        <a href="#" onClick={(e) => { e.preventDefault(); window.location.hash = ''; }}><Logo /></a>
+        <Logo href="#" onClick={(e) => { e.preventDefault(); window.location.hash = ''; }} />
         <div className="hidden md:flex items-center gap-8 text-sm font-mono text-wm-muted">
           <a href="#" onClick={(e) => { e.preventDefault(); window.location.hash = ''; }} className="hover:text-wm-text transition-colors">{t('nav.pro')}</a>
           <a href="#enterprise" onClick={(e) => { e.preventDefault(); document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' }); }} className="hover:text-wm-text transition-colors">{t('nav.enterprise')}</a>
@@ -1357,16 +1356,7 @@ const EnterprisePage = () => (
       <div className="flex flex-col md:flex-row items-center justify-between max-w-7xl mx-auto text-xs text-wm-muted font-mono">
         <div className="flex items-center gap-3 mb-4 md:mb-0">
           <img src="/favico/favicon-32x32.png" alt="" width="28" height="28" loading="lazy" className="rounded-full" />
-          <div className="flex flex-col text-left">
-            <span className="font-display font-bold text-sm leading-none tracking-tight text-wm-text">WORLD MONITOR</span>
-            <a
-              href={SOMEONE_CEO_URL}
-              className="text-[9px] uppercase tracking-[2px] opacity-60 mt-0.5 hover:opacity-100 hover:text-wm-text transition-colors"
-              rel="noopener noreferrer"
-            >
-              by Someone.ceo
-            </a>
-          </div>
+          <span className="font-display font-bold text-sm leading-none tracking-tight text-wm-text">WORLD MONITOR</span>
         </div>
         <div className="flex items-center gap-6">
           <a href={DASHBOARD_PATH} className="hover:text-wm-text transition-colors">Dashboard</a>
@@ -1452,6 +1442,7 @@ export default function App() {
           <AudiencePersonas />
           <SocialProof />
           <LivePreview />
+          <WhatsNew />
           <PricingSection refCode={getRefCode()} attributionSource={getMcpAttributionSource()} />
           <PricingTable />
           <ApiSection />

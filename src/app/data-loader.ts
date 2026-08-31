@@ -475,6 +475,7 @@ export class DataLoaderManager implements AppModule {
   private _stockAnalysisGeneration = 0;
   private readonly marketLoadGuard = new LatestRequestGuard();
   private readonly physicalComparisonLoadGuard = new LatestRequestGuard();
+  private readonly mineralProductionLoadGuard = new LatestRequestGuard();
   private globalTenderGeneration = 0;
   private globalTenderFilters: GlobalTenderFilters = {};
   private activeGlobalTenderScopedGeneration: number | null = null;
@@ -2605,7 +2606,12 @@ export class DataLoaderManager implements AppModule {
         if (!energyLoaded) energyPanel?.updateTape([]);
       }
 
-      if (commoditiesPanel) {
+      // Physical premiums + divergence index are Pro (#6436/#6448). Skipping
+      // the fetch leaves _physicalPremiums empty, which is exactly what
+      // _buildTabBar reads to decide whether the Physical tab exists — so a
+      // free viewer sees the commodity tape unchanged rather than a tab that
+      // opens onto a 401.
+      if (commoditiesPanel && hasPremiumAccess()) {
         try {
           const physicalGeneration = this.physicalComparisonLoadGuard.begin();
           await loadPhysicalPremiumComparisonIfNeeded(
@@ -2613,6 +2619,7 @@ export class DataLoaderManager implements AppModule {
             () => (
               isCurrent()
               && this.physicalComparisonLoadGuard.isCurrent(physicalGeneration)
+              && hasPremiumAccess()
             ),
             fetchPhysicalPremiums,
             fetchPhysicalDivergence,
@@ -2681,6 +2688,11 @@ export class DataLoaderManager implements AppModule {
 
   async loadPhysicalPremiumComparison(signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
+    // Pro (#6436/#6448) — mirrors the guard on the bulk market pass above.
+    // This is the tab-activation entry point, so without it clicking Physical
+    // would re-fire the two gated RPCs for a free user on every open.
+    // Free→Pro / Pro→free transitions are handled in App.firePremiumLoaders().
+    if (!hasPremiumAccess()) return;
     const panel = this.ctx.panels['commodities'] as CommoditiesPanel | undefined;
     if (!panel) return;
     const generation = this.physicalComparisonLoadGuard.begin();
@@ -2691,11 +2703,18 @@ export class DataLoaderManager implements AppModule {
       () => (
         !signal?.aborted
         && this.physicalComparisonLoadGuard.isCurrent(generation)
+        && hasPremiumAccess()
       ),
       () => fetchPhysicalPremiums(signal),
       () => fetchPhysicalDivergence(signal),
     );
     signal?.throwIfAborted();
+  }
+
+  clearPhysicalPremiumComparison(): void {
+    this.physicalComparisonLoadGuard.begin();
+    const panel = this.ctx.panels['commodities'] as CommoditiesPanel | undefined;
+    panel?.clearPhysicalPremiums();
   }
 
   async loadDailyMarketBrief(force = false): Promise<void> {
@@ -4278,27 +4297,27 @@ export class DataLoaderManager implements AppModule {
 
     try {
       const {
-        fetchShippingRates, fetchChokepointStatus, fetchCriticalMinerals, fetchMineralProduction, fetchShippingStress,
+        fetchShippingRates, fetchChokepointStatus, fetchCriticalMinerals, fetchShippingStress,
       } = await import('@/services/supply-chain');
-      const [shipping, chokepoints, minerals, mineralProduction, stress] = await Promise.allSettled([
+      // The Pro leg has its own entitlement-transition loader.
+      const mineralProductionLoad = this.loadMineralProduction();
+      const [shipping, chokepoints, minerals, stress] = await Promise.allSettled([
         fetchShippingRates(),
         fetchChokepointStatus(),
         fetchCriticalMinerals(),
-        fetchMineralProduction(),
         fetchShippingStress(),
       ]);
+      await mineralProductionLoad.catch(() => undefined);
 
       const shippingData = shipping.status === 'fulfilled' ? shipping.value : null;
       const chokepointData = chokepoints.status === 'fulfilled' ? chokepoints.value : null;
       const mineralsData = minerals.status === 'fulfilled' ? minerals.value : null;
-      const mineralProductionData = mineralProduction.status === 'fulfilled' ? mineralProduction.value : null;
       const stressData = stress.status === 'fulfilled' ? stress.value : null;
 
       if (shippingData) scPanel.updateShippingRates(shippingData);
       if (chokepointData) scPanel.updateChokepointStatus(chokepointData);
       if (chokepointData) this.ctx.map?.setChokepointData(chokepointData);
       if (mineralsData) scPanel.updateCriticalMinerals(mineralsData);
-      if (mineralProductionData) scPanel.updateMineralProduction(mineralProductionData);
       if (stressData) scPanel.updateShippingStress(stressData);
 
       const totalItems = (shippingData?.indices.length || 0) + (chokepointData?.chokepoints.length || 0) + (mineralsData?.minerals.length || 0);
@@ -4317,6 +4336,23 @@ export class DataLoaderManager implements AppModule {
       this.ctx.statusPanel?.updateApi('SupplyChain', { status: 'error' });
       dataFreshness.recordError('supply_chain', String(e));
     }
+  }
+
+  async loadMineralProduction(): Promise<void> {
+    if (!hasPremiumAccess()) return;
+    const panel = this.ctx.panels['supply-chain'] as SupplyChainPanel | undefined;
+    if (!panel) return;
+    const generation = this.mineralProductionLoadGuard.begin();
+    const { fetchMineralProduction } = await import('@/services/supply-chain');
+    const data = await fetchMineralProduction();
+    if (!hasPremiumAccess() || !this.mineralProductionLoadGuard.isCurrent(generation)) return;
+    panel.updateMineralProduction(data);
+  }
+
+  clearMineralProduction(): void {
+    this.mineralProductionLoadGuard.begin();
+    const panel = this.ctx.panels['supply-chain'] as SupplyChainPanel | undefined;
+    panel?.clearMineralProduction();
   }
 
   async loadChinaCorridors(options?: { skipIfPopulated?: boolean }): Promise<void> {

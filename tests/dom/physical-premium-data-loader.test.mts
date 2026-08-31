@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   DataLoaderManager,
@@ -16,7 +16,23 @@ const marketMocks = vi.hoisted(() => ({
   fetchPhysicalDivergence: vi.fn(),
 }));
 
+const gateMocks = vi.hoisted(() => ({ isPro: true }));
+const emptyDivergence: GetPhysicalDivergenceIndexResponse = {
+  readings: [],
+  evaluatedAt: 0,
+  methodologyVersion: 'physical-divergence-test',
+};
+
 vi.mock('@/services/market', () => marketMocks);
+
+vi.mock('@/services/panel-gating', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/panel-gating')>(),
+  hasPremiumAccess: () => gateMocks.isPro,
+}));
+
+beforeEach(() => {
+  gateMocks.isPro = true;
+});
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -117,6 +133,33 @@ describe('physical premium data loading', () => {
     expect(panel.showPhysicalDivergenceUnavailable).not.toHaveBeenCalled();
   });
 
+  it('does not paint a completed premium response after entitlement drops', async () => {
+    const premiums = deferred<GetPhysicalPremiumsResponse>();
+    const divergence = deferred<GetPhysicalDivergenceIndexResponse>();
+    marketMocks.fetchPhysicalPremiums.mockReset().mockReturnValueOnce(premiums.promise);
+    marketMocks.fetchPhysicalDivergence.mockReset().mockReturnValueOnce(divergence.promise);
+    const panel = {
+      updatePhysicalPremiums: vi.fn(),
+      updatePhysicalDivergence: vi.fn(),
+      showPhysicalDivergenceUnavailable: vi.fn(),
+    };
+    const ctx = { panels: { commodities: panel } } as unknown as AppContext;
+    const loader = new DataLoaderManager(ctx, {
+      renderCriticalBanner: () => undefined,
+      refreshOpenCountryBrief: () => undefined,
+    });
+
+    const load = loader.loadPhysicalPremiumComparison();
+    await vi.waitFor(() => expect(marketMocks.fetchPhysicalPremiums).toHaveBeenCalledOnce());
+    gateMocks.isPro = false;
+    premiums.resolve({ premiums: [] });
+    divergence.resolve(emptyDivergence);
+    await load;
+
+    expect(panel.updatePhysicalPremiums).not.toHaveBeenCalled();
+    expect(panel.updatePhysicalDivergence).not.toHaveBeenCalled();
+  });
+
   it('does not let an older physical comparison overwrite a newer cohort', async () => {
     const olderPremiums = deferred<GetPhysicalPremiumsResponse>();
     const olderDivergence = deferred<GetPhysicalDivergenceIndexResponse>();
@@ -160,5 +203,63 @@ describe('physical premium data loading', () => {
 
     expect(panel.updatePhysicalPremiums).toHaveBeenCalledTimes(1);
     expect(panel.updatePhysicalDivergence).toHaveBeenCalledTimes(1);
+  });
+
+  it('fetches nothing for a free viewer, leaving the Physical tab unbuilt (#6436/#6448)', async () => {
+    gateMocks.isPro = false;
+    marketMocks.fetchPhysicalPremiums.mockReset().mockResolvedValue({ premiums: [] });
+    marketMocks.fetchPhysicalDivergence.mockReset().mockResolvedValue({ readings: [] });
+    const panel = {
+      updatePhysicalPremiums: vi.fn(),
+      updatePhysicalDivergence: vi.fn(),
+      showPhysicalDivergenceUnavailable: vi.fn(),
+    };
+    const ctx = { panels: { commodities: panel } } as unknown as AppContext;
+    const loader = new DataLoaderManager(ctx, {
+      renderCriticalBanner: () => undefined,
+      refreshOpenCountryBrief: () => undefined,
+    });
+
+    await loader.loadPhysicalPremiumComparison();
+
+    expect(marketMocks.fetchPhysicalPremiums).not.toHaveBeenCalled();
+    expect(marketMocks.fetchPhysicalDivergence).not.toHaveBeenCalled();
+    expect(panel.updatePhysicalPremiums).not.toHaveBeenCalled();
+    expect(panel.updatePhysicalDivergence).not.toHaveBeenCalled();
+    expect(panel.showPhysicalDivergenceUnavailable).not.toHaveBeenCalled();
+  });
+
+  it('drops an in-flight paid comparison after a downgrade advances the guard', async () => {
+    const inFlightPremiums = deferred<GetPhysicalPremiumsResponse>();
+    const inFlightDivergence = deferred<GetPhysicalDivergenceIndexResponse>();
+    marketMocks.fetchPhysicalPremiums.mockReset().mockImplementationOnce(() => inFlightPremiums.promise);
+    marketMocks.fetchPhysicalDivergence.mockReset().mockImplementationOnce(() => inFlightDivergence.promise);
+    const panel = {
+      updatePhysicalPremiums: vi.fn(),
+      updatePhysicalDivergence: vi.fn(),
+      showPhysicalDivergenceUnavailable: vi.fn(),
+      clearPhysicalPremiums: vi.fn(),
+    };
+    const ctx = { panels: { commodities: panel } } as unknown as AppContext;
+    const loader = new DataLoaderManager(ctx, {
+      renderCriticalBanner: () => undefined,
+      refreshOpenCountryBrief: () => undefined,
+    });
+
+    const inFlight = loader.loadPhysicalPremiumComparison();
+    await vi.waitFor(() => expect(marketMocks.fetchPhysicalPremiums).toHaveBeenCalledTimes(1));
+    loader.clearPhysicalPremiumComparison();
+    expect(panel.clearPhysicalPremiums).toHaveBeenCalledOnce();
+
+    inFlightPremiums.resolve({ premiums: [{ metal: 'gold', premiumPct: 2 }] } as GetPhysicalPremiumsResponse);
+    inFlightDivergence.resolve({
+      readings: [],
+      composite: undefined,
+    } as unknown as GetPhysicalDivergenceIndexResponse);
+    await inFlight;
+
+    expect(panel.updatePhysicalPremiums).not.toHaveBeenCalled();
+    expect(panel.updatePhysicalDivergence).not.toHaveBeenCalled();
+    expect(panel.showPhysicalDivergenceUnavailable).not.toHaveBeenCalled();
   });
 });
