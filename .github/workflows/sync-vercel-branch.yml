@@ -41,7 +41,6 @@ jobs:
 
           mkdir -p /tmp/fork-files/scripts /tmp/fork-files/deploy
           cp scripts/prepare-vercel.mjs /tmp/fork-files/scripts/ 2>/dev/null || true
-          cp scripts/source-attribution.mjs /tmp/fork-files/scripts/ 2>/dev/null || true
           cp scripts/build-crawlable-corpus.mjs /tmp/fork-files/scripts/ 2>/dev/null || true
           cp ARCHITECTURE.md /tmp/fork-files/ARCHITECTURE.md 2>/dev/null || true
           cp -r deploy/oci /tmp/fork-files/deploy/ 2>/dev/null || true
@@ -62,7 +61,6 @@ jobs:
             | while IFS= read -r file; do git rm "$file" 2>/dev/null || true; done
 
           cp /tmp/fork-files/scripts/prepare-vercel.mjs scripts/ 2>/dev/null || true
-          cp /tmp/fork-files/scripts/source-attribution.mjs scripts/ 2>/dev/null || true
           cp /tmp/fork-files/scripts/build-crawlable-corpus.mjs scripts/ 2>/dev/null || true
           cp /tmp/fork-files/ARCHITECTURE.md ARCHITECTURE.md 2>/dev/null || true
           cp -r /tmp/fork-files/deploy/oci deploy/ 2>/dev/null || true
