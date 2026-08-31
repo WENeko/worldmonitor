@@ -44,7 +44,6 @@ jobs:
           cp scripts/build-crawlable-corpus.mjs /tmp/fork-files/scripts/ 2>/dev/null || true
           cp scripts/fork-ensure-run-seeders-patches.mjs /tmp/fork-files/scripts/ 2>/dev/null || true
           cp ARCHITECTURE.md /tmp/fork-files/ARCHITECTURE.md 2>/dev/null || true
-          cp -r deploy/oci /tmp/fork-files/deploy/ 2>/dev/null || true
 
           git checkout -B main origin/main
           git diff --name-only origin/main upstream/main \
@@ -65,7 +64,6 @@ jobs:
           cp /tmp/fork-files/scripts/build-crawlable-corpus.mjs scripts/ 2>/dev/null || true
           cp /tmp/fork-files/scripts/fork-ensure-run-seeders-patches.mjs scripts/ 2>/dev/null || true
           cp /tmp/fork-files/ARCHITECTURE.md ARCHITECTURE.md 2>/dev/null || true
-          cp -r /tmp/fork-files/deploy/oci deploy/ 2>/dev/null || true
 
           # Validate canonical main before generating the adapted branch.
           npm ci --ignore-scripts
