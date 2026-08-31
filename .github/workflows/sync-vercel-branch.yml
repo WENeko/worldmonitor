@@ -42,6 +42,7 @@ jobs:
           mkdir -p /tmp/fork-files/scripts /tmp/fork-files/deploy
           cp scripts/prepare-vercel.mjs /tmp/fork-files/scripts/ 2>/dev/null || true
           cp scripts/build-crawlable-corpus.mjs /tmp/fork-files/scripts/ 2>/dev/null || true
+          cp scripts/fork-ensure-run-seeders-patches.mjs /tmp/fork-files/scripts/ 2>/dev/null || true
           cp ARCHITECTURE.md /tmp/fork-files/ARCHITECTURE.md 2>/dev/null || true
           cp -r deploy/oci /tmp/fork-files/deploy/ 2>/dev/null || true
 
@@ -62,6 +63,7 @@ jobs:
 
           cp /tmp/fork-files/scripts/prepare-vercel.mjs scripts/ 2>/dev/null || true
           cp /tmp/fork-files/scripts/build-crawlable-corpus.mjs scripts/ 2>/dev/null || true
+          cp /tmp/fork-files/scripts/fork-ensure-run-seeders-patches.mjs scripts/ 2>/dev/null || true
           cp /tmp/fork-files/ARCHITECTURE.md ARCHITECTURE.md 2>/dev/null || true
           cp -r /tmp/fork-files/deploy/oci deploy/ 2>/dev/null || true
 
@@ -76,6 +78,26 @@ jobs:
           git add -A
           git diff --cached --quiet && echo "No changes" || git commit -m 'chore: sync application code and generated manifests from upstream/main'
           git push --force-with-lease origin HEAD:main
+
+      # The sync above overwrites scripts/run-seeders.sh with the upstream
+      # version, which DROPS the fork patches (they are not upstream). Re-apply
+      # them immediately on the freshly-synced main, before any seed run. This
+      # closes the window between "sync wiped the patches" and "next seed run":
+      # previously the fix only happened inside seed-upstash.yml at run time,
+      # leaving run-seeders.sh unpatched for up to 12h after each sync. The
+      # re-applier is fork-owned and preserved above, so it survives the sync.
+      - name: Re-apply fork patches after upstream sync
+        run: |
+          git restore --source=HEAD -- scripts/run-seeders.sh 2>/dev/null || true
+          node scripts/fork-ensure-run-seeders-patches.mjs
+          if git diff --quiet -- scripts/run-seeders.sh; then
+            echo "Fork patches intact — no re-apply commit needed"
+          else
+            git add scripts/run-seeders.sh
+            git commit -m 'chore: re-apply fork seed patches after upstream sync (auto)'
+            git push origin HEAD:main
+            echo 'Re-applied fork patches and pushed to main'
+          fi
 
       - name: Generate Vercel deployment files
         run: |
