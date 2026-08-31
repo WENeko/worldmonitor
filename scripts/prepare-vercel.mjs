@@ -236,11 +236,23 @@ export default async function handler(req, res) {
 // The single-function router must not resolve its staged route modules at
 // runtime: Vercel ships the hidden staging dir (.vercel-api-routes/) loose to
 // the lambda and leaves the generated dynamic import() calls intact, and Node
-// ESM cannot import extensionless .js or .ts modules at runtime. Bundle both
-// function entries with esbuild at prepare time so each deployed function is
-// one self-contained file. This keeps the Hobby function count at exactly two
-// (api/index.ts node + api/mcp.ts edge) because the hidden staging dir is
-// never counted as functions, while runtime never touches it either.
+// ESM cannot import extensionless .js or .ts modules at runtime. Bundle the
+// node router (api/index.ts) with esbuild at prepare time so the deployed
+// router is one self-contained file.
+//
+// api/mcp.ts is deliberately NOT bundled. Vercel detects the Edge runtime from
+// the literal `export const config = { runtime: 'edge' }` in the entry source;
+// esbuild rewrites that pattern into `var config = ...; export { config }`,
+// which Vercel's detector misses. The route then deploys as a Node.js
+// Serverless Function, is invoked as (req, res) with an IncomingMessage (plain
+// `headers` object, no .get), and crashes on the first req.headers.get() — 500
+// on every MCP method including anonymous ping/initialize and GET discovery
+// (observed as the Hermès integration failure on the fork). Keeping the source
+// entry (imports already rewritten to ../.vercel-api-routes/mcp/ by
+// rewriteMcpEntryImports) lets Vercel's own edge bundler resolve the staged
+// tree at build time, exactly like upstream's api/mcp.ts -> ./mcp/* layout.
+// Function count stays at exactly two (api/index.ts node + api/mcp.ts edge)
+// because the hidden staging dir is never counted as functions.
 function bundleGeneratedFunctions() {
   return (async () => {
     let build;
@@ -261,22 +273,11 @@ function bundleGeneratedFunctions() {
       allowOverwrite: true,
       logLevel: 'warning',
     });
-    await build({
-      entryPoints: [join(apiDir, 'mcp.ts')],
-      bundle: true,
-      platform: 'browser',
-      format: 'esm',
-      target: ['es2022'],
-      outfile: join(apiDir, 'mcp.ts'),
-      allowOverwrite: true,
-      logLevel: 'warning',
-    });
     // esbuild preserves trailing whitespace and space-before-tab from embedded
     // sources (comments, Lua/SQL templates). The workflow's `git diff --check`
     // validation rejects both, so normalize the bundled output.
     cleanBundleWhitespace(generatedIndex);
-    cleanBundleWhitespace(join(apiDir, 'mcp.ts'));
-    console.log('[prepare-vercel] bundled api/index.ts (node) and api/mcp.ts (edge) into self-contained functions');
+    console.log('[prepare-vercel] bundled api/index.ts (node) into a self-contained function; api/mcp.ts stays a source edge entry');
   })();
 }
 
