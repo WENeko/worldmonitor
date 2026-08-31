@@ -28,9 +28,18 @@ on:
     # (sanctions, conflict, market quotes, weather, ...) stay populated. The
     # fork repo is public, so GitHub Actions minutes are free; the binding
     # constraints are the Upstash free-tier command meter (500k/month) and
-    # upstream API rate limits. Every 6h keeps most TTLs alive; drop to
-    # '0 */12 * * *' or '0 3 * * *' if the Upstash meter climbs.
-    - cron: '0 */6 * * *'
+    # upstream API rate limits.
+    #
+    # FORK CADENCE: 12h, not 6h. Moved from */6 to */12 to stay under the NASA
+    # FIRMS free-tier quota (2000 req/month). seed-fire-detections issues 27
+    # calls/run (3 satellites x 9 regions, then 2-attempt retries on failures
+    # only); at 6h that is ~2160+/mo when any retries fire — over quota. At 12h
+    # it is ~1080/mo with clear headroom for retries, and stays under even if
+    # upstream's own duplicate run lands. Fire/market freshness is the tradeoff
+    # (fire data lags up to 12h), but a globally-covered panel beats a faster
+    # Canada-only one. This file is fork-owned (never overwritten by upstream
+    # sync) so the cadence is persistent.
+    - cron: '0 */12 * * *'
   workflow_dispatch:
     inputs:
       branch:
