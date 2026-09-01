@@ -10,6 +10,80 @@ World Monitor is a real-time global intelligence dashboard built as a TypeScript
 
 ---
 
+## 0. Fork / Self-Host Stack (WENeko/worldmonitor)
+
+> **Scope**: sections 1–12 describe the upstream World Monitor product architecture. This section documents the fork's full operational stack: the Vercel production branch, the hourly upstream sync, the self-hosted seeder container on OCI, the GitHub Actions seed fallback, and the agent (Hermès) MCP client that consumes it.
+
+```
+Upstream koala73/worldmonitor main
+        │  hourly sync — .github/workflows/sync-vercel-branch.yml
+        ▼
+Fork main  (fork-owned files survive the sync and are restored verbatim:
+            scripts/prepare-vercel.mjs, scripts/build-crawlable-corpus.mjs,
+            scripts/fork-ensure-run-seeders-patches.mjs, ARCHITECTURE.md)
+        │  prepare-vercel.mjs adapts the tree: API route staging into
+        │  .vercel-api-routes, package.json postinstall/build overrides,
+        │  and fork-local source patches (see below)
+        ▼
+Fork branch `vercel`  (force-pushed hourly; Vercel production branch)
+        │  vercel build  →  worldmonitor-weneko.vercel.app
+        ▼
+Vercel prod  (serves /mcp and /api/* from the fork's Upstash Redis)
+        ▲                                        ▲
+        │  MCP: X-WorldMonitor-Key header          │  REST: X-WorldMonitor-Key header
+Hermès agent (config.yaml MCP server)     seeds-lite (Docker container, OCI VM)
+                                                └── 6 seeders → Upstash Redis
+GitHub Actions seed-upstash.yml (12 h) ────────────────┘   (same Redis, LLM briefs)
+```
+
+### Fork components
+
+| Component | Where | Role |
+|---|---|---|
+| `sync-vercel-branch.yml` | GitHub Actions, hourly | Regenerates fork `main` from upstream, re-applies fork patches, adapts the tree via `prepare-vercel.mjs`, force-pushes the `vercel` production branch |
+| `prepare-vercel.mjs` | fork-owned script (survives sync) | The adaptation seam: route staging, build-script overrides, and the home for fork-local source patches that must survive upstream syncs |
+| `seed-upstash.yml` | GitHub Actions, 12-hourly + dispatch | Canonical repo seeders against the fork's Upstash Redis; writes LLM-enriched briefs (its OpenRouter key works) |
+| `seeds-lite` | Docker container on the OCI VM (`deploy/oci/`) | Six seeders feeding the fork's Redis on short cadences (see table below); build ~15 s, zero cloud cost |
+| Hermès MCP client | `/opt/data/config.yaml` on the Hermès host | `world-monitor` server → fork `/mcp`, header auth `X-WorldMonitor-Key: ${MCP_WORLD_MONITOR_API_KEY}`, `connect_timeout: 60000`, all 74 tools enabled |
+
+### seeds-lite seeders
+
+| Seeder | Cadence | Sources | Data key written |
+|---|---|---|---|
+| `conflict` | 15 min | HAPI HDX (ACLED-derived), GDELT | `intelligence:conflict:v1` |
+| `gdelt-bulk` | 15 min | GDELT bulk materializer | `intelligence:gdelt-intel:v1` |
+| `insights` | 15 min | Fork RPC digest warm (`list-feed-digest`) + optional LLM briefs | `news:insights:v1` |
+| `military-flights` | 10 min | adsb.lol (keyless), Wingbits (optional key) | `military:flights:v1` |
+| `social-velocity` | 3 h | ScrapeCreators → Reddit OAuth → public (relay parity) | `intelligence:social:reddit:v1` |
+| `ucdp` | 30 min | UCDP GED API (requires `UCDP_ACCESS_TOKEN`) | `ucdp:events:*` |
+
+### Environment wiring (fork)
+
+| Variable | Where | Purpose |
+|---|---|---|
+| `WORLDMONITOR_VALID_KEYS` | Vercel project | Key allowlist for `/mcp` and REST on the fork; the relay key also unlocks the insights digest warm |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | `deploy/oci/.env` | Redis target of seeds-lite (same instance the fork's edge functions read) |
+| `API_BASE_URL` / `WORLDMONITOR_RELAY_KEY` | `deploy/oci/.env` | Insights warm targets the fork's own Vercel RPC, not the operator |
+| `UCDP_ACCESS_TOKEN` | `deploy/oci/.env` | UCDP GED API token (free registration at ucdp.uu.se) |
+| `SCRAPECREATORS_API_KEY` | `deploy/oci/.env` | social-velocity vendor path (preferred; anonymous Reddit 403s datacenter IPs) |
+| `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` | `deploy/oci/.env` | social-velocity OAuth fallback (self-serve Reddit app creation is closed under the Responsible Builder Policy) |
+| `OPENROUTER_API_KEY` | `deploy/oci/.env` (optional) | LLM brief enrichment; absent → degraded headlines mode, data still written |
+
+### MCP tools consumed by Hermès
+
+| Tool | Redis keys backing it | Status on the fork |
+|---|---|---|
+| `get_world_brief` | `news:insights:v1` | OK (GHA briefs 12 h + digest warm) |
+| `get_news_intelligence` | `news:insights:v1` | OK |
+| `get_hotspot_escalation` | hotspots + `military:flights:v1`; `risk:scores:sebuf:v8` not portable (Vercel edge compute) | Partial — hotspots + flights OK, risk scores absent |
+| `get_social_velocity` | `intelligence:social:reddit:v1` | OK (ScrapeCreators) |
+
+### Fork-local source patches (must survive upstream syncs)
+
+- `api/mcp/dispatch.ts` — attach `structuredContent` (parsed JSON text) to `tools/call` results. Registry tools advertise an `outputSchema`; strict agents (Hermès) raise `Tool … did not return structured content` when it is absent. Held in `prepare-vercel.mjs`'s patch seam or re-applied after each sync (currently only on `oci-trading-stack`).
+
+---
+
 ## 1. System Overview
 
 ```
