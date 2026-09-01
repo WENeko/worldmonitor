@@ -139,6 +139,9 @@ services:
       UPSTASH_REDIS_REST_URL: ${UPSTASH_REDIS_REST_URL:-}
       UPSTASH_REDIS_REST_TOKEN: ${UPSTASH_REDIS_REST_TOKEN:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # UCDP now gates the GED API behind a free access token
+      # (x-ucdp-access-token); without it the ucdp seeder gets 401.
+      UCDP_ACCESS_TOKEN: ${UCDP_ACCESS_TOKEN:-}
       TZ: ${TZ:-UTC}
 
     # The entrypoint fails loudly at startup if the Upstash vars are missing,
