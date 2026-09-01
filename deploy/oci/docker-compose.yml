@@ -142,6 +142,13 @@ services:
       # UCDP now gates the GED API behind a free access token
       # (x-ucdp-access-token); without it the ucdp seeder gets 401.
       UCDP_ACCESS_TOKEN: ${UCDP_ACCESS_TOKEN:-}
+      # seed-insights warms its news digest via the fork's own Vercel RPC
+      # (list-feed-digest). Without these, the default hits the operator's
+      # api.worldmonitor.app and is rejected (Origin-only) -> empty digest
+      # -> insights runs skip their write. Mirror the GitHub secrets used by
+      # .github/workflows/seed-upstash.yml.
+      API_BASE_URL: ${API_BASE_URL:-}
+      WORLDMONITOR_RELAY_KEY: ${WORLDMONITOR_RELAY_KEY:-}
       TZ: ${TZ:-UTC}
 
     # The entrypoint fails loudly at startup if the Upstash vars are missing,
