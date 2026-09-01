@@ -22,14 +22,21 @@ RUN apk add --no-cache tzdata
 
 WORKDIR /app
 
-# Seeder sources and the package manifests (for the single runtime dep).
+# Seeder sources.
 COPY scripts/ ./scripts/
-COPY package.json package-lock.json ./
 
-# Install precisely the runtime dep the seeders import; --no-save keeps the
-# copied package.json untouched in the image.
-RUN npm install --omit=dev --no-audit --no-fund --no-save papaparse@^5.5.3 \
-    && rm -rf /root/.npm /tmp/*
+# papaparse (scripts/_conflict-hapi.mjs) is the ONLY external dep the
+# scheduled seeders import (verified by walking the import closure of the
+# four scheduled scripts), and it is pure JS. Install it in a scratch dir:
+# a dir that already holds a package.json makes `npm install <pkg>` ALSO
+# install the whole prod tree (hundreds of MB, slow chown, pointless).
+# Then copy just node_modules over.
+RUN mkdir -p /tmp/seed-deps \
+    && cd /tmp/seed-deps \
+    && npm install --no-audit --no-fund --no-save --ignore-scripts papaparse@^5.5.3 \
+    && mkdir -p /app/node_modules \
+    && cp -r /tmp/seed-deps/node_modules/. /app/node_modules/ \
+    && rm -rf /tmp/seed-deps /root/.npm
 
 COPY deploy/oci/seeds-lite/run-seeds.sh /usr/local/bin/run-seeds.sh
 RUN chmod +x /usr/local/bin/run-seeds.sh \
