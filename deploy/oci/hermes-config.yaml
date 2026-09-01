@@ -1,0 +1,12 @@
+# Hermes additions for the OCI trading stack.
+# Merge this MCP block into the existing ~/.hermes/config.yaml; do not
+# overwrite the existing profile, memory, or model settings blindly.
+
+mcp_servers:
+  vibe_trading:
+    url: "http://127.0.0.1:8900/mcp"
+
+# Hermes keeps its own provider fallback chain. Configure it using the Hermes
+# CLI/docs for the installed version; LiteLLM is the fallback gateway used by
+# Vibe-Trading and is not a replacement for Hermes' own model configuration.
+# Keep at least one independent Hermes provider if Hermes is the orchestrator.
