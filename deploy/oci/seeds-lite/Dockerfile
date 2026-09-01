@@ -16,9 +16,9 @@ ENV TZ=UTC \
     NODE_ENV=production
 
 # tzdata keeps date -u timestamps clean even when TZ changes; busybox provides
-# timeout(1), date(1), tail(1).
-RUN apk add --no-cache tzdata \
-    && adduser -D -u 1000 -h /app seeder
+# timeout(1), date(1), tail(1). The base image already ships a non-root
+# `node` user (uid 1000) — reuse it rather than creating a duplicate.
+RUN apk add --no-cache tzdata
 
 WORKDIR /app
 
@@ -34,11 +34,11 @@ RUN npm install --omit=dev --no-audit --no-fund --no-save papaparse@^5.5.3 \
 COPY deploy/oci/seeds-lite/run-seeds.sh /usr/local/bin/run-seeds.sh
 RUN chmod +x /usr/local/bin/run-seeds.sh \
     && mkdir -p /var/lib/seeds-lite \
-    && chown -R seeder:seeder /var/lib/seeds-lite
+    && chown -R node:node /app /var/lib/seeds-lite
 
 # Per-seed state (last-run timestamps, capped output logs). A fresh named
 # volume inherits this ownership from the image directory.
 VOLUME ["/var/lib/seeds-lite"]
 
-USER seeder
+USER node
 ENTRYPOINT ["/usr/local/bin/run-seeds.sh"]
