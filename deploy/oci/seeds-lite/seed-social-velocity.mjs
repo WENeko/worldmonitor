@@ -19,9 +19,14 @@
 // collide with upstream syncs or add npm dependencies to the image.
 //
 // Required env: UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
-// Optional env: SCRAPECREATORS_API_KEY — the relay's preferred Reddit path
-// (ais-relay.cjs). Reddit 403s datacenter IPs on the anonymous public API, so
-// without a vendor key this seeder only works from a residential/trusted IP.
+// Optional env (fetch precedence, relay parity — ais-relay.cjs):
+//   1. SCRAPECREATORS_API_KEY — the relay's preferred Reddit path (vendor).
+//   2. REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET — Reddit OAuth (userless
+//      client_credentials token, oauth.reddit.com). Free, works from any IP.
+//   3. anonymous public .json — 403 on most datacenter IPs (incl. OCI), so it
+//      only works from a residential/trusted IP.
+// REDDIT_USER_AGENT — optional; Reddit requires a unique, descriptive UA
+// "<platform>:<appid>:<version> (by /u/<username>)" for attributable requests.
 
 const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL;
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -41,6 +46,87 @@ const TOP = 30;
 const SCRAPECREATORS_API_KEY = process.env.SCRAPECREATORS_API_KEY || '';
 const SCRAPECREATORS_ENABLED = !!SCRAPECREATORS_API_KEY;
 const SC_MAX_PAGES = 4; // bounds credit spend (relay parity)
+
+// Reddit OAuth (userless app token) — relay parity (ais-relay.cjs lines 7120-7210).
+// Token is cached, single-flight, refreshed 60s early, with a 5-min cooldown
+// after a failure so a broken credential doesn't hammer the auth endpoint every
+// 3h cycle.
+const REDDIT_CLIENT_ID = process.env.REDDIT_CLIENT_ID || '';
+const REDDIT_CLIENT_SECRET = process.env.REDDIT_CLIENT_SECRET || '';
+const REDDIT_OAUTH_ENABLED = !!(REDDIT_CLIENT_ID && REDDIT_CLIENT_SECRET);
+const REDDIT_USER_AGENT =
+  process.env.REDDIT_USER_AGENT || 'server:app.worldmonitor:1.0 (by /u/worldmonitor)';
+const REDDIT_AUTH_COOLDOWN_MS = 5 * 60 * 1000;
+
+let _redditToken = null;
+let _redditTokenExpiry = 0;
+let _redditTokenPromise = null;
+let _redditAuthCooldownUntil = 0;
+
+async function fetchRedditToken() {
+  const basic = Buffer.from(`${REDDIT_CLIENT_ID}:${REDDIT_CLIENT_SECRET}`).toString('base64');
+  const resp = await fetch('https://www.reddit.com/api/v1/access_token', {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${basic}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': REDDIT_USER_AGENT,
+    },
+    body: 'grant_type=client_credentials',
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!resp.ok) throw new Error(`token HTTP ${resp.status}`);
+  const json = await resp.json();
+  if (!json.access_token) throw new Error(`no access_token (${json.error || 'unknown'})`);
+  return { token: json.access_token, expiresIn: Number(json.expires_in) || 3600 };
+}
+
+// Single-flight cached bearer token, or null when auth is unavailable.
+async function getRedditToken() {
+  const now = Date.now();
+  if (_redditToken && now < _redditTokenExpiry) return _redditToken;
+  if (now < _redditAuthCooldownUntil) return null;
+  if (_redditTokenPromise) return _redditTokenPromise;
+  _redditTokenPromise = (async () => {
+    try {
+      const { token, expiresIn } = await fetchRedditToken();
+      _redditToken = token;
+      _redditTokenExpiry = Date.now() + Math.max(60, expiresIn - 60) * 1000; // refresh 60s early
+      console.log(`[Reddit] OAuth token acquired, expires in ${expiresIn}s`);
+      return token;
+    } catch (e) {
+      _redditToken = null;
+      _redditTokenExpiry = 0;
+      _redditAuthCooldownUntil = Date.now() + REDDIT_AUTH_COOLDOWN_MS;
+      console.warn(`[Reddit] OAuth token fetch failed: ${e?.message || e} — cooldown ${REDDIT_AUTH_COOLDOWN_MS / 1000}s`);
+      return null;
+    } finally {
+      _redditTokenPromise = null;
+    }
+  })();
+  return _redditTokenPromise;
+}
+
+// OAuth path — oauth.reddit.com with a userless bearer token (relay parity).
+async function fetchRedditOAuth(sub) {
+  const token = await getRedditToken();
+  if (!token) return null;
+  const url = `https://oauth.reddit.com/r/${sub}/hot?limit=${LIMIT}&raw_json=1`;
+  const resp = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}`, 'User-Agent': REDDIT_USER_AGENT, Accept: 'application/json' },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!resp.ok) {
+    if (resp.status === 401) {
+      // Token expired/revoked — force refresh next cycle.
+      _redditToken = null;
+      _redditTokenExpiry = 0;
+    }
+    throw new Error(`r/${sub} oauth HTTP ${resp.status}`);
+  }
+  const json = await resp.json();
+  return (json?.data?.children || []).map((c) => normalizePost(c?.data)).filter(Boolean);
+}
 
 const UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) ' +
@@ -175,7 +261,22 @@ async function main() {
         failures.push(`r/${sub}: scrapecreators ${err.message}`);
       }
     }
-    // 2. Public .json (www → old.reddit) fallback.
+    // 2. Reddit OAuth (userless token, works from datacenter IPs) when creds
+    //    are configured. Relay parity: ScrapeCreators → OAuth → public.
+    if (posts.length === 0 && REDDIT_OAUTH_ENABLED) {
+      try {
+        const oauth = await fetchRedditOAuth(sub);
+        if (oauth && oauth.length > 0) {
+          posts = oauth;
+          source = 'oauth';
+        } else if (oauth) {
+          failures.push(`r/${sub}: oauth empty listing`);
+        }
+      } catch (err) {
+        failures.push(`r/${sub}: oauth ${err.message}`);
+      }
+    }
+    // 3. Public .json (www → old.reddit) fallback.
     for (let attempt = 0; posts.length === 0 && attempt < 2; attempt++) {
       try {
         posts = await fetchSubredditHot(sub, attempt);

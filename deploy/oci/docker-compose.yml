@@ -150,10 +150,14 @@ services:
       API_BASE_URL: ${API_BASE_URL:-}
       WORLDMONITOR_RELAY_KEY: ${WORLDMONITOR_RELAY_KEY:-}
       # social-velocity: Reddit 403s the OCI datacenter IP on the anonymous
-      # .json API (seen on first deploy). The relay ops uses ScrapeCreators as
-      # its preferred Reddit path — mirror it so the fork gets the same data.
-      # Optional: without it the seeder logs the 403 and retries next tick.
+      # .json API (seen on first deploy). Fetch precedence mirrors the relay:
+      # ScrapeCreators (vendor key) -> Reddit OAuth (free, works from any IP)
+      # -> public .json. Configure either SCRAPECREATORS_API_KEY or the
+      # REDDIT_CLIENT_ID/REDDIT_CLIENT_SECRET pair; both are optional.
       SCRAPECREATORS_API_KEY: ${SCRAPECREATORS_API_KEY:-}
+      REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID:-}
+      REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET:-}
+      REDDIT_USER_AGENT: ${REDDIT_USER_AGENT:-}
       TZ: ${TZ:-UTC}
 
     # The entrypoint fails loudly at startup if the Upstash vars are missing,

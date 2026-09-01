@@ -28,10 +28,13 @@ scheduled; `seed-conflict-intel.mjs` itself skips ACLED when
 | `social-velocity` | 3 h | `seed-social-velocity.mjs` (fork-owned, in this dir) | `socialVelocity` → `get_social_velocity` — mini port of the relay's Reddit loop (worldnews + geopolitics, velocity-scored) |
 
 `social-velocity` fetch precedence (mirrors the relay): ScrapeCreators when
-`SCRAPECREATORS_API_KEY` is set, else the anonymous public Reddit `.json` API.
+`SCRAPECREATORS_API_KEY` is set, then Reddit OAuth when `REDDIT_CLIENT_ID` +
+`REDDIT_CLIENT_SECRET` are set, else the anonymous public Reddit `.json` API.
 **Reddit 403s the OCI datacenter IP on the public path** (seen on first
-deploy) — the fork-owned seeder therefore needs a ScrapeCreators key (free
-tier) to run from the VM; without it, it logs the 403 and retries each tick.
+deploy) — from the VM you need either a ScrapeCreators key (free tier) or a
+free Reddit OAuth "script" app (`reddit.com/prefs/apps`, redirect uri
+`http://localhost:8080`; userless token, works from any IP). Without either,
+the seeder logs the 403 and retries each tick.
 
 Not covered (relay/credential-gated, documented):
 - `risk:scores:sebuf:v8` / `intelligence:military-cii:v1` → written by
