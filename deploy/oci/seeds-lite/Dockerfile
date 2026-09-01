@@ -9,6 +9,11 @@
 # (scripts/_conflict-hapi.mjs). It is pure JS, so a full `npm ci` (the whole
 # frontend prod tree, possible native builds on alpine) is deliberately not
 # done here.
+#
+# seed-social-velocity.mjs is a fork-owned mini seeder that lives under
+# deploy/oci (outside the upstream-synced tree); it is copied into /app/scripts
+# so run-seeds.sh can invoke it with the same relative path as the others. It
+# is self-contained (Node builtins only, no npm deps).
 
 FROM node:24-alpine
 
@@ -24,6 +29,7 @@ WORKDIR /app
 
 # Seeder sources.
 COPY scripts/ ./scripts/
+COPY deploy/oci/seeds-lite/seed-social-velocity.mjs ./scripts/
 
 # papaparse (scripts/_conflict-hapi.mjs) is the ONLY external dep the
 # scheduled seeders import (verified by walking the import closure of the

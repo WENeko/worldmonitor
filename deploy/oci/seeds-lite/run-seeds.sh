@@ -37,14 +37,19 @@ command -v node >/dev/null 2>&1 || fail "node not found in image"
 command -v timeout >/dev/null 2>&1 || fail "timeout(1) not found in image"
 
 # name | cadence_seconds | seed script | per-run cap seconds
-# gdelt-bulk materializes GDELT GKG exports (heavier and pinned to a slower
-# cadence); the others match roughly the seed-meta staleness windows in
-# api/health.js while leaving generous headroom.
+# Cadences track the seed-meta staleness windows in api/health.js while leaving
+# generous headroom:
+#   - military-flights: LIVE_TTL=600s + health maxStaleMin=30 → 10min cadence
+#   - gdelt-bulk: heavier GKG materialization, pinned to a slower cadence
+#   - social-velocity: relay parity (ais-relay.cjs runs every 3h; faster
+#     polling trips Reddit datacenter-IP rate limits)
 PLAN="
-insights    | 900  | seed-insights.mjs               | 1200
-ucdp        | 900  | seed-ucdp-events.mjs            | 1200
-conflict    | 900  | seed-conflict-intel.mjs         | 1500
-gdelt-bulk  | 1800 | seed-gdelt-bulk-materializer.mjs | 2400
+insights         | 900  | seed-insights.mjs                | 1200
+ucdp             | 900  | seed-ucdp-events.mjs             | 1200
+conflict         | 900  | seed-conflict-intel.mjs          | 1500
+gdelt-bulk       | 1800 | seed-gdelt-bulk-materializer.mjs | 2400
+military-flights | 600  | seed-military-flights.mjs        | 600
+social-velocity  | 10800| seed-social-velocity.mjs         | 300
 "
 
 should_run() {

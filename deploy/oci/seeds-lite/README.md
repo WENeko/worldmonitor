@@ -24,13 +24,15 @@ scheduled; `seed-conflict-intel.mjs` itself skips ACLED when
 | `ucdp` | 15 min | `seed-ucdp-events.mjs` | `ucdpEvents` (+ bootstrap) |
 | `conflict` | 15 min | `seed-conflict-intel.mjs` | `acledIntel` via HAPI HDX (ACLED-derived, open), GDELT conflict feed, humanitarian keys |
 | `gdelt-bulk` | 30 min | `seed-gdelt-bulk-materializer.mjs` | `gdeltIntel` (the production producer since #5843) |
+| `military-flights` | 10 min | `seed-military-flights.mjs` | `militaryFlights` (live) — keyless via adsb.lol + Wingbits; feeds `get_hotspot_escalation` flight inputs |
+| `social-velocity` | 3 h | `seed-social-velocity.mjs` (fork-owned, in this dir) | `socialVelocity` → `get_social_velocity` — mini port of the relay's Reddit loop (worldnews + geopolitics, velocity-scored) |
 
-Not covered in v1 (relay/credential-gated, documented):
-- `get_social_velocity` → `intelligence:social:reddit:v1`, written only by the
-  `ais-relay.cjs` ingestion daemon — mini-development, out of scope.
-- `risk:scores:sebuf:v8` / `military:flights:v1` → written by
-  `seed-military-cii.mjs`, which requires the relay's `WS_RELAY_URL` feed —
-  `get_hotspot_escalation` keeps serving with `unavailable_inputs` for those.
+Not covered (relay/credential-gated, documented):
+- `risk:scores:sebuf:v8` / `intelligence:military-cii:v1` → written by
+  `seed-military-cii.mjs`, which requires the relay's `WS_RELAY_URL` AIS vessel
+  feed, and the risk scores themselves are computed live by the Vercel edge
+  scorer — not seedable from a VM. `get_hotspot_escalation` keeps serving with
+  `risk:scores:sebuf:v8` in `unavailable_inputs` (flight inputs now covered).
 
 ## Operation
 
@@ -41,7 +43,7 @@ Not covered in v1 (relay/credential-gated, documented):
 # 2. Build and start just this service:
 docker compose up -d --build seeds-lite
 
-# 3. Watch the first warm-up cycle (all four seeders run once on boot):
+# 3. Watch the first warm-up cycle (all six seeders run once on boot):
 docker logs -f seeds-lite
 
 # 4. Verify freshness on the fork (the health problems list should lose
