@@ -19,6 +19,9 @@
 // collide with upstream syncs or add npm dependencies to the image.
 //
 // Required env: UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
+// Optional env: SCRAPECREATORS_API_KEY — the relay's preferred Reddit path
+// (ais-relay.cjs). Reddit 403s datacenter IPs on the anonymous public API, so
+// without a vendor key this seeder only works from a residential/trusted IP.
 
 const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL;
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -31,6 +34,13 @@ const META_TTL = 604800; // 7d
 const SUBREDDITS = ['worldnews', 'geopolitics'];
 const LIMIT = 25;
 const TOP = 30;
+
+// Reddit fetch precedence mirrors ais-relay.cjs: ScrapeCreators (vendor) when
+// SCRAPECREATORS_API_KEY is set, else the anonymous public .json API (403 on
+// most datacenter IPs, incl. OCI — that is the failure seen on first deploy).
+const SCRAPECREATORS_API_KEY = process.env.SCRAPECREATORS_API_KEY || '';
+const SCRAPECREATORS_ENABLED = !!SCRAPECREATORS_API_KEY;
+const SC_MAX_PAGES = 4; // bounds credit spend (relay parity)
 
 const UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) ' +
@@ -64,6 +74,61 @@ async function redisSet(key, value, ttlSeconds) {
   return redisCommand(['SET', key, JSON.stringify(value), 'EX', String(ttlSeconds)]);
 }
 
+// ScrapeCreators returns native Reddit field names but may carry created_utc
+// as ms/ISO and HTML-escaped titles — normalize exactly like the relay's
+// _redditEpochSeconds / _decodeRedditEntities.
+function redditEpochSeconds(v) {
+  if (typeof v === 'number') return v > 1e12 ? Math.floor(v / 1000) : v;
+  if (typeof v === 'string') {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n > 1e12 ? Math.floor(n / 1000) : n;
+    const ms = Date.parse(v);
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : undefined;
+  }
+  return v;
+}
+
+function decodeRedditEntities(s) {
+  if (typeof s !== 'string') return s;
+  return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+}
+
+function normalizePost(p) {
+  if (!p || typeof p !== 'object') return p;
+  return { ...p, created_utc: redditEpochSeconds(p.created_utc), title: decodeRedditEntities(p.title) };
+}
+
+// Vendor path. Returns a normalized post array, or null on a page-1 failure so
+// the caller falls through to the public API (relay's ordered-fallback contract).
+async function fetchScrapeCreators(sub) {
+  const collected = [];
+  let after = '';
+  let anyOk = false;
+  try {
+    for (let page = 0; page < SC_MAX_PAGES && collected.length < LIMIT; page++) {
+      const url = `https://api.scrapecreators.com/v1/reddit/subreddit?subreddit=${encodeURIComponent(sub)}&sort=hot${after ? `&after=${encodeURIComponent(after)}` : ''}`;
+      const resp = await fetch(url, {
+        headers: { 'x-api-key': SCRAPECREATORS_API_KEY, Accept: 'application/json' },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!resp.ok) {
+        if (collected.length > 0) break; // keep what we already paginated
+        return null; // page-1 failure → fall through
+      }
+      const data = await resp.json();
+      anyOk = true;
+      const pagePosts = (Array.isArray(data?.posts) ? data.posts : []).filter(Boolean);
+      collected.push(...pagePosts);
+      after = typeof data?.after === 'string' ? data.after : '';
+      if (!after || pagePosts.length === 0) break;
+    }
+  } catch {
+    if (!anyOk) return null; // network/timeout on page 1 → fall through
+  }
+  return collected.slice(0, LIMIT).map(normalizePost);
+}
+
 async function fetchSubredditHot(sub, attempt) {
   const host = attempt === 0 ? 'www.reddit.com' : 'old.reddit.com';
   const url = `https://${host}/r/${sub}/hot.json?limit=${LIMIT}`;
@@ -73,7 +138,7 @@ async function fetchSubredditHot(sub, attempt) {
   });
   if (!resp.ok) throw new Error(`r/${sub} HTTP ${resp.status} (${host})`);
   const json = await resp.json();
-  return (json?.data?.children || []).map((c) => c?.data).filter(Boolean);
+  return (json?.data?.children || []).map((c) => normalizePost(c?.data)).filter(Boolean);
 }
 
 async function writeFailureMeta(reason) {
@@ -95,15 +160,34 @@ async function main() {
   for (const sub of SUBREDDITS) {
     await new Promise((r) => setTimeout(r, 500));
     let posts = [];
-    for (let attempt = 0; attempt < 2 && posts.length === 0; attempt++) {
+    let source = 'none';
+    // 1. ScrapeCreators (vendor) when configured.
+    if (SCRAPECREATORS_ENABLED) {
+      try {
+        const sc = await fetchScrapeCreators(sub);
+        if (sc && sc.length > 0) {
+          posts = sc;
+          source = 'scrapecreators';
+        } else if (sc) {
+          failures.push(`r/${sub}: scrapecreators empty listing`);
+        }
+      } catch (err) {
+        failures.push(`r/${sub}: scrapecreators ${err.message}`);
+      }
+    }
+    // 2. Public .json (www → old.reddit) fallback.
+    for (let attempt = 0; posts.length === 0 && attempt < 2; attempt++) {
       try {
         posts = await fetchSubredditHot(sub, attempt);
+        source = attempt === 0 ? 'www.reddit.com' : 'old.reddit.com';
       } catch (err) {
         if (attempt === 1) failures.push(`r/${sub}: ${err.message}`);
       }
     }
     if (posts.length === 0 && failures.length === 0) {
       failures.push(`r/${sub}: empty listing`);
+    } else if (posts.length > 0) {
+      console.log(`  [social-velocity] r/${sub}: ${posts.length} posts via ${source}`);
     }
     for (const p of posts) {
       // Deduplicate cross-subreddit reposts of the same article URL.

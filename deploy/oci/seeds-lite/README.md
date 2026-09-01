@@ -27,6 +27,12 @@ scheduled; `seed-conflict-intel.mjs` itself skips ACLED when
 | `military-flights` | 10 min | `seed-military-flights.mjs` | `militaryFlights` (live) — keyless via adsb.lol + Wingbits; feeds `get_hotspot_escalation` flight inputs |
 | `social-velocity` | 3 h | `seed-social-velocity.mjs` (fork-owned, in this dir) | `socialVelocity` → `get_social_velocity` — mini port of the relay's Reddit loop (worldnews + geopolitics, velocity-scored) |
 
+`social-velocity` fetch precedence (mirrors the relay): ScrapeCreators when
+`SCRAPECREATORS_API_KEY` is set, else the anonymous public Reddit `.json` API.
+**Reddit 403s the OCI datacenter IP on the public path** (seen on first
+deploy) — the fork-owned seeder therefore needs a ScrapeCreators key (free
+tier) to run from the VM; without it, it logs the 403 and retries each tick.
+
 Not covered (relay/credential-gated, documented):
 - `risk:scores:sebuf:v8` / `intelligence:military-cii:v1` → written by
   `seed-military-cii.mjs`, which requires the relay's `WS_RELAY_URL` AIS vessel

@@ -149,6 +149,11 @@ services:
       # .github/workflows/seed-upstash.yml.
       API_BASE_URL: ${API_BASE_URL:-}
       WORLDMONITOR_RELAY_KEY: ${WORLDMONITOR_RELAY_KEY:-}
+      # social-velocity: Reddit 403s the OCI datacenter IP on the anonymous
+      # .json API (seen on first deploy). The relay ops uses ScrapeCreators as
+      # its preferred Reddit path — mirror it so the fork gets the same data.
+      # Optional: without it the seeder logs the 403 and retries next tick.
+      SCRAPECREATORS_API_KEY: ${SCRAPECREATORS_API_KEY:-}
       TZ: ${TZ:-UTC}
 
     # The entrypoint fails loudly at startup if the Upstash vars are missing,
