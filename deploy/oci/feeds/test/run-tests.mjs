@@ -185,19 +185,39 @@ async function main() {
     assert.equal(status1.sources['taiwan-test'].items, 4);
     assert.equal(status1.sources['pboc-test'].items, 2);
 
+    // ── archive: append-only SQLite history ──
+    // (node:sqlite is bundled with Node 22.5+; the Docker image is node:24.)
+    const { DatabaseSync } = await import('node:sqlite');
+    const archivePath = path.join(state, 'archive.sqlite');
+    const archive = new DatabaseSync(archivePath);
+    const countItems = () => archive.prepare('SELECT COUNT(*) AS n FROM items').get().n;
+    const countPolls = () => archive.prepare('SELECT COUNT(*) AS n FROM polls').get().n;
+    assert.equal(countItems(), 11, 'archive must hold 11 first-seen items after run 1');
+    assert.equal(countPolls(), 4, 'archive must hold 1 poll row per source (4 sources)');
+    const firstSeen = archive.prepare('SELECT first_seen_at, fingerprint FROM items LIMIT 1').get();
+    assert.ok(firstSeen.first_seen_at, 'first_seen_at must be populated');
+    assert.ok(firstSeen.fingerprint.includes('::'), 'fingerprint must be <sourceId>::<itemId>');
+    const srcStats = archive.prepare('SELECT source_id, COUNT(*) AS n FROM items GROUP BY source_id ORDER BY source_id').all();
+    assert.deepEqual(srcStats.map((r) => [r.source_id, r.n]), [
+      ['bbc-test', 3], ['pboc-test', 2], ['taiwan-test', 4], ['usgs-test', 2],
+    ], 'archive rows must be partitioned per source');
+
     // ── run 2: dedupe — same items, zero new ──
     poll(state, catalog);
     const latest2 = await readJson(path.join(state, 'latest.json'));
     assert.equal(latest2.count, 11, 'second run must not duplicate items');
     const status2 = await readJson(path.join(state, 'status.json'));
     for (const s of Object.values(status2.sources)) assert.equal(s.lastError, null);
+    assert.equal(countItems(), 11, 'archive must be append-only: re-polling must not duplicate rows');
+    assert.equal(countPolls(), 8, 'archive must record every poll (4 sources × 2 runs)');
+    archive.close();
 
     const manifest = await readJson(path.join(state, 'manifest.json'));
     const sectorCount = Object.keys(manifest.sectors).length;
     assert.equal(sectorCount, 5, 'expected 5 sector snapshots (news, environment, china, military, finance)');
     assert.equal(manifest.total, 11);
 
-    console.log('feed-intel offline tests OK — 11 items across 5 sector snapshots, dedupe stable, 4 sources healthy');
+    console.log('feed-intel offline tests OK — 11 items across 5 sector snapshots, dedupe stable, 4 sources healthy, SQLite archive verified');
   } finally {
     await rm(work, { recursive: true, force: true });
   }

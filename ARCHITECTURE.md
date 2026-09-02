@@ -77,7 +77,7 @@ Cadences are stretched from upstream defaults to fit the Upstash free tier (500k
 **Storage decision (live files → archive DB).** Two layers, by design:
 
 1. *Live* — the JSON snapshots above remain the freshness surface for Hermès: cheap, debuggable, no schema. This is the current implementation.
-2. *Archive* — an **append-only SQLite database on the same volume** is the planned home for history: first-seen timestamps per item, source reliability over weeks, sector time series. Purpose: **backtesting the Macro Director's decisions point-in-time** (“what did the layer know when the directive was issued”) and source-quality analytics — questions the 72 h rolling files cannot answer. Migration hook already exists: the poller computes `nNew` per source per cycle, the exact point where archive rows would be appended. The files are never replaced by the DB; the DB sits behind them.
+2. *Archive* — an **append-only SQLite database on the same volume** (`archive.sqlite`, `node:sqlite`, zero new deps) holds the permanent history: `items` (one row per first-seen item: fingerprint `sourceId::itemId`, `first_seen_at`, title/url/sectors/reliability at first sight) and `polls` (one row per source per cycle: fetched/new counts, ok flag). Purpose: **backtesting the Macro Director's decisions point-in-time** (“what did the layer know when the directive was issued”) and source-quality analytics — questions the 72 h rolling files cannot answer. It is append-only by construction; re-polls are idempotent via `INSERT OR IGNORE`. The files are never replaced by the DB; the DB sits behind them. (Implemented together with the archive module; see `deploy/oci/feeds/README.md` for schema and example queries.)
 
 ### Environment wiring (fork)
 
@@ -90,6 +90,7 @@ Cadences are stretched from upstream defaults to fit the Upstash free tier (500k
 | `SCRAPECREATORS_API_KEY` | `deploy/oci/.env` | social-velocity vendor path (preferred; anonymous Reddit 403s datacenter IPs) |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` | `deploy/oci/.env` | social-velocity OAuth fallback (self-serve Reddit app creation is closed under the Responsible Builder Policy) |
 | `FEED_POLL_S` | `deploy/oci/.env` (optional; default 60) | feed-intel loop tick (seconds). Each source additionally obeys its own `pollIntervalS` in `feeds/sources.json` |
+| `FEED_ARCHIVE_DB` | `deploy/oci/.env` (optional; default `<state>/archive.sqlite`) | feed-intel append-only SQLite history path; override only if the volume layout changes |
 | `OPENROUTER_API_KEY` | `deploy/oci/.env` (optional) | LLM brief enrichment; absent → degraded headlines mode, data still written |
 
 ### MCP tools consumed by Hermès

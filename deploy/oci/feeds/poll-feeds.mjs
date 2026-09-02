@@ -32,9 +32,11 @@
 import { readFile, writeFile, mkdir, stat, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { openArchive, archiveNewItems, archivePoll, archiveStats, DEFAULT_ARCHIVE_PATH } from './archive.mjs';
 
 const SOURCES_PATH = process.env.FEED_SOURCES || path.resolve('sources.json');
 const STATE_DIR = process.env.FEED_STATE || path.resolve('out');
+const ARCHIVE_PATH = process.env.FEED_ARCHIVE_DB || DEFAULT_ARCHIVE_PATH(STATE_DIR);
 const POLL_TICK_S = Number(process.env.FEED_POLL_S || 60);
 const FETCH_TIMEOUT_S = Number(process.env.FEED_TIMEOUT_S || 20);
 const ALLOW_FILE = process.env.FEED_ALLOW_FILE === '1';
@@ -167,6 +169,21 @@ async function loadAdapters() {
   return adapters;
 }
 
+// ─────────────────────────── archive (append-only history) ───────────
+// Lazy singleton: opened once on first use, never re-opened per cycle. If the
+// open fails (no node:sqlite on an exotic runtime), the poller keeps running
+// without history.
+let archiveDb = null;
+let archiveInit = false;
+
+async function getArchive() {
+  if (!archiveInit) {
+    archiveInit = true;
+    archiveDb = await openArchive(ARCHIVE_PATH);
+  }
+  return archiveDb;
+}
+
 // ─────────────────────────── state store ───────────────────────────
 async function loadCache() {
   try {
@@ -248,7 +265,7 @@ async function pollSource(src, adapters, status) {
 function mergeItems(cache, src, freshItems) {
   const prev = cache[src.id]?.items || [];
   const prevIds = new Set(prev.map((i) => i.id));
-  const nNew = freshItems.filter((i) => !prevIds.has(i.id)).length;
+  const newItems = freshItems.filter((i) => !prevIds.has(i.id));
   const merged = [...prev];
   for (const item of freshItems) {
     const idx = merged.findIndex((m) => m.id === item.id);
@@ -260,7 +277,7 @@ function mergeItems(cache, src, freshItems) {
     .filter((i) => !i.publishedMs || i.publishedMs >= cutoff)
     .slice(0, MAX_ITEMS_PER_SOURCE);
   cache[src.id] = { items: pruned, polledAt: new Date().toISOString() };
-  return nNew;
+  return { nNew: newItems.length, newItems };
 }
 
 // ─────────────────────────── snapshots ───────────────────────────
@@ -314,20 +331,25 @@ async function runCycle(verbose = true, force = false) {
   const adapters = await loadAdapters();
   const cache = await loadCache();
   const status = await loadStatus();
+  const archive = await getArchive();
   const due = catalog.filter((s) => s.state === 'active');
   for (const src of due) {
     const lastPoll = cache[src.id]?.polledAt ? Date.parse(cache[src.id].polledAt) : 0;
     const interval = (src.pollIntervalS || 300) * 1000;
     const ready = force || Date.now() - lastPoll >= interval;
     if (!ready) continue;
+    const fetchedAt = new Date().toISOString();
     const fresh = await pollSource(src, adapters, status);
-    const nNew = mergeItems(cache, src, fresh);
+    const { nNew, newItems } = mergeItems(cache, src, fresh);
     const st = status[src.id];
     st.items = cache[src.id]?.items?.length || 0;
     const newest = cache[src.id]?.items?.[0];
     st.lastItemAt = newest?.publishedAt || st.lastItemAt;
+    // Append-only history: one row per first-seen item + one poll-stat row.
+    const archived = archiveNewItems(archive, src, newItems, fetchedAt);
+    archivePoll(archive, src, fresh.length, nNew, !st.lastError);
     if (verbose) {
-      console.log(`[feed-intel] ${src.id} (${src.type}) → ${fresh.length} fetched, ${nNew} new | ok=${st.ok} fail=${st.fail}${st.lastError ? ` | lastError: ${st.lastError}` : ''}`);
+      console.log(`[feed-intel] ${src.id} (${src.type}) → ${fresh.length} fetched, ${nNew} new (${archived} archived) | ok=${st.ok} fail=${st.fail}${st.lastError ? ` | lastError: ${st.lastError}` : ''}`);
     }
   }
   await writeSnapshots(cache, status);
@@ -354,6 +376,8 @@ async function main() {
       for (const s of Object.values(status)) {
         console.log(`  ${s.sourceId.padEnd(22)} ok=${String(s.ok).padStart(3)} fail=${String(s.fail).padStart(3)} items=${String(s.items).padStart(4)}${s.lastError ? `  ERROR: ${s.lastError}` : ''}`);
       }
+      const { items, polls } = archiveStats(await getArchive());
+      console.log(`── archive ── items=${items} polls=${polls} db=${ARCHIVE_PATH}`);
     }
     return;
   }

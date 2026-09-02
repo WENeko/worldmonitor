@@ -24,6 +24,7 @@ RUN apk add --no-cache tzdata
 WORKDIR /app
 
 COPY deploy/oci/feeds/poll-feeds.mjs ./
+COPY deploy/oci/feeds/archive.mjs ./
 COPY deploy/oci/feeds/sources.json ./
 COPY deploy/oci/feeds/adapters/ ./adapters/
 
