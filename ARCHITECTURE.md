@@ -12,7 +12,7 @@ World Monitor is a real-time global intelligence dashboard built as a TypeScript
 
 ## 0. Fork / Self-Host Stack (WENeko/worldmonitor)
 
-> **Scope**: sections 1–12 describe the upstream World Monitor product architecture. This section documents the fork's full operational stack: the Vercel production branch, the hourly upstream sync, the self-hosted seeder container on OCI, the GitHub Actions seed fallback, and the agent (Hermès) MCP client that consumes it.
+> **Scope**: sections 1–12 describe the upstream World Monitor product architecture. This section documents the fork's full operational stack: the Vercel production branch, the hourly upstream sync, the self-hosted seeder container on OCI, the GitHub Actions seed fallback, the agent (Hermès) MCP client that consumes the Redis-backed tools, and `feed-intel` — Hermès's own file-based news layer (RSS/Atom/scrape, editable source catalog).
 
 ```
 Upstream koala73/worldmonitor main
@@ -32,8 +32,13 @@ Vercel prod  (serves /mcp and /api/* from the fork's Upstash Redis)
         ▲                                        ▲
         │  MCP: X-WorldMonitor-Key header          │  REST: X-WorldMonitor-Key header
 Hermès agent (config.yaml MCP server)     seeds-lite (Docker container, OCI VM)
-                                                └── 6 seeders → Upstash Redis
-GitHub Actions seed-upstash.yml (12 h) ────────────────┘   (same Redis, LLM briefs)
+        │                                     └── 5 seeders → Upstash Redis
+        │  file reads: /opt/data/feed-intel/*.json    (ucdp disabled until token)
+        │  edits catalog: /opt/data/feed-sources.json
+feed-intel (Docker container, OCI VM) — writes that same JSON volume
+        └── RSS/Atom/scrape poll → per-sector snapshots (zero Redis)
+
+GitHub Actions seed-upstash.yml (manual only — cron removed 2026-09-02) → same Redis
 ```
 
 ### Fork components
@@ -42,20 +47,37 @@ GitHub Actions seed-upstash.yml (12 h) ─────────────�
 |---|---|---|
 | `sync-vercel-branch.yml` | GitHub Actions, hourly | Regenerates fork `main` from upstream, re-applies fork patches, adapts the tree via `prepare-vercel.mjs`, force-pushes the `vercel` production branch |
 | `prepare-vercel.mjs` | fork-owned script (survives sync) | The adaptation seam: route staging, build-script overrides, and the home for fork-local source patches that must survive upstream syncs |
-| `seed-upstash.yml` | GitHub Actions, 12-hourly + dispatch | Canonical repo seeders against the fork's Upstash Redis; writes LLM-enriched briefs (its OpenRouter key works) |
-| `seeds-lite` | Docker container on the OCI VM (`deploy/oci/`) | Six seeders feeding the fork's Redis on short cadences (see table below); build ~15 s, zero cloud cost |
+| `seed-upstash.yml` | GitHub Actions, dispatch only (12-hourly cron removed 2026-09-02) | Canonical repo seeders against the fork's Upstash Redis; writes LLM-enriched briefs (its OpenRouter key works). Every manual run rewrites the whole fleet (tens of thousands of commands) — keep it as a deliberate rescue, not a cadence |
+| `seeds-lite` | Docker container on the OCI VM (`deploy/oci/`) | Five active seeders feeding the fork's Redis on quota-stretched cadences (see table below); ucdp disabled until a token lands; build ~15 s, zero cloud cost |
+| feed-intel | Docker container on the OCI VM (`deploy/oci/feeds/`) | Hermès's own news layer: dependency-free RSS/Atom/scrape poller over an editable catalog (`sources.json`) writing per-sector JSON snapshots + per-source reliability health into a volume Hermès mounts read-only. Zero external APIs, zero Redis writes |
 | Hermès MCP client | `/opt/data/config.yaml` on the Hermès host | `world-monitor` server → fork `/mcp`, header auth `X-WorldMonitor-Key: ${MCP_WORLD_MONITOR_API_KEY}`, `connect_timeout: 60000`, all 74 tools enabled |
 
 ### seeds-lite seeders
 
 | Seeder | Cadence | Sources | Data key written |
 |---|---|---|---|
-| `conflict` | 15 min | HAPI HDX (ACLED-derived), GDELT | `intelligence:conflict:v1` |
-| `gdelt-bulk` | 15 min | GDELT bulk materializer | `intelligence:gdelt-intel:v1` |
-| `insights` | 15 min | Fork RPC digest warm (`list-feed-digest`) + optional LLM briefs | `news:insights:v1` |
-| `military-flights` | 10 min | adsb.lol (keyless), Wingbits (optional key) | `military:flights:v1` |
+| `conflict` | 60 min | HAPI HDX (ACLED-derived), GDELT | `intelligence:conflict:v1` |
+| `gdelt-bulk` | 60 min | GDELT bulk materializer | `intelligence:gdelt-intel:v1` |
+| `insights` | 60 min | Fork RPC digest warm (`list-feed-digest`) + optional LLM briefs | `news:insights:v1` |
+| `military-flights` | 30 min | adsb.lol (keyless), Wingbits (optional key) | `military:flights:v1` |
 | `social-velocity` | 3 h | ScrapeCreators → Reddit OAuth → public (relay parity) | `intelligence:social:reddit:v1` |
-| `ucdp` | 30 min | UCDP GED API (requires `UCDP_ACCESS_TOKEN`) | `ucdp:events:*` |
+| `ucdp` | disabled | UCDP GED API (requires `UCDP_ACCESS_TOKEN`; until then it only burned quota on 401 retries) | `ucdp:events:*` |
+
+Cadences are stretched from upstream defaults to fit the Upstash free tier (500k commands/month per database) — each seeder issues several individual REST commands per run, so run frequency, not payload size, dominates quota burn. The fork accepts `STALE` health flags on the stretched datasets (cosmetic for the Hermès/MCP consumers). Rationale and measurements: `deploy/oci/seeds-lite/run-seeds.sh`.
+
+### feed-intel news layer (Hermès Macro Director)
+
+`deploy/oci/feeds/` is the Macro Director's own, operator-controlled news layer — deliberately outside the heavyweight WorldMonitor pipeline (whose MCP data is hours old by design and whose source list is frozen upstream).
+
+- **Catalog** (`sources.json`): the source list is a plain editable file, bind-mounted read-write in both the feed-intel and Hermès containers (`/opt/data/feed-sources.json` in Hermès). Hermès adds/disables/re-rates sources as it learns which are reliable; the poller re-reads the catalog every cycle — no restart. `status.json` (per-source ok/fail/lastError/via/items) is the reliability-learning surface.
+- **Poller** (`poll-feeds.mjs`): dependency-free RSS 2.0 / Atom parser plus scrape adapters (`adapters/`, currently experimental `taiwan-mnd` and `pboc`, both `state: disabled` until `--check` validates them against the live sites), normalization, cross-run dedupe, 72 h rolling per-source cache, per-sector snapshots (`feed-<sector>.json`) capped at 100 items. Sector taxonomy mirrors WorldMonitor: geopolitics, military, news, finance, energy, infrastructure-cyber, environment, aviation, china, tech. Node builtins only.
+- **Consumption**: Hermès reads the snapshots straight from the shared volume (`/opt/data/feed-intel/*.json`, read-only mount of `feed_intel_data`) with its file tools. No MCP server for v1; a read-only MCP graft is the fallback if a future agent cannot read files.
+- **Cost profile**: a poll is one HTTP GET + one small JSON rewrite. Zero external API credits, zero Redis commands — this layer is structurally immune to the Upstash quota problem that motivated it.
+
+**Storage decision (live files → archive DB).** Two layers, by design:
+
+1. *Live* — the JSON snapshots above remain the freshness surface for Hermès: cheap, debuggable, no schema. This is the current implementation.
+2. *Archive* — an **append-only SQLite database on the same volume** is the planned home for history: first-seen timestamps per item, source reliability over weeks, sector time series. Purpose: **backtesting the Macro Director's decisions point-in-time** (“what did the layer know when the directive was issued”) and source-quality analytics — questions the 72 h rolling files cannot answer. Migration hook already exists: the poller computes `nNew` per source per cycle, the exact point where archive rows would be appended. The files are never replaced by the DB; the DB sits behind them.
 
 ### Environment wiring (fork)
 
@@ -67,6 +89,7 @@ GitHub Actions seed-upstash.yml (12 h) ─────────────�
 | `UCDP_ACCESS_TOKEN` | `deploy/oci/.env` | UCDP GED API token (free registration at ucdp.uu.se) |
 | `SCRAPECREATORS_API_KEY` | `deploy/oci/.env` | social-velocity vendor path (preferred; anonymous Reddit 403s datacenter IPs) |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` | `deploy/oci/.env` | social-velocity OAuth fallback (self-serve Reddit app creation is closed under the Responsible Builder Policy) |
+| `FEED_POLL_S` | `deploy/oci/.env` (optional; default 60) | feed-intel loop tick (seconds). Each source additionally obeys its own `pollIntervalS` in `feeds/sources.json` |
 | `OPENROUTER_API_KEY` | `deploy/oci/.env` (optional) | LLM brief enrichment; absent → degraded headlines mode, data still written |
 
 ### MCP tools consumed by Hermès
