@@ -874,6 +874,102 @@ function forkHealthDiagnostic() {
   console.log('[prepare-vercel] applied fork health-diagnostic patch (lock failure surfaces Upstash error)');
 }
 
+// scripts/build-sitemap.mjs is upstream code (NOT preserved by the sync), so it
+// can outgrow this fork's preserved build-crawlable-corpus.mjs. Upstream
+// periodically guards the sitemap on a /country-instability-index/ corpus page
+// that this fork's corpus generator does not emit, breaking the Vercel build
+// with "generated content corpus is incomplete". Drop exactly that one-off
+// guard; the prefix loop right after it still verifies the fork's actual corpus
+// output (countries/chokepoints/crises/tools/research/reference).
+function forkSitemapCorpusPatch() {
+  const sitemapPath = join(root, 'scripts', 'build-sitemap.mjs');
+  const raw = readFileSync(sitemapPath, 'utf8');
+
+  if (!raw.includes('/country-instability-index/')) {
+    console.log('[prepare-vercel] sitemap corpus guard already absent — nothing to patch');
+    return;
+  }
+
+  const guard = [
+    "    const corpusPathnames = new Set(corpusPages.map((page) => new URL(page.loc).pathname));",
+    "    if (!corpusPathnames.has('/country-instability-index/')) {",
+    '      throw new Error(',
+    "        'generated content corpus is incomplete: no /country-instability-index/ page; '",
+    "        + 'run npm run build:crawlable-corpus before npm run build:sitemap',",
+    '      );',
+    '    }',
+  ].join('\n');
+  if (!raw.includes(guard)) {
+    throw new Error(
+      '[fork-sitemap] build-sitemap.mjs still guards /country-instability-index/ but upstream ' +
+        'changed the guard structure — update scripts/prepare-vercel.mjs',
+    );
+  }
+  writeFileSync(sitemapPath, raw.replace(`${guard}\n`, ''));
+  console.log('[prepare-vercel] applied fork sitemap patch (drop /country-instability-index/ corpus guard)');
+}
+
+// api/mcp/dispatch.ts is upstream code, wiped by every sync. Registry tools
+// advertise an `outputSchema`, and strict MCP agents (Hermès) require the
+// structured payload back in result.structuredContent — not only as JSON
+// inside content[].text — or they raise "Tool has an output schema but did not
+// return structured content" on every call. Re-apply the fork's interop patch
+// on the staged copy so the deployed /mcp serves structuredContent.
+function forkStructuredContentPatch() {
+  const dispatchPath = join(stagingDir, 'mcp', 'dispatch.ts');
+  const raw = readFileSync(dispatchPath, 'utf8');
+
+  if (raw.includes('function withStructuredContent')) {
+    console.log('[prepare-vercel] structuredContent helper already present — nothing to patch');
+    return;
+  }
+
+  const helperMarker = "import { utf8ByteLength } from './utils';";
+  if (!raw.includes(helperMarker)) {
+    throw new Error(
+      '[fork-mcp] api/mcp/dispatch.ts import line changed — update scripts/prepare-vercel.mjs',
+    );
+  }
+  const helper = `\n\n// [fork-patch] Interop: registry tools declare an \`outputSchema\`, and stricter MCP\n// agents (e.g. Hermès) require the structured payload back in \`tools/call\`'s\n// \`structuredContent\` — not only as JSON inside \`content[].text\`. Attach the\n// parsed JSON object when the text is JSON-parseable; leave text-only prose\n// responses untouched so non-JSON tools keep working unchanged.\nfunction withStructuredContent(text: string): Record<string, unknown> {\n  const result: Record<string, unknown> = { content: [{ type: 'text', text }] };\n  try {\n    const parsed: unknown = JSON.parse(text);\n    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {\n      result.structuredContent = parsed;\n    }\n  } catch {\n    // Non-JSON text — keep the response text-only.\n  }\n  return result;\n}`;
+
+  const normalPath = '    return rpcOk(id, { content: [{ type: \'text\', text }] }, corsHeaders);';
+  if (!raw.includes(normalPath)) {
+    throw new Error(
+      '[fork-mcp] api/mcp/dispatch.ts normal success path changed — update scripts/prepare-vercel.mjs',
+    );
+  }
+
+  const budgetPath = [
+    "      return rpcOk(id, { content: [{ type: 'text', text: JSON.stringify({",
+    '        _budget_exceeded: true,',
+    '        budget_bytes: budget,',
+    '        actual_bytes: textBytes,',
+    '        hint,',
+    '      }) }] }, corsHeaders);',
+  ].join('\n');
+  if (!raw.includes(budgetPath)) {
+    throw new Error(
+      '[fork-mcp] api/mcp/dispatch.ts budget-exceeded path changed — update scripts/prepare-vercel.mjs',
+    );
+  }
+
+  writeFileSync(
+    dispatchPath,
+    raw
+      .replace(helperMarker, `${helperMarker}${helper}`)
+      .replace(normalPath, '    return rpcOk(id, withStructuredContent(text), corsHeaders);')
+      .replace(budgetPath, [
+        "      return rpcOk(id, withStructuredContent(JSON.stringify({",
+        '        _budget_exceeded: true,',
+        '        budget_bytes: budget,',
+        '        actual_bytes: textBytes,',
+        '        hint,',
+        '      })), corsHeaders);',
+      ].join('\n')),
+  );
+  console.log('[prepare-vercel] applied fork MCP interop patch (structuredContent on tools/call)');
+}
+
 
 async function main() {
   if (!(await stat(apiDir).catch(() => null))) {
@@ -941,6 +1037,8 @@ async function main() {
   forkCorsAllowlistPatch();
   forkSessionRateLimitFailOpen();
   forkHealthDiagnostic();
+  forkSitemapCorpusPatch();
+  forkStructuredContentPatch();
 
 
   await writeFile(generatedIndex, renderIndex(routes));
