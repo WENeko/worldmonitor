@@ -37,18 +37,26 @@ command -v node >/dev/null 2>&1 || fail "node not found in image"
 command -v timeout >/dev/null 2>&1 || fail "timeout(1) not found in image"
 
 # name | cadence_seconds | seed script | per-run cap seconds
-# Cadences track the seed-meta staleness windows in api/health.js while leaving
-# generous headroom:
-#   - military-flights: LIVE_TTL=600s + health maxStaleMin=30 → 10min cadence
-#   - gdelt-bulk: heavier GKG materialization, pinned to a slower cadence
+# Cadences are intentionally LOOSER than upstream defaults to stay inside the
+# Upstash free tier (500k requests/month per database). Each seeder issues
+# several individual REST commands per run (no pipelining), so run frequency
+# — not payload size — dominates quota burn. Measured bottleneck:
+# military-flights at 10min ≈ 23 commands/run ≈ ~100k req/month alone.
+# Trade-off accepted: fork health may report STALE for stretched datasets
+# (cosmetic for the Hermès/MCP consumers). Re-tighten after a paid upgrade.
+#   - military-flights: 30min (health maxStaleMin=30) — was 10min
+#   - ucdp: DISABLED until UCDP_ACCESS_TOKEN is provided (it only burned quota
+#     on 401 retries every 15min; re-enable after the token lands)
+#   - insights/conflict/gdelt-bulk: 60min — was 15/15/30min
 #   - social-velocity: relay parity (ais-relay.cjs runs every 3h; faster
 #     polling trips Reddit datacenter-IP rate limits)
 PLAN="
-insights         | 900  | seed-insights.mjs                | 1200
-ucdp             | 900  | seed-ucdp-events.mjs             | 1200
-conflict         | 900  | seed-conflict-intel.mjs          | 1500
-gdelt-bulk       | 1800 | seed-gdelt-bulk-materializer.mjs | 2400
-military-flights | 600  | seed-military-flights.mjs        | 600
+insights         | 3600 | seed-insights.mjs                | 1200
+# ucdp disabled until UCDP_ACCESS_TOKEN is set (deploy/oci/.env)
+# ucdp           | 3600 | seed-ucdp-events.mjs             | 1200
+conflict         | 3600 | seed-conflict-intel.mjs          | 1500
+gdelt-bulk       | 3600 | seed-gdelt-bulk-materializer.mjs | 2400
+military-flights | 1800 | seed-military-flights.mjs        | 600
 social-velocity  | 10800| seed-social-velocity.mjs         | 300
 "
 
