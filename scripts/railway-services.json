@@ -349,6 +349,7 @@
       ]
     ],
     "watchPatterns": [
+      "scripts/_arms-suppliers-sweep.mjs",
       "scripts/_bundle-runner.mjs",
       "scripts/_static-ref-heavy-order.mjs",
       "scripts/_defense-industrial-source.mjs",
@@ -921,10 +922,12 @@
       "scripts/shared/iso3-to-iso2.json",
       "scripts/shared/rankable-universe.mjs",
       "scripts/shared/sovereign-status.json",
+      "scripts/shared/un-to-iso2.json",
       "scripts/shared/wgi-indicator-keys.json",
       "scripts/shared/wgi-source-provenance.js",
       "shared/country-names.json",
       "shared/iso3-to-iso2.json",
+      "shared/un-to-iso2.json",
       "scripts/scorecard/v1/_input-registry.mts",
       "scripts/scorecard/v1/_methodology.mts",
       "scripts/scorecard/v1/_score-country.mts",

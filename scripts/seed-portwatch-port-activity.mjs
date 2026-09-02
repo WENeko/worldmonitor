@@ -214,10 +214,6 @@ const CONCURRENCY = 6;
 // run — negligible against the 570s bundle budget.
 const BATCH_BACKOFF_MS = 5_000;
 const BATCH_LOG_EVERY = 5;
-// A country-level ArcGIS request can be rate-limited even when the run has
-// ample bundle time left. Retry that country once after a short cooldown;
-// the outer per-country timeout remains the hard ceiling for the whole retry
-// sequence, so a slow upstream cannot extend the run indefinitely.
 const RATE_LIMIT_RETRY_DELAY_MS = 2_000;
 const MAX_RATE_LIMIT_RETRIES = 1;
 // Cache hygiene: force a full refetch if the cached payload is older than 7 days
@@ -285,7 +281,14 @@ async function arcgisProxyRetry(url, reason, { signal } = {}) {
   return proxied;
 }
 
-async function fetchWithTimeout(url, { signal, timeoutMs = FETCH_TIMEOUT, noProxyFallback = false } = {}) {
+const defaultFetch = (...args) => globalThis.fetch(...args);
+
+async function fetchWithTimeout(url, {
+  signal,
+  timeoutMs = FETCH_TIMEOUT,
+  noProxyFallback = false,
+  fetchFn = defaultFetch,
+} = {}) {
   // Combine the per-call timeoutMs with the upstream caller signal so an
   // abort propagates into the in-flight fetch AND future pagination iterations.
   //
@@ -296,12 +299,13 @@ async function fetchWithTimeout(url, { signal, timeoutMs = FETCH_TIMEOUT, noProx
   //                       arcgisProxyRetry. Used by preflight so a degraded
   //                       upstream can't burn the container budget on
   //                       best-effort cache-invalidation probes (PR #3711 P1).
+  //   fetchFn          — optional direct transport seam for boundary tests.
   const combined = signal
     ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
     : AbortSignal.timeout(timeoutMs);
   let resp;
   try {
-    resp = await fetch(url, {
+    resp = await fetchFn(url, {
       headers: { 'User-Agent': CHROME_UA, Accept: 'application/json' },
       signal: combined,
     });
@@ -361,7 +365,7 @@ async function fetchWithTimeout(url, { signal, timeoutMs = FETCH_TIMEOUT, noProx
     if (_bodyCaptureSuccessCount < MAX_BODY_CAPTURE_SUCCESSES
         && _bodyCaptureAttemptCount < MAX_BODY_CAPTURE_ATTEMPTS) {
       _bodyCaptureAttemptCount += 1;
-      const captured = await _captureErrorBodyAfterTimeout(url, signal);
+      const captured = await _captureErrorBodyAfterTimeout(url, signal, fetchFn);
       if (captured?.error) {
         _bodyCaptureSuccessCount += 1;
         throw new Error(`ArcGIS error: ${captured.error.message ?? captured.error.code ?? JSON.stringify(captured.error)}`);
@@ -421,13 +425,13 @@ const MAX_BODY_CAPTURE_ATTEMPTS = 0;
 // Returns `{error}` if the response body contains an ArcGIS error,
 // `{body}` if it contains a normal response, or null if the re-fetch
 // itself failed (caller falls through to proxy retry as before).
-async function _captureErrorBodyAfterTimeout(url, signal) {
+async function _captureErrorBodyAfterTimeout(url, signal, fetchFn) {
   if (signal?.aborted) return null;
   const captureSignal = signal
     ? AbortSignal.any([signal, AbortSignal.timeout(ERROR_BODY_CAPTURE_EXTRA_MS)])
     : AbortSignal.timeout(ERROR_BODY_CAPTURE_EXTRA_MS);
   try {
-    const resp = await fetch(url, {
+    const resp = await fetchFn(url, {
       headers: { 'User-Agent': CHROME_UA, Accept: 'application/json' },
       signal: captureSignal,
     });
@@ -469,9 +473,9 @@ async function _captureErrorBodyAfterTimeout(url, signal) {
 // change, server-side degradation) so we don't burn the container
 // budget on doomed retries.
 let _invalidParamsErrorCount = 0;
-async function fetchWithRetryOnInvalidParams(url, { signal } = {}) {
+async function fetchWithRetryOnInvalidParams(url, { signal, fetchFn } = {}) {
   try {
-    return await fetchWithTimeout(url, { signal });
+    return await fetchWithTimeout(url, { signal, fetchFn });
   } catch (err) {
     const msg = err?.message || '';
     if (!/Invalid query parameters/i.test(msg)) throw err;
@@ -503,13 +507,17 @@ async function fetchWithRetryOnInvalidParams(url, { signal } = {}) {
     await new Promise((r) => setTimeout(r, 500));
     if (signal?.aborted) throw signal.reason ?? err;
     console.warn(`  [port-activity] retrying after "${msg}" (${_invalidParamsErrorCount}/${INVALID_PARAMS_RETRY_THRESHOLD}): ${url.slice(0, 80)}`);
-    return await fetchWithTimeout(url, { signal });
+    return await fetchWithTimeout(url, { signal, fetchFn });
   }
 }
 
 // Fetch ALL ports globally in one paginated pass, grouped by ISO3.
 // ArcGIS server-cap: advance by actual features.length, never PAGE_SIZE.
-async function fetchAllPortRefs({ signal } = {}) {
+export async function fetchAllPortRefs({
+  signal,
+  fetchFn,
+  sleepFn = waitForRetry,
+} = {}) {
   const byIso3 = new Map();
   let offset = 0;
   let body;
@@ -527,7 +535,14 @@ async function fetchAllPortRefs({ signal } = {}) {
       outSR: '4326',
       f: 'json',
     });
-    body = await fetchWithRetryOnInvalidParams(`${EP4_BASE}?${params}`, { signal });
+    const url = `${EP4_BASE}?${params}`;
+    body = await retryRateLimited(
+      (attemptSignal) => fetchWithRetryOnInvalidParams(url, {
+        signal: attemptSignal,
+        fetchFn,
+      }),
+      { signal, sleepFn, label: `reference page ${page}` },
+    );
     const features = body.features ?? [];
     for (const f of features) {
       const a = f.attributes;
