@@ -11,6 +11,11 @@ services:
 
     volumes:
       - ~/.hermes:/opt/data
+      # feed-intel (deploy/oci/feeds): Hermès reads the per-sector snapshots
+      # read-only and edits the source catalog directly (add/disable/re-rate
+      # sources — feed-intel picks it up at the next cycle, no restart).
+      - feed_intel_data:/opt/data/feed-intel:ro
+      - ./feeds/sources.json:/opt/data/feed-sources.json:rw
 
     environment:
       HERMES_UID: ${HERMES_UID:-1000}
@@ -177,8 +182,47 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # feed-intel: dependency-free RSS/Atom/scrape poller feeding the Macro
+  # Director layer with operator-controlled sources (deploy/oci/feeds). Zero
+  # external APIs, zero Redis writes: snapshots are plain JSON on the shared
+  # volume. Hermès mounts the same volume read-only under /opt/data/feed-intel.
+  feed-intel:
+    build:
+      context: ../..
+      dockerfile: deploy/oci/feeds/Dockerfile
+    image: feed-intel:arm64
+    container_name: feed-intel
+    restart: unless-stopped
+
+    volumes:
+      - feed_intel_data:/var/lib/feed-intel
+      # Editable catalog on the host checkout (git-tracked); the loop
+      # re-reads it every cycle.
+      - ./feeds/sources.json:/app/sources.json:rw
+
+    environment:
+      FEED_POLL_S: ${FEED_POLL_S:-60}
+      TZ: ${TZ:-UTC}
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.2"
+          memory: 512m
+        reservations:
+          cpus: "0.05"
+          memory: 64m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   vibe_data:
     name: vibe_data
   seeds_lite_data:
     name: seeds_lite_data
+  feed_intel_data:
+    name: feed_intel_data
