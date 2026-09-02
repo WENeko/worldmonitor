@@ -52,8 +52,6 @@ command -v timeout >/dev/null 2>&1 || fail "timeout(1) not found in image"
 #     polling trips Reddit datacenter-IP rate limits)
 PLAN="
 insights         | 3600 | seed-insights.mjs                | 1200
-# ucdp disabled until UCDP_ACCESS_TOKEN is set (deploy/oci/.env)
-# ucdp           | 3600 | seed-ucdp-events.mjs             | 1200
 conflict         | 3600 | seed-conflict-intel.mjs          | 1500
 gdelt-bulk       | 3600 | seed-gdelt-bulk-materializer.mjs | 2400
 military-flights | 1800 | seed-military-flights.mjs        | 600
