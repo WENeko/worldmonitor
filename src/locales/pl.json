@@ -2869,9 +2869,9 @@
     },
     "gpsJamming": {
       "title": "Zakłócenia GPS/GNSS",
-      "navPerformance": "Nav Performance",
-      "samples": "ADS-B Samples",
-      "aircraft": "Aircraft",
+      "navPerformance": "Statki powietrzne dotknięte zakłóceniami",
+      "samples": "Liczba statków powietrznych dotkniętych zakłóceniami",
+      "aircraft": "Łączna liczba zaobserwowanych statków powietrznych",
       "h3Hex": "H3 Hex"
     },
     "flight": {

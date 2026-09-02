@@ -2832,9 +2832,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS Paraziti",
-      "navPerformance": "Nav Performance",
-      "samples": "ADS-B Samples",
-      "aircraft": "Aircraft",
+      "navPerformance": "Etkilenen hava araçları",
+      "samples": "Etkilenen hava aracı sayısı",
+      "aircraft": "Gözlemlenen hava araçlarının toplam sayısı",
       "h3Hex": "H3 Hex"
     },
     "flight": {

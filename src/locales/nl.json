@@ -2450,10 +2450,10 @@
       "highSeverity": "Hoge ernst"
     },
     "gpsJamming": {
-      "title": "GPS/GNSS-storing",
-      "navPerformance": "Nav Performance",
-      "samples": "ADS-B Samples",
-      "aircraft": "Aircraft",
+      "title": "GPS/GNSS-interferentie",
+      "navPerformance": "Getroffen luchtvaartuigen",
+      "samples": "Aantal getroffen luchtvaartuigen",
+      "aircraft": "Totaal aantal waargenomen luchtvaartuigen",
       "h3Hex": "H3 Hex"
     },
     "flight": {

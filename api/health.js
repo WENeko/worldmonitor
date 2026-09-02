@@ -9,6 +9,7 @@ import {
 } from './_pool-coverage.js';
 import {
   EDUCATION_MIN_RANKABLE_RECORD_COUNT,
+  SUPPLY_VULNERABILITY_MIN_RANKABLE_RECORD_COUNT,
   parseEducationPayloadRankableRecordCount,
   parseRankableRecordCount,
 } from './_rankable-coverage.js';
@@ -1040,13 +1041,17 @@ const SEED_META = {
     key: 'seed-meta:supply-chain:vulnerability',
     maxStaleMin: 2880,
     minRecordCount: 110,
-    minRankableRecordCount: 110,
+    minRankableRecordCount: SUPPLY_VULNERABILITY_MIN_RANKABLE_RECORD_COUNT,
     requiredRedistributionPolicyVersion: 1,
+    // Mirrors buildVulnerabilityCoverageRequirements() in
+    // scripts/shared/supply-vulnerability-coverage.mjs; the operations test pins
+    // this object to that output. completeCountryCount is diagnostic only.
     requireVulnerabilityCoverage: {
-      bilateralCountryCount: 110,
-      completeCountryCount: 110,
+      countrySpecificImportCountryCount: 110,
+      globalProductionCommodityCount: 1,
       rankableCountryCount: 110,
-      rankableRecordCount: 110,
+      rankableRecordCount: SUPPLY_VULNERABILITY_MIN_RANKABLE_RECORD_COUNT,
+      freshRankableRecordCount: 1,
       reviewedCommodityCount: 23,
       reviewedHs4Count: 22,
       reviewedHs2Count: 9,
@@ -2141,6 +2146,10 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
         failureReasons: sanitizeCoverageFailureReasons(retailer?.failureReasons),
       }))
     : null;
+  const finiteCoverageField = (field) => {
+    const value = meta?.coverage?.[field];
+    return Number.isFinite(value) ? { [field]: value } : {};
+  };
   const coverage = meta?.coverage && typeof meta.coverage === 'object'
     ? {
         status: typeof meta.coverage.status === 'string' ? meta.coverage.status : null,
@@ -2148,13 +2157,15 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
         failedPages: Number(meta.coverage.failedPages) || 0,
         completionRatio: meta.coverage.completionRatio == null ? null : Number(meta.coverage.completionRatio) || 0,
         rejectedCount: Number(meta.coverage.rejectedCount) || 0,
-        ...(meta.coverage.bilateralCountryCount == null ? {} : { bilateralCountryCount: Number(meta.coverage.bilateralCountryCount) || 0 }),
-        ...(meta.coverage.completeCountryCount == null ? {} : { completeCountryCount: Number(meta.coverage.completeCountryCount) || 0 }),
-        ...(meta.coverage.rankableCountryCount == null ? {} : { rankableCountryCount: Number(meta.coverage.rankableCountryCount) || 0 }),
-        ...(meta.coverage.rankableRecordCount == null ? {} : { rankableRecordCount: Number(meta.coverage.rankableRecordCount) || 0 }),
-        ...(meta.coverage.reviewedCommodityCount == null ? {} : { reviewedCommodityCount: Number(meta.coverage.reviewedCommodityCount) || 0 }),
-        ...(meta.coverage.reviewedHs4Count == null ? {} : { reviewedHs4Count: Number(meta.coverage.reviewedHs4Count) || 0 }),
-        ...(meta.coverage.reviewedHs2Count == null ? {} : { reviewedHs2Count: Number(meta.coverage.reviewedHs2Count) || 0 }),
+        ...finiteCoverageField('countrySpecificImportCountryCount'),
+        ...finiteCoverageField('globalProductionCommodityCount'),
+        ...finiteCoverageField('completeCountryCount'),
+        ...finiteCoverageField('rankableCountryCount'),
+        ...finiteCoverageField('rankableRecordCount'),
+        ...finiteCoverageField('freshRankableRecordCount'),
+        ...finiteCoverageField('reviewedCommodityCount'),
+        ...finiteCoverageField('reviewedHs4Count'),
+        ...finiteCoverageField('reviewedHs2Count'),
         failureReasons: sanitizeCoverageFailureReasons(meta.coverage.failureReasons),
         retailers: coverageRetailers,
       }

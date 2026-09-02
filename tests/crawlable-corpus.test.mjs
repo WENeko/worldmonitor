@@ -12,6 +12,7 @@ import {
   buildCiiRankingEntries,
   buildChokepointHubRows,
   buildCorpus,
+  buildMicrostateCoverageStory,
   CHOKEPOINT_PAGE_CONTENT_VERSION,
   CHOKEPOINT_PAGE_LASTMOD_PATHS,
   CII_COUNTRY_PAGE_CONTENT_VERSION,
@@ -38,6 +39,12 @@ import {
   MAX_LIVE_SNAPSHOT_AGE_MS,
 } from '../scripts/crawlable-live-tools.mjs';
 import { buildSitemapEntries } from '../scripts/build-sitemap.mjs';
+import {
+  auditMicrostateCorpusSimilarity,
+  maskedSentences,
+  wordShingles,
+} from '../scripts/audit-microstate-corpus-similarity.mjs';
+import { buildMicrostateCoverageStoryContent } from '../scripts/microstate-coverage-stories.mjs';
 import { buildSourceCatalog, sourceProviderDisplayName } from '../scripts/crawlable-sources-page.mjs';
 import { resolveSourceOrigin, sourceOriginLabel } from '../scripts/source-origin.mjs';
 import { rawCatalogProviderNames, rawManifestActiveEntries } from './helpers/raw-catalog-providers.mjs';
@@ -46,6 +53,19 @@ const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 function read(outDir, path) {
   return readFileSync(join(outDir, path), 'utf8');
+}
+
+function writeRankedAuditSnapshot(corpusDir, {
+  code,
+  slug,
+  rank = 1,
+  overallScore = 70,
+  headlineEligible = true,
+}) {
+  writeFileSync(
+    join(corpusDir, `countries/${slug}/resilience.json`),
+    JSON.stringify({ countryCode: code, rank, overallScore, headlineEligible }),
+  );
 }
 
 function jsonLdObjects(html) {
@@ -78,15 +98,6 @@ function words(value) {
   return String(value || '')
     .toLocaleLowerCase('en-US')
     .match(/[\p{L}\p{N}]+(?:[’'][\p{L}\p{N}]+)*/gu) || [];
-}
-
-function wordShingles(value, width = 5) {
-  const tokens = words(value);
-  const shingles = new Set();
-  for (let index = 0; index <= tokens.length - width; index += 1) {
-    shingles.add(tokens.slice(index, index + width).join(' '));
-  }
-  return shingles;
 }
 
 function pairwiseUniqueShare(left, right) {
@@ -880,6 +891,274 @@ describe('JSON-LD @context guard', () => {
 });
 
 describe('crawlable corpus generator', () => {
+  it('keeps decimal values inside one masked sentence', () => {
+    assert.deepEqual(
+      maskedSentences('Tuvalu reports 12.5% coverage. The inventory is partial.', ['Tuvalu']),
+      ['<country> reports <number> coverage', 'the inventory is partial'],
+    );
+  });
+
+  it('rejects a microstate coverage story when its cited source gap becomes observed', async () => {
+    const data = await loadCorpusData({ rootDir: repoRoot });
+    const tuvalu = structuredClone(data.countries.find(({ code }) => code === 'TV'));
+    const debtDimension = tuvalu.domains
+      .flatMap(({ dimensions }) => dimensions)
+      .find(({ id }) => id === 'externalDebtCoverage');
+    assert.ok(debtDimension, 'Tuvalu must include the external debt dimension');
+    debtDimension.coverage = 1;
+    debtDimension.imputationClass = '';
+
+    assert.throws(
+      () => buildMicrostateCoverageStory({
+        country: tuvalu,
+        capturedAt: '2026-08-29',
+        methodologyFormula: 'World Monitor CRI v3',
+      }),
+      /TV coverage story cites dimensions that are no longer coverage gaps: externalDebtCoverage/,
+    );
+  });
+
+  it('rejects a below-floor microstate story when displayed coverage reaches the floor', async () => {
+    const data = await loadCorpusData({ rootDir: repoRoot });
+    const tuvalu = structuredClone(data.countries.find(({ code }) => code === 'TV'));
+    tuvalu.dimensionCoverage = 0.65;
+
+    assert.throws(
+      () => buildMicrostateCoverageStory({
+        country: tuvalu,
+        capturedAt: '2026-08-29',
+        methodologyFormula: 'World Monitor CRI v3',
+      }),
+      /TV coverage story requires displayed coverage below the 65% publication floor/,
+    );
+  });
+
+  it('rejects a microstate story when a cited gap changes imputation class', async () => {
+    const data = await loadCorpusData({ rootDir: repoRoot });
+    const sanMarino = structuredClone(data.countries.find(({ code }) => code === 'SM'));
+    const cohesionDimension = sanMarino.domains
+      .flatMap(({ dimensions }) => dimensions)
+      .find(({ id }) => id === 'socialCohesion');
+    assert.ok(cohesionDimension, 'San Marino must include the social cohesion dimension');
+    cohesionDimension.imputationClass = 'unmonitored';
+
+    assert.throws(
+      () => buildMicrostateCoverageStory({
+        country: sanMarino,
+        capturedAt: '2026-08-29',
+        methodologyFormula: 'World Monitor CRI v3',
+      }),
+      /SM coverage story has stale source-gap claims: socialCohesion: imputation class "unmonitored" \(expected "source-failure"\)/,
+    );
+  });
+
+  it('rejects a microstate story when a cited provider family changes', () => {
+    assert.throws(
+      () => buildMicrostateCoverageStoryContent({
+        code: 'MO',
+        coveragePercent: 61,
+        coverageFloor: 65,
+        gaps: [
+          { id: 'healthPublicService', imputationClass: '', sources: ['WHO'] },
+          { id: 'informationCognitive', imputationClass: '', sources: ['Different provider'] },
+          { id: 'externalDebtCoverage', imputationClass: 'unmonitored', sources: ['World Bank'] },
+        ],
+      }),
+      /MO coverage story has stale source-gap claims: informationCognitive: sources \["Different provider"\] \(expected \["Reporters Without Borders"\]\)/,
+    );
+  });
+
+  it('derives the San Marino gap count while preserving cited-gap subset validation', async () => {
+    const data = await loadCorpusData({ rootDir: repoRoot });
+    const baseline = data.countries.find(({ code }) => code === 'SM');
+    const buildStory = (country) => buildMicrostateCoverageStory({
+      country,
+      capturedAt: '2026-08-29',
+      methodologyFormula: 'World Monitor CRI v3',
+    });
+    const baselineGapCount = Number(
+      buildStory(structuredClone(baseline)).introduction.match(/yet (\d+) dimension gaps/)?.[1],
+    );
+    assert.ok(
+      Number.isInteger(baselineGapCount) && baselineGapCount > 0,
+      'San Marino story must report its current gap count',
+    );
+
+    const sanMarino = structuredClone(baseline);
+    const healthDimension = sanMarino.domains
+      .flatMap(({ dimensions }) => dimensions)
+      .find(({ id }) => id === 'healthPublicService');
+    assert.ok(healthDimension, 'San Marino must include the health dimension');
+    healthDimension.coverage = 0;
+
+    assert.match(
+      buildStory(sanMarino).introduction,
+      new RegExp(`yet ${baselineGapCount + 1} dimension gaps`),
+    );
+  });
+
+  it('rejects the Macau story when a cited observed dimension loses its reading', async () => {
+    const data = await loadCorpusData({ rootDir: repoRoot });
+    const macau = structuredClone(data.countries.find(({ code }) => code === 'MO'));
+    const tradeDimension = macau.domains
+      .flatMap(({ dimensions }) => dimensions)
+      .find(({ id }) => id === 'tradePolicy');
+    assert.ok(tradeDimension, 'Macau must include the trade policy dimension');
+    tradeDimension.coverage = 0;
+
+    assert.throws(
+      () => buildMicrostateCoverageStory({
+        country: macau,
+        capturedAt: '2026-08-29',
+        methodologyFormula: 'World Monitor CRI v3',
+      }),
+      /MO coverage story cites dimensions that no longer have observed readings: tradePolicy/,
+    );
+  });
+
+  it('uses current crisis membership in a microstate coverage story', async () => {
+    const data = await loadCorpusData({ rootDir: repoRoot });
+    const tuvalu = structuredClone(data.countries.find(({ code }) => code === 'TV'));
+    tuvalu.crisisMemberships = [{ slug: 'test-tracker', shortTitle: 'Test tracker' }];
+    const story = buildMicrostateCoverageStory({
+      country: tuvalu,
+      capturedAt: '2026-08-29',
+      methodologyFormula: 'World Monitor CRI v3',
+    });
+
+    const analysis = renderCountryAnalysis({
+      country: tuvalu,
+      capturedAt: '2026-08-29',
+      methodologyFormula: 'World Monitor CRI v3',
+      rankedCount: 0,
+    });
+
+    assert.match(story.crisis, /The crisis registry links Tuvalu to Test tracker/);
+    assert.doesNotMatch(story.crisis, /No fixed crawlable crisis tracker has Tuvalu in scope/);
+    assert.match(analysis.html, /The crisis registry links Tuvalu to <a href="\/crises\/test-tracker\/">Test tracker<\/a>/);
+    assert.doesNotMatch(analysis.html, /No fixed crawlable crisis tracker has Tuvalu in scope/);
+  });
+
+  it('formats observed readings in a microstate coverage story', async () => {
+    const data = await loadCorpusData({ rootDir: repoRoot });
+    const sanMarino = data.countries.find(({ code }) => code === 'SM');
+    const story = buildMicrostateCoverageStory({
+      country: sanMarino,
+      capturedAt: '2026-08-29',
+      methodologyFormula: 'World Monitor CRI v3',
+    });
+
+    assert.match(story.evidence, /Liquid-reserve adequacy \d+(?:\.\d+)? \(\d+%\)/);
+  });
+
+  it('rejects a similarity audit when a country page has no main content', () => {
+    const corpusDir = mkdtempSync(join(tmpdir(), 'wm-microstate-audit-'));
+    try {
+      for (const slug of ['japan', 'germany', 'tuvalu', 'macau', 'san-marino']) {
+        const countryDir = join(corpusDir, 'countries', slug);
+        mkdirSync(countryDir, { recursive: true });
+        const body = slug === 'tuvalu'
+          ? '<article>Tuvalu content outside the main element.</article>'
+          : `<main>${slug} has a complete country page for this audit fixture.</main>`;
+        writeFileSync(join(countryDir, 'index.html'), `<!doctype html><html><body>${body}</body></html>`);
+      }
+      writeRankedAuditSnapshot(corpusDir, { code: 'JP', slug: 'japan' });
+      writeRankedAuditSnapshot(corpusDir, { code: 'DE', slug: 'germany', rank: 2 });
+
+      assert.throws(
+        () => auditMicrostateCorpusSimilarity({ corpusDir }),
+        /\/countries\/tuvalu\/ must contain non-empty <main> content/,
+      );
+      writeFileSync(
+        join(corpusDir, 'countries/tuvalu/index.html'),
+        '<!doctype html><html><body><main>Only four words here.</main></body></html>',
+      );
+      assert.throws(
+        () => auditMicrostateCorpusSimilarity({ corpusDir }),
+        /\/countries\/tuvalu\/ must contain enough <main> content for a 5-word shingle/,
+      );
+    } finally {
+      rmSync(corpusDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails the similarity audit when the microstate pages converge', () => {
+    const corpusDir = mkdtempSync(join(tmpdir(), 'wm-microstate-converge-'));
+    try {
+      const floorBodies = {
+        japan: 'Japan publishes a complete ranked resilience profile with observed inputs across every dimension. The island economy reports fiscal, trade, energy and health series through standard providers each month.',
+        germany: 'German federal statistics describe industrial output, border management and reserve adequacy in distinct vocabulary, so this ranked fixture shares almost no five-word phrases with its neighbour.',
+      };
+      for (const [slug, body] of Object.entries(floorBodies)) {
+        const countryDir = join(corpusDir, 'countries', slug);
+        mkdirSync(countryDir, { recursive: true });
+        writeFileSync(join(countryDir, 'index.html'), `<!doctype html><html><body><main>${body}</main></body></html>`);
+      }
+      writeRankedAuditSnapshot(corpusDir, { code: 'JP', slug: 'japan' });
+      writeRankedAuditSnapshot(corpusDir, { code: 'DE', slug: 'germany', rank: 2 });
+      const cohort = [
+        ['tuvalu', 'Tuvalu', 62],
+        ['macau', 'Macau', 61],
+        ['san-marino', 'San Marino', 64],
+      ];
+      for (const [slug, name, coverage] of cohort) {
+        const countryDir = join(corpusDir, 'countries', slug);
+        mkdirSync(countryDir, { recursive: true });
+        writeFileSync(
+          join(countryDir, 'index.html'),
+          `<!doctype html><html><body><main>${name} resilience evidence. ${name} reaches ${coverage}% coverage and stays below the publication floor. The snapshot lists observed readings for ${name} without an overall score.</main></body></html>`,
+        );
+      }
+
+      const result = auditMicrostateCorpusSimilarity({ corpusDir });
+      assert.ok(result.floor.jaccard < 0.1, `ranked floor fixture must stay dissimilar, got ${result.floor.jaccard}`);
+      assert.ok(
+        result.pairs.every((pair) => pair.jaccard > result.threshold),
+        'near-identical microstate pages must exceed the ranked-page floor threshold',
+      );
+      assert.ok(result.maskedSentenceSharing.share >= 0.4, 'templated pages must trip the masked-sentence limit');
+      assert.equal(
+        result.maskedSentenceSharing.sharedCount,
+        result.maskedSentenceSharing.sentenceCounts.TV,
+        'every masked Tuvalu sentence must count as shared when the pages are templated',
+      );
+    } finally {
+      rmSync(corpusDir, { recursive: true, force: true });
+    }
+  });
+
+  const invalidFloorSnapshots = [
+    ['a mismatched country code', { code: 'FR' }],
+    ['headlineEligible false', { headlineEligible: false }],
+    ['a non-integer rank', { rank: 2.5 }],
+    ['a rank below 1', { rank: 0 }],
+    ['a non-finite overall score', { overallScore: null }],
+  ];
+  for (const [label, override] of invalidFloorSnapshots) {
+    it(`rejects a similarity floor page with ${label}`, () => {
+      const corpusDir = mkdtempSync(join(tmpdir(), 'wm-microstate-floor-'));
+      try {
+        for (const slug of ['japan', 'germany']) {
+          const countryDir = join(corpusDir, 'countries', slug);
+          mkdirSync(countryDir, { recursive: true });
+          writeFileSync(
+            join(countryDir, 'index.html'),
+            `<!doctype html><html><body><main>${slug} has a complete ranked country page for the audit floor.</main></body></html>`,
+          );
+        }
+        writeRankedAuditSnapshot(corpusDir, { code: 'JP', slug: 'japan' });
+        writeRankedAuditSnapshot(corpusDir, { code: 'DE', slug: 'germany', rank: 2, ...override });
+
+        assert.throws(
+          () => auditMicrostateCorpusSimilarity({ corpusDir }),
+          /\/countries\/germany\/ must be a headline-eligible ranked page with a published overall score/,
+        );
+      } finally {
+        rmSync(corpusDir, { recursive: true, force: true });
+      }
+    });
+  }
+
   it('requires the exact shared Tier-1 country set for CII publication', async () => {
     const data = await loadCorpusData({ rootDir: repoRoot });
     const livePulse = structuredClone(data.livePulse);
@@ -2310,7 +2589,7 @@ describe('crawlable corpus generator', () => {
           const evidenceFaq = [...document.querySelectorAll('[data-country-faq]')]
             .find((node) => node.querySelector('summary')?.textContent === evidenceQuestion);
           assert.ok(evidenceFaq, `${route} must show a microstate evidence FAQ`);
-          assert.match(evidenceFaq.textContent || '', /supported dimension readings with observed inputs, including/);
+          assert.match(evidenceFaq.textContent || '', /observed dimension readings|dimensions have observed readings/);
           assert.doesNotMatch(evidenceFaq.textContent || '', /Observed feeds/);
           const faqLabel = {
             TV: 'State continuity',
@@ -2321,10 +2600,20 @@ describe('crawlable corpus generator', () => {
           assert.doesNotMatch(evidenceFaq.textContent || '', /overall score[^.]*\d|country rank[^.]*\d/i);
           const faqPage = jsonLdObjects(html).find((entry) => entry['@type'] === 'FAQPage');
           const faqAnswer = faqPage?.mainEntity?.find((entry) => entry.name === evidenceQuestion);
-          assert.match(faqAnswer?.acceptedAnswer?.text || '', /supported dimension readings with observed inputs, including/);
+          assert.match(faqAnswer?.acceptedAnswer?.text || '', /observed dimension readings|dimensions have observed readings/);
           assert.doesNotMatch(faqAnswer?.acceptedAnswer?.text || '', /Observed feeds/);
           assert.match(faqAnswer?.acceptedAnswer?.text || '', new RegExp(faqLabel));
           assert.doesNotMatch(faqAnswer?.acceptedAnswer?.text || '', /overall score[^.]*\d|country rank[^.]*\d/i);
+          // Coverage-story pages replace the shared "How to read this page" block,
+          // including the score-disclosure paragraph and the snapshot comparability
+          // note, with a country-specific reading guide; issue #7527 named those
+          // shared frames as the duplication to remove. Pin the swap so restoring
+          // any of them is a deliberate change, re-measured against the gates below.
+          assert.match(html, /<h2>How to use this evidence<\/h2>/);
+          assert.doesNotMatch(html, /<h2>How to read this page<\/h2>/);
+          assert.doesNotMatch(html, /does not publish a resilience score for/);
+          assert.doesNotMatch(html, /class="snapshot-note"/);
+          assert.match(html, /href="\/docs\/corrections"/);
         }
         analysis.querySelectorAll('[data-country-faq]').forEach((node) => node.remove());
         unrankedArticles.push({
@@ -2358,12 +2647,13 @@ describe('crawlable corpus generator', () => {
         assert.ok(dimension, `${code} fixture must retain ${expected.id}`);
         const expectedReading = `${expected.label} ${Number(dimension.score).toFixed(1).replace(/\.0$/, '')} (${Math.round(Number(dimension.coverage) * 100)}%)`;
         assert.ok(evidence.includes(expectedReading), `${code} must publish ${expectedReading}`);
-        assert.match(evidence, /supported dimension readings with observed inputs:/);
-        assert.match(evidence, /Scores use a 0-100 scale; percentages show coverage/);
-        assert.match(evidence, new RegExp(`Possible dimension inputs for ${country.name}:`));
-        assert.match(evidence, new RegExp(`Possible dimension inputs for ${country.name}:.*${expected.source}`));
+        assert.match(
+          evidence,
+          /supported dimension readings|dimensions carry usable observed inputs|dimension measurements backed by observed data/,
+        );
+        assert.match(evidence, new RegExp(expected.source));
         assert.doesNotMatch(evidence, /Observed feeds/);
-        assert.match(evidence, /not a published overall score or a country rank/);
+        assert.match(evidence, /none is an overall score or country rank|rather than a hidden composite result|publication rule blocks an overall number/);
       }
       const andorra = read(outDir, 'countries/andorra/index.html');
       assert.doesNotMatch(andorra, /<summary>What is Andorra&#39;s Country Instability Index\?<\/summary>/);
@@ -2424,6 +2714,30 @@ describe('crawlable corpus generator', () => {
           );
         }
       }
+      const coverageStoryExpectations = {
+        TV: { source: /World Bank/, reason: /very small reporting population falls below the standalone reporting thresholds/ },
+        MO: { source: /WHO and Reporters Without Borders/, reason: /included in China series in others/ },
+        SM: { source: /UN Comtrade/, reason: /Very small sovereign states do not receive a complete standalone record/ },
+      };
+      for (const [code, expected] of Object.entries(coverageStoryExpectations)) {
+        const country = countryByCode.get(code);
+        const html = read(outDir, `countries/${country.slug}/index.html`);
+        const document = htmlDocument(html, `https://www.worldmonitor.app/countries/${country.slug}/`);
+        const story = document.querySelector('[data-country-coverage-story]')?.textContent || '';
+        assert.match(story, expected.source, `${country.name} must name its excluding source`);
+        assert.match(story, expected.reason, `${country.name} must explain its own source gap`);
+      }
+      const similarity = auditMicrostateCorpusSimilarity({ corpusDir: outDir });
+      for (const pair of similarity.pairs) {
+        assert.ok(
+          pair.jaccard <= similarity.threshold,
+          `${pair.codes.join(' / ')} 5-gram Jaccard ${(pair.jaccard * 100).toFixed(1)}% must be within five points of the ${(similarity.floor.jaccard * 100).toFixed(1)}% ranked-page floor`,
+        );
+      }
+      assert.ok(
+        similarity.maskedSentenceSharing.share < 0.4,
+        `masked sentences shared across TV / MO / SM must be below 40%, got ${(similarity.maskedSentenceSharing.share * 100).toFixed(1)}%`,
+      );
 
       const liveRiskScript = read(outDir, 'tools/live-tools.js');
       assert.match(liveRiskScript, /\/api\/wm-session/);

@@ -85,6 +85,7 @@
     "build:blog": "npm run build:blog:raw",
     "build:blog:raw": "cd blog-site && npm run build && rm -rf ../public/blog && mkdir -p ../public/blog && cp -r dist/* ../public/blog/",
     "build:crawlable-corpus": "node --import tsx scripts/build-crawlable-corpus.mjs",
+    "audit:microstate-corpus": "node scripts/audit-microstate-corpus-similarity.mjs --check",
     "build:llms-full": "node --import tsx scripts/build-llms-full.mjs",
     "build:llms-full:check": "node --import tsx scripts/build-llms-full.mjs --check",
     "build:sitemap": "node scripts/build-sitemap.mjs",
@@ -281,6 +282,7 @@
     "convex": {
       "esbuild": "0.28.1"
     },
+    "js-yaml@4": "$js-yaml",
     "fast-xml-parser": "^5.8.0",
     "serialize-javascript": "^7.0.4",
     "node-forge": "^1.4.0",
@@ -291,9 +293,10 @@
     "ip-address": "^10.3.1",
     "brace-expansion@1": "^1.1.18",
     "brace-expansion@2": "^2.1.4",
+    "brace-expansion@5": "^5.0.9",
     "sharp": "0.35.3",
     "postcss": "8.5.23",
-    "fast-uri": "3.1.5",
+    "fast-uri": "3.1.7",
     "markdown-it": "14.2.0"
   }
 }
