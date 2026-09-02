@@ -7,8 +7,12 @@
 # the Upstash database you configured in Vercel.
 #
 # Trigger it from the GitHub UI: Actions -> "Populate Upstash Redis" ->
-# "Run workflow". It is workflow_dispatch ONLY, so it never consumes
-# free-tier minutes automatically.
+# "Run workflow". It is workflow_dispatch ONLY: this file intentionally has
+# NO schedule. The full fleet written here is what exhausted the previous
+# Upstash free-tier quota (500k commands/month) in under a month (2x/day full
+# rewrites of every key family). The VM's cron (deploy/oci/seeds-lite,
+# run-seeds.sh) already covers everything the MCP + API actually consume, so
+# this manual run is kept as an on-demand rescue/reseed tool only.
 #
 # Required repo secrets:
 #   UPSTASH_REDIS_REST_URL    e.g. https://<db>-<region>.upstash.io
@@ -23,23 +27,9 @@
 name: Populate Upstash Redis
 
 on:
-  schedule:
-    # Fork housekeeping: re-seed Upstash so the dashboard's seed-backed panels
-    # (sanctions, conflict, market quotes, weather, ...) stay populated. The
-    # fork repo is public, so GitHub Actions minutes are free; the binding
-    # constraints are the Upstash free-tier command meter (500k/month) and
-    # upstream API rate limits.
-    #
-    # FORK CADENCE: 12h, not 6h. Moved from */6 to */12 to stay under the NASA
-    # FIRMS free-tier quota (2000 req/month). seed-fire-detections issues 27
-    # calls/run (3 satellites x 9 regions, then 2-attempt retries on failures
-    # only); at 6h that is ~2160+/mo when any retries fire — over quota. At 12h
-    # it is ~1080/mo with clear headroom for retries, and stays under even if
-    # upstream's own duplicate run lands. Fire/market freshness is the tradeoff
-    # (fire data lags up to 12h), but a globally-covered panel beats a faster
-    # Canada-only one. This file is fork-owned (never overwritten by upstream
-    # sync) so the cadence is persistent.
-    - cron: '0 */12 * * *'
+  # NO schedule, on purpose: automated full-fleet rewrites exhausted the free
+  # Upstash quota (see the header). Run this manually from the Actions UI when
+  # a full reseed is actually needed.
   workflow_dispatch:
     inputs:
       branch:
