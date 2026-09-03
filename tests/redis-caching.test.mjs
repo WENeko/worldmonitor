@@ -121,6 +121,60 @@ function applySetToStore(store, url, init) {
 }
 
 describe('redis caching behavior', { concurrency: 1 }, () => {
+  it('keeps followers coalesced until the caller-owned positive commit finishes', async () => {
+    const redis = await importRedisFresh();
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      if (String(url).includes('/get/')) return jsonResponse({ result: undefined });
+      throw new Error(`Unexpected fetch URL: ${String(url)}`);
+    };
+    let fetcherCalls = 0;
+    let releaseCommit;
+    const commitStarted = Promise.withResolvers();
+    const commitRelease = new Promise((resolvePromise) => { releaseCommit = resolvePromise; });
+    const opts = {
+      cachePositiveResult: false,
+      onPositiveResult: async () => {
+        commitStarted.resolve();
+        await commitRelease;
+      },
+    };
+    try {
+      const fetcher = async () => {
+        fetcherCalls += 1;
+        return { value: 42 };
+      };
+      const leader = redis.cachedFetchJsonWithMeta('commit:test:key', 60, fetcher, 120, opts);
+      await commitStarted.promise;
+      const follower = redis.cachedFetchJsonWithMeta('commit:test:key', 60, fetcher, 120, opts);
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+      assert.equal(fetcherCalls, 1);
+      releaseCommit();
+      const [leaderResult, followerResult] = await Promise.all([leader, follower]);
+      assert.equal(leaderResult.leader, true);
+      assert.equal(followerResult.leader, false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('reports an oversized sidecar cache write as rejected', async () => {
+    const restoreEnv = withEnv({ LOCAL_API_MODE: 'tauri-sidecar' });
+    const redis = await importRedisFresh();
+    try {
+      assert.equal(await redis.setCachedJson('oversized:test:key', 'x'.repeat(1_048_577), 60), false);
+    } finally {
+      restoreEnv();
+    }
+  });
+
   it('coalesces concurrent misses into one upstream fetcher execution', async () => {
     const redis = await importRedisFresh();
     const restoreEnv = withEnv({
@@ -400,6 +454,86 @@ describe('cachedFetchJsonWithMeta source labeling', { concurrency: 1 }, () => {
       assert.deepEqual(skipped, { data: null, source: 'skipped', leader: false });
       assert.equal(fetcherCalls, 0, 'the provider-local fetcher must remain gated');
       assert.equal(setCalls, 0, 'a gated miss must not become a shared negative sentinel');
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('can defer a positive write to a caller-owned atomic publication gate', async () => {
+    const redis = await importRedisFresh();
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const originalFetch = globalThis.fetch;
+    let setCalls = 0;
+
+    globalThis.fetch = async (url, init) => {
+      const raw = String(url);
+      if (raw.includes('/get/')) return jsonResponse({ result: undefined });
+      if (isSetRequest(url, init)) {
+        setCalls += 1;
+        return jsonResponse({ result: 'OK' });
+      }
+      throw new Error(`Unexpected fetch URL: ${raw}`);
+    };
+
+    try {
+      const result = await redis.cachedFetchJsonWithMeta(
+        'meta:test:deferred-positive-write',
+        60,
+        async () => ({ value: 'fresh-data' }),
+        120,
+        { cachePositiveResult: false },
+      );
+      assert.deepEqual(result, { data: { value: 'fresh-data' }, source: 'fresh', leader: true });
+      assert.equal(setCalls, 0, 'the caller-owned publication must be the only positive write');
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('does not bridge a deferred positive result after a cache read error', async () => {
+    const redis = await importRedisFresh();
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const originalFetch = globalThis.fetch;
+    let fetcherCalls = 0;
+
+    globalThis.fetch = async (url) => {
+      const raw = String(url);
+      if (raw.includes('/get/')) return jsonResponse({ error: 'temporary read failure' });
+      throw new Error(`Unexpected fetch URL: ${raw}`);
+    };
+
+    try {
+      const fetcher = async () => {
+        fetcherCalls += 1;
+        return { value: 'fresh-data' };
+      };
+      await redis.cachedFetchJsonWithMeta(
+        'meta:test:deferred-positive-read-error',
+        60,
+        fetcher,
+        120,
+        { cachePositiveResult: false },
+      );
+      await redis.cachedFetchJsonWithMeta(
+        'meta:test:deferred-positive-read-error',
+        60,
+        fetcher,
+        120,
+        { cachePositiveResult: false },
+      );
+      assert.equal(fetcherCalls, 2, 'a deferred result must not bypass the next acceptance decision');
     } finally {
       globalThis.fetch = originalFetch;
       restoreEnv();

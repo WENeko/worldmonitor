@@ -15,7 +15,7 @@ import {
   runRedisTransaction,
   setCachedJson,
 } from '../../../_shared/redis';
-import { REVOKED_URLS_KEY } from '../../../_shared/digest-revocations';
+import { REVOKED_URLS_KEY, readRevokedUrlSet } from '../../../_shared/digest-revocations';
 import { getUsageScope } from '../../../_shared/usage';
 import {
   ATTEMPT_META_TTL_S,
@@ -36,6 +36,8 @@ import {
 // Private wire value used by cachedFetchJsonWithMeta. This write is kept here
 // because the attempt row and sentinel must become visible atomically.
 const DIGEST_NEGATIVE_SENTINEL = '__WM_NEG__';
+const DIGEST_CACHE_TTL_S = 900;
+const DIGEST_REJECTION_TTL_S = 120;
 
 export interface FailedDigestAttempt {
   readonly at: string;
@@ -87,6 +89,11 @@ export function shouldStartDigestAttempt(digestCacheKey: string, now = Date.now(
   return false;
 }
 
+export function deferDigestAttempt(digestCacheKey: string, ttlSeconds: number, now = Date.now()): void {
+  boundLocalRecoveryMaps(now);
+  failureCooldowns.set(digestCacheKey, now + ttlSeconds * 1000);
+}
+
 export function beginDigestAttempt(variant: string, lang: string, at: string): AttemptSlot {
   // A shared promise rejection can wake a follower before the leader's outer
   // catch runs. The thrown/timeout identity is therefore prepared at start;
@@ -120,7 +127,8 @@ export function measureServableRichness(
   const categories = Object.values(data.categories ?? {});
   let itemCount = 0;
   for (const bucket of categories) {
-    for (const item of bucket?.items ?? []) {
+    const items = Array.isArray(bucket?.items) ? bucket.items : [];
+    for (const item of items) {
       const link = item && typeof item === 'object' && 'link' in item
         ? (item as { link?: unknown }).link
         : undefined;
@@ -262,54 +270,138 @@ export async function publishAcceptedSnapshot(
   variant: string,
   lang: string,
   data: ListFeedDigestResponse,
-): Promise<void> {
-  if (!isEligibleScope(variant, lang) || !isAcceptableDigest(data)) return;
+  canonicalDigestKey?: string,
+): Promise<'accepted' | 'rejected' | 'unavailable'> {
+  if (!isEligibleScope(variant, lang) || !isAcceptableDigest(data)) return 'rejected';
   const now = Date.now();
   const generatedAtMs = Date.parse(data.generatedAt ?? '');
   const acceptedAt = Number.isFinite(generatedAtMs) ? generatedAtMs : now;
   try {
     if (process.env.LOCAL_API_MODE === 'tauri-sidecar') {
+      const revoked = await readRevokedUrlSet();
+      if (!revoked.readable) {
+        console.warn(`[digest-publication] source unavailable variant=${variant} lang=${lang}`);
+        return 'unavailable';
+      }
+      const candidateRichness = measureServableRichness(data, revoked.urls);
+      if (candidateRichness.categoryCount < 1 || candidateRichness.itemCount < 1) {
+        console.log(`[digest-publication] candidate rejected after revocations variant=${variant} lang=${lang}`);
+        return 'rejected';
+      }
       const read = await readAcceptedSnapshot<ListFeedDigestResponse>(variant, lang);
-      if (!read.readable) return;
+      if (!read.readable) {
+        console.warn(`[digest-publication] publish unavailable variant=${variant} lang=${lang}`);
+        return 'unavailable';
+      }
       const current = read.snapshot;
-      const { categoryCount, itemCount } = measureServableRichness(data, new Set());
-      const decision = shouldReplaceAccepted(current, { categoryCount, itemCount }, now);
-      if (!decision.replace) return;
-      const meta: AcceptedSnapshotMeta = { acceptedAt, categoryCount, itemCount };
-      await setCachedJson(lastGoodKey(variant, lang), { ...meta, data }, LASTGOOD_TTL_S);
-      return;
+      const currentCanonical = canonicalDigestKey
+        ? await readCachedJson(canonicalDigestKey)
+        : { status: 'miss' as const };
+      if (currentCanonical.status === 'error') {
+        console.warn(`[digest-publication] canonical read unavailable variant=${variant} lang=${lang}`);
+        return 'unavailable';
+      }
+      const canonicalValue = currentCanonical.status === 'hit'
+        && currentCanonical.value && typeof currentCanonical.value === 'object'
+        ? currentCanonical.value as ListFeedDigestResponse
+        : null;
+      const canonicalGeneratedAt = canonicalValue ? Date.parse(canonicalValue.generatedAt ?? '') : NaN;
+      const canonicalRichness = canonicalValue
+        ? measureServableRichness(canonicalValue, revoked.urls)
+        : null;
+      const canonicalMeta = canonicalRichness
+        && canonicalRichness.categoryCount >= 1
+        && canonicalRichness.itemCount >= 1
+        && Number.isFinite(canonicalGeneratedAt)
+        ? {
+            acceptedAt: canonicalGeneratedAt,
+            ...canonicalRichness,
+          }
+        : null;
+      const decision = shouldReplaceAccepted(current, candidateRichness, now);
+      const canonicalDecision = canonicalMeta
+        ? shouldReplaceAccepted(canonicalMeta, candidateRichness, now)
+        : null;
+      if (!decision.replace || canonicalDecision && !canonicalDecision.replace) {
+        if (!decision.replace && canonicalDigestKey && currentCanonical.status === 'miss') {
+          const cooldownWritten = await setCachedJson(
+            canonicalDigestKey,
+            DIGEST_NEGATIVE_SENTINEL,
+            DIGEST_REJECTION_TTL_S,
+          );
+          if (!cooldownWritten) {
+            console.warn(`[digest-publication] publish unavailable variant=${variant} lang=${lang}`);
+            return 'unavailable';
+          }
+        }
+        console.log(`[digest-publication] candidate rejected by acceptance gate variant=${variant} lang=${lang}`);
+        return 'rejected';
+      }
+      const meta: AcceptedSnapshotMeta = { acceptedAt, ...candidateRichness };
+      const durableWritten = await setCachedJson(lastGoodKey(variant, lang), { ...meta, data }, LASTGOOD_TTL_S);
+      if (!durableWritten) {
+        console.warn(`[digest-publication] publish unavailable variant=${variant} lang=${lang}`);
+        return 'unavailable';
+      }
+      if (canonicalDigestKey) {
+        const canonicalWritten = await setCachedJson(canonicalDigestKey, data, DIGEST_CACHE_TTL_S);
+        if (!canonicalWritten) {
+          console.warn(`[digest-publication] publish unavailable variant=${variant} lang=${lang}`);
+          return 'unavailable';
+        }
+      }
+      return 'accepted';
     }
 
     // ARGV[5] is the digest body ALONE, and the script splices it into the
     // stored JSON verbatim. Sending the wrapped `{ acceptedAt, data }` and
     // letting Lua rebuild it meant a cjson decode/encode round trip, which
     // silently rewrote every empty array in the body as `{}`.
-    const results = await runRedisPipeline([[
-      'EVAL',
-      DIGEST_LASTGOOD_PUBLISH_SCRIPT,
-      '2',
-      lastGoodKey(variant, lang),
-      REVOKED_URLS_KEY,
+    const keys = canonicalDigestKey
+      ? [lastGoodKey(variant, lang), REVOKED_URLS_KEY, canonicalDigestKey]
+      : [lastGoodKey(variant, lang), REVOKED_URLS_KEY];
+    const args = [
       String(now),
       String(LASTGOOD_MAX_AGE_MS),
       String(acceptedAt),
       String(LASTGOOD_TTL_S),
       JSON.stringify(data),
+      ...(canonicalDigestKey ? [
+        String(DIGEST_CACHE_TTL_S),
+        new Date(now - LASTGOOD_MAX_AGE_MS).toISOString(),
+        new Date(now).toISOString(),
+        String(DIGEST_REJECTION_TTL_S),
+      ] : []),
+    ];
+    const results = await runRedisPipeline([[
+      'EVAL',
+      DIGEST_LASTGOOD_PUBLISH_SCRIPT,
+      String(keys.length),
+      ...keys,
+      ...args,
     ]]);
     const outcome = results[0];
     if (!outcome || outcome.error) {
-      console.warn(`[digest-lastgood] guarded publish unavailable variant=${variant} lang=${lang}`);
+      console.warn(`[digest-publication] publish unavailable variant=${variant} lang=${lang}`);
+      return 'unavailable';
     } else if (outcome.result === 0) {
-      console.log(`[digest-lastgood] kept live snapshot (not-narrower) variant=${variant} lang=${lang}`);
+      console.log(`[digest-publication] candidate rejected by acceptance gate variant=${variant} lang=${lang}`);
+      return 'rejected';
     } else if (outcome.result === -1) {
-      console.log(`[digest-lastgood] candidate rejected after revocations variant=${variant} lang=${lang}`);
+      console.log(`[digest-publication] candidate rejected after revocations variant=${variant} lang=${lang}`);
+      return 'rejected';
+    } else if (outcome.result === 1) {
+      return 'accepted';
     }
+    console.warn(`[digest-publication] publish unavailable variant=${variant} lang=${lang}`);
+    return 'unavailable';
   } catch (err) {
-    console.warn('[digest-lastgood] publish failed:', err);
+    console.warn('[digest-publication] publish failed:', err);
     captureSilentError(err, {
       tags: { surface: 'news', component: 'digest-lastgood', stage: 'publish', variant, lang },
       fingerprint: ['digest-lastgood', 'publish-failed'],
     });
+    return 'unavailable';
   }
 }
 
@@ -317,5 +409,6 @@ export const __testing__ = {
   activeAttempts,
   recentFailedAttempts,
   failureCooldowns,
+  deferDigestAttempt,
   measureServableRichness,
 };

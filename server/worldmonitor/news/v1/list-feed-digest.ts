@@ -29,6 +29,7 @@ import {
 import {
   beginDigestAttempt,
   completeDigestAttempt,
+  deferDigestAttempt,
   publishAcceptedSnapshot,
   publishFailedAttempt,
   readAcceptedSnapshot,
@@ -158,6 +159,19 @@ async function settleBeforeDeadline<T>(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+function finishSuccessfulDigestAttempt(
+  variant: string,
+  lang: string,
+  slot: ReturnType<typeof beginDigestAttempt>,
+): null {
+  completeDigestAttempt(variant, lang, slot);
+  // Publication remains inside the shared in-flight promise. Clear the build
+  // identity before that phase starts so an outer response timeout cannot
+  // relabel a completed build as `build-error` and overwrite its canonical
+  // publication with a negative sentinel.
+  return null;
 }
 
 type DigestFeedEntry = { attemptId: string; category: string; feed: ServerFeed };
@@ -2041,7 +2055,7 @@ export async function listFeedDigest(
             const result = await buildDigest(variant, lang, (await revokedPromise).urls);
             const totalItems = Object.values(result.categories).reduce((sum, b) => sum + b.items.length, 0);
             if (totalItems > 0) {
-              completeDigestAttempt(variant, lang, leaderSlot);
+              leaderSlot = finishSuccessfulDigestAttempt(variant, lang, leaderSlot);
               return result;
             }
             leaderFailure = publishFailedAttempt(
@@ -2055,15 +2069,17 @@ export async function listFeedDigest(
             completeDigestAttempt(variant, lang, leaderSlot);
             return null;
           } catch (err) {
-            leaderFailure = publishFailedAttempt(
-              variant,
-              lang,
-              digestCacheKey,
-              leaderSlot,
-              'build-error',
-              30,
-            );
-            completeDigestAttempt(variant, lang, leaderSlot);
+            if (leaderSlot) {
+              leaderFailure = publishFailedAttempt(
+                variant,
+                lang,
+                digestCacheKey,
+                leaderSlot,
+                'build-error',
+                30,
+              );
+              completeDigestAttempt(variant, lang, leaderSlot);
+            }
             throw err;
           }
         },
@@ -2073,13 +2089,30 @@ export async function listFeedDigest(
           // The fetcher publishes attempt + sentinel atomically. Letting the
           // generic wrapper write its own sentinel first would detach identity.
           cacheFailures: false,
+          cachePositiveResult: false,
+          onPositiveResult: async (result) => {
+            if (Date.now() - requestStart <= PUBLISH_DEADLINE_CUTOFF_MS) {
+              const publication = await settleBeforeDeadline(
+                publishAcceptedSnapshot(variant, lang, result, digestCacheKey),
+                responseDeadlineAt,
+                'unavailable',
+              );
+              if (publication === 'unavailable') deferDigestAttempt(digestCacheKey, 30);
+            } else {
+              deferDigestAttempt(digestCacheKey, 30);
+              console.warn(
+                `[digest-lastgood] publish skipped (over deadline budget) variant=${variant} lang=${lang} ` +
+                  `elapsed_ms=${Date.now() - requestStart}`,
+              );
+            }
+          },
           shouldFetch: () => shouldStartDigestAttempt(digestCacheKey),
         },
       ),
       responseDeadlineAt,
       { data: null, source: 'skipped', leader: false },
     );
-    const { data: fresh, source, leader } = cachedResult;
+    const { data: fresh, source } = cachedResult;
 
     if (fresh === null) {
       markNoCacheResponse(ctx.request);
@@ -2126,28 +2159,6 @@ export async function listFeedDigest(
       });
       markNoCacheResponse(ctx.request);
       return empty(fresh.coverage?.attemptedAt || attemptedAt, '');
-    }
-    // Only the coalescing LEADER of a real build publishes: followers resolve
-    // with source 'fresh' too, and each would repeat the full ~126KB guarded
-    // write for a body identical to the one the leader just published. The
-    // deadline gate keeps the worst case inside the 25s Edge ceiling: a
-    // maximally slow build (~19s with its own cache writes) plus this
-    // publish's worst case (~6.5s of Redis timeouts) would exceed it, and
-    // the publish is best-effort by contract — skipping it under pressure
-    // loses nothing the next uncontended build will not restore.
-    if (source === 'fresh' && leader) {
-      if (Date.now() - requestStart <= PUBLISH_DEADLINE_CUTOFF_MS) {
-        await settleBeforeDeadline(
-          publishAcceptedSnapshot(variant, lang, fresh),
-          responseDeadlineAt,
-          undefined,
-        );
-      } else {
-        console.warn(
-          `[digest-lastgood] publish skipped (over deadline budget) variant=${variant} lang=${lang} ` +
-            `elapsed_ms=${Date.now() - requestStart}`,
-        );
-      }
     }
     // #7084: while ANY revocation is live, stop feeding shared caches. This
     // endpoint is the gateway's `slow` tier (s-maxage=1800, CDN-Cache-Control
@@ -3174,6 +3185,7 @@ export const __testing__ = {
   fallbackDigestCache,
   markFallbackCoverageStale,
   settleBeforeDeadline,
+  finishSuccessfulDigestAttempt,
   lastGoodStoreTesting,
   beginDigestAttempt,
   completeDigestAttempt,

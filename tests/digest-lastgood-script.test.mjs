@@ -18,7 +18,9 @@ import { DIGEST_LASTGOOD_PUBLISH_SCRIPT } from '../shared/digest-lastgood-publis
 import { LASTGOOD_MAX_AGE_MS, LASTGOOD_TTL_S } from '../server/worldmonitor/news/v1/_lastgood.ts';
 
 const NOW = Date.UTC(2026, 7, 22, 12, 0, 0);
+const GENERATED_AT = new Date(NOW).toISOString();
 const BODY_KEY = 'news:digest:lastgood:v1:full:en';
+const CANONICAL_KEY = 'news:digest:v1:full:en';
 const REVOKED_KEY = 'news:digest:revoked-urls:v1';
 
 /**
@@ -170,14 +172,184 @@ const publish = ({ data, acceptedAt = NOW, now = NOW, initial = {} }) =>
     redis: makeRedis(initial),
   });
 
+const publishCanonicalAndLastGood = ({ data, acceptedAt = NOW, now = NOW, initial = {} }) =>
+  runScript({
+    keys: [BODY_KEY, REVOKED_KEY, CANONICAL_KEY],
+    argv: [
+      now,
+      LASTGOOD_MAX_AGE_MS,
+      acceptedAt,
+      LASTGOOD_TTL_S,
+      JSON.stringify(data),
+      900,
+      new Date(now - LASTGOOD_MAX_AGE_MS).toISOString(),
+      new Date(now).toISOString(),
+      120,
+    ],
+    redis: makeRedis(initial),
+  });
+
 const bodyOf = (links, extra = {}) => ({
   categories: { politics: { items: links.map((link) => ({ link, tickers: [] })) } },
+  generatedAt: GENERATED_AT,
   ...extra,
 });
 
 const snapshot = (data, acceptedAt) => JSON.stringify({ acceptedAt, categoryCount: 1, itemCount: 1, data });
 
 describe('durable last-good publish gate — executed, not described (#7084)', () => {
+  it('publishes one rich candidate to both canonical and durable keys', () => {
+    const data = bodyOf(['https://a.test/1']);
+    const { result, redis } = publishCanonicalAndLastGood({ data });
+    assert.equal(result, 1);
+    assert.equal(redis.store.get(CANONICAL_KEY), JSON.stringify(data));
+    assert.equal(JSON.parse(redis.store.get(BODY_KEY)).data.categories.politics.items.length, 1);
+    assert.equal(redis.ttls.get(CANONICAL_KEY), 900);
+    assert.equal(redis.ttls.get(BODY_KEY), LASTGOOD_TTL_S);
+  });
+
+  it('keeps the canonical snapshot when the durable incumbent is absent', () => {
+    const rich = {
+      categories: {
+        politics: { items: [{ link: 'https://a.test/1' }] },
+        tech: { items: [{ link: 'https://b.test/1' }] },
+      },
+      generatedAt: GENERATED_AT,
+    };
+    const narrow = bodyOf(['https://c.test/1']);
+    const first = publishCanonicalAndLastGood({ data: rich });
+    const canonicalOnly = Object.fromEntries(first.redis.store);
+    delete canonicalOnly[BODY_KEY];
+
+    const second = publishCanonicalAndLastGood({
+      data: narrow,
+      now: NOW + 60_000,
+      acceptedAt: NOW + 60_000,
+      initial: canonicalOnly,
+    });
+    assert.equal(second.result, 0, 'the canonical incumbent must share the acceptance gate');
+    assert.equal(second.redis.store.get(CANONICAL_KEY), JSON.stringify(rich));
+    assert.equal(second.redis.store.has(BODY_KEY), false);
+  });
+
+  it('keeps both accepted snapshots when a non-empty candidate is materially narrower', () => {
+    const rich = {
+      categories: {
+        politics: { items: [{ link: 'https://a.test/1' }] },
+        tech: { items: [{ link: 'https://b.test/1' }] },
+      },
+      generatedAt: GENERATED_AT,
+    };
+    const narrow = bodyOf(['https://c.test/1']);
+    const first = publishCanonicalAndLastGood({ data: rich });
+    assert.equal(first.result, 1);
+
+    const second = publishCanonicalAndLastGood({
+      data: narrow,
+      now: NOW + 60_000,
+      acceptedAt: NOW + 60_000,
+      initial: Object.fromEntries(first.redis.store),
+    });
+    assert.equal(second.result, 0, 'the shared decision must reject a live narrower candidate');
+    assert.equal(second.redis.store.get(CANONICAL_KEY), JSON.stringify(rich));
+    assert.deepEqual(JSON.parse(second.redis.store.get(BODY_KEY)).data, rich);
+  });
+
+  it('backs off rebuilds when durable rejects and the canonical key is empty', () => {
+    const rich = {
+      categories: {
+        politics: { items: [{ link: 'https://a.test/1' }] },
+        tech: { items: [{ link: 'https://b.test/1' }] },
+      },
+      generatedAt: GENERATED_AT,
+    };
+    const { result, redis } = publishCanonicalAndLastGood({
+      data: bodyOf(['https://c.test/1']),
+      initial: { [BODY_KEY]: snapshot(rich, NOW - 60_000) },
+    });
+    assert.equal(result, 0);
+    assert.equal(redis.store.get(CANONICAL_KEY), JSON.stringify('__WM_NEG__'));
+    assert.equal(redis.ttls.get(CANONICAL_KEY), 120);
+    assert.deepEqual(JSON.parse(redis.store.get(BODY_KEY)).data, rich);
+  });
+
+  it('updates both snapshots for a valid candidate after a rejected one', () => {
+    const rich = {
+      categories: {
+        politics: { items: [{ link: 'https://a.test/1' }] },
+        tech: { items: [{ link: 'https://b.test/1' }] },
+      },
+      generatedAt: GENERATED_AT,
+    };
+    const narrow = bodyOf(['https://c.test/1']);
+    const update = {
+      categories: {
+        politics: { items: [{ link: 'https://d.test/1' }] },
+        tech: { items: [{ link: 'https://e.test/1' }] },
+      },
+      generatedAt: new Date(NOW + 120_000).toISOString(),
+    };
+    const first = publishCanonicalAndLastGood({ data: rich });
+    const rejected = publishCanonicalAndLastGood({
+      data: narrow,
+      now: NOW + 60_000,
+      acceptedAt: NOW + 60_000,
+      initial: Object.fromEntries(first.redis.store),
+    });
+    assert.equal(rejected.result, 0);
+    const accepted = publishCanonicalAndLastGood({
+      data: update,
+      now: NOW + 120_000,
+      acceptedAt: NOW + 120_000,
+      initial: Object.fromEntries(rejected.redis.store),
+    });
+    assert.equal(accepted.result, 1);
+    assert.equal(accepted.redis.store.get(CANONICAL_KEY), JSON.stringify(update));
+    assert.deepEqual(JSON.parse(accepted.redis.store.get(BODY_KEY)).data, update);
+  });
+
+  it('does not let a malformed, future, or expired canonical clock veto replacement', () => {
+    const cases = [
+      { name: 'missing', generatedAt: undefined },
+      { name: 'malformed', generatedAt: 'not-a-date' },
+      { name: 'invalid calendar date', generatedAt: '2026-02-30T12:00:00.000Z' },
+      { name: 'future', generatedAt: new Date(NOW + 1).toISOString() },
+      { name: 'expired', generatedAt: new Date(NOW - LASTGOOD_MAX_AGE_MS - 1).toISOString() },
+    ];
+    for (const testCase of cases) {
+      const rich = {
+        categories: {
+          politics: { items: [{ link: 'https://a.test/1' }] },
+          tech: { items: [{ link: 'https://b.test/1' }] },
+        },
+        ...(testCase.generatedAt === undefined ? {} : { generatedAt: testCase.generatedAt }),
+      };
+      const { result, redis } = publishCanonicalAndLastGood({
+        data: bodyOf(['https://c.test/1']),
+        initial: { [CANONICAL_KEY]: JSON.stringify(rich) },
+      });
+      assert.equal(result, 1, `${testCase.name} canonical content cannot veto a valid candidate`);
+      assert.equal(redis.store.get(CANONICAL_KEY), JSON.stringify(bodyOf(['https://c.test/1'])));
+    }
+  });
+
+  it('does not let a canonical body with no servable items veto replacement', () => {
+    const unusable = {
+      categories: {
+        politics: { items: [] },
+        tech: { items: [] },
+      },
+      generatedAt: GENERATED_AT,
+    };
+    const candidate = bodyOf(['https://c.test/1']);
+    const { result, redis } = publishCanonicalAndLastGood({
+      data: candidate,
+      initial: { [CANONICAL_KEY]: JSON.stringify(unusable) },
+    });
+    assert.equal(result, 1);
+    assert.equal(redis.store.get(CANONICAL_KEY), JSON.stringify(candidate));
+  });
+
   it('writes when there is no incumbent, and stores the body BYTE-FOR-BYTE', () => {
     const data = bodyOf(['https://a.test/1']);
     const { result, redis } = publish({ data });
