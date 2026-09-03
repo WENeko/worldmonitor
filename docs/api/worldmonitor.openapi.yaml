@@ -3432,7 +3432,7 @@ paths:
                         description: "Accepted values are active, paused, and removed."
                 - name: coverage
                   in: query
-                  description: Accepted values are awaiting_first_scan, adequate, partial, stale, unavailable, and needs_confirmation.
+                  description: Accepted values are awaiting_first_scan, identity_unresolved, adequate, partial, stale, unavailable, and needs_confirmation.
                   required: false
                   style: form
                   explode: true
@@ -3442,8 +3442,7 @@ paths:
                     type: array
                     items:
                         type: "string"
-                        pattern: "^(?:awaiting_first_scan|adequate|partial|stale|unavailable|needs_confirmation|COMPANY_COVERAGE_STATE_(?:AWAITING_FIRST_SCAN|ADEQUATE|PARTIAL|STALE|UNAVAILABLE|NEEDS_CONFIRMATION))$"
-                        description: "Accepted values are awaiting_first_scan, adequate, partial, stale, unavailable, and needs_confirmation."
+                        pattern: "^(?:awaiting_first_scan|identity_unresolved|adequate|partial|stale|unavailable|needs_confirmation|COMPANY_COVERAGE_STATE_(?:AWAITING_FIRST_SCAN|IDENTITY_UNRESOLVED|ADEQUATE|PARTIAL|STALE|UNAVAILABLE|NEEDS_CONFIRMATION))$"
                 - name: page_size
                   in: query
                   description: Maximum rows to return, from 1 through 100; zero requests the server default.
@@ -12813,10 +12812,11 @@ paths:
                     minLength: 1
                     maxLength: 255
                     pattern: "^[\\x21-\\x7E]{1,255}$"
+            deprecated: true
             tags:
                 - InfrastructureService
             summary: RecordBaselineSnapshot
-            description: RecordBaselineSnapshot batch-updates baseline statistics using Welford's online algorithm.
+            description: RecordBaselineSnapshot is deprecated and DISABLED. Client-supplied shared baseline writes are rejected.
             operationId: RecordBaselineSnapshot
             requestBody:
                 content:
@@ -12824,7 +12824,7 @@ paths:
                         example:
                             "updates":
                                 - "count": 1
-                                  "region": "example"
+                                  "region": "global"
                                   "type": "military_flights"
                         schema:
                             $ref: '#/components/schemas/worldmonitor_infrastructure_v1_RecordBaselineSnapshotRequest'
@@ -37736,7 +37736,8 @@ components:
                         - COMPANY_COVERAGE_STATE_STALE
                         - COMPANY_COVERAGE_STATE_UNAVAILABLE
                         - COMPANY_COVERAGE_STATE_NEEDS_CONFIRMATION
-                    description: CompanyCoverageState reports source and assessment readiness, not event count.
+                        - COMPANY_COVERAGE_STATE_IDENTITY_UNRESOLVED
+                    description: IDENTITY_UNRESOLVED must not be reported as quiet.
                 observation:
                     type: string
                     enum:
@@ -37974,9 +37975,8 @@ components:
                     type: array
                     items:
                         type: "string"
-                        pattern: "^(?:awaiting_first_scan|adequate|partial|stale|unavailable|needs_confirmation|COMPANY_COVERAGE_STATE_(?:AWAITING_FIRST_SCAN|ADEQUATE|PARTIAL|STALE|UNAVAILABLE|NEEDS_CONFIRMATION))$"
-                        description: "Accepted values are awaiting_first_scan, adequate, partial, stale, unavailable, and needs_confirmation."
-                    maxItems: 6
+                        pattern: "^(?:awaiting_first_scan|identity_unresolved|adequate|partial|stale|unavailable|needs_confirmation|COMPANY_COVERAGE_STATE_(?:AWAITING_FIRST_SCAN|IDENTITY_UNRESOLVED|ADEQUATE|PARTIAL|STALE|UNAVAILABLE|NEEDS_CONFIRMATION))$"
+                    maxItems: 7
                 pageSize:
                     type: integer
                     maximum: 100
@@ -38320,7 +38320,8 @@ components:
                         - COMPANY_COVERAGE_STATE_STALE
                         - COMPANY_COVERAGE_STATE_UNAVAILABLE
                         - COMPANY_COVERAGE_STATE_NEEDS_CONFIRMATION
-                    description: CompanyCoverageState reports source and assessment readiness, not event count.
+                        - COMPANY_COVERAGE_STATE_IDENTITY_UNRESOLVED
+                    description: IDENTITY_UNRESOLVED must not be reported as quiet.
                 observation:
                     type: string
                     enum:
@@ -42929,7 +42930,7 @@ components:
                     type: array
                     items:
                         $ref: '#/components/schemas/worldmonitor_infrastructure_v1_BaselineUpdate'
-            description: RecordBaselineSnapshotRequest batch-updates baselines using Welford's online algorithm.
+            description: RecordBaselineSnapshotRequest is retained for compatibility. Client writes are disabled.
         worldmonitor_infrastructure_v1_BaselineUpdate:
             type: object
             properties:
@@ -42939,25 +42940,26 @@ components:
                     description: Activity type key.
                 region:
                     type: string
-                    description: Geographic region key, defaults to "global".
+                    description: Geographic region key. Only the global baseline is defined.
+                    const: global
                 count:
                     type: number
                     format: double
-                    description: Observed count value.
+                    description: Submitted count. The disabled endpoint does not persist this value.
             required:
                 - type
-            description: BaselineUpdate is a single metric observation to incorporate into the running baseline.
+            description: BaselineUpdate retains the request shape of the disabled compatibility endpoint.
         worldmonitor_infrastructure_v1_RecordBaselineSnapshotResponse:
             type: object
             properties:
                 updated:
                     type: integer
                     format: int32
-                    description: Number of baselines that were written.
+                    description: Always zero because the endpoint is disabled.
                 error:
                     type: string
                     description: Error message if the request was invalid.
-            description: RecordBaselineSnapshotResponse reports how many baselines were successfully updated.
+            description: RecordBaselineSnapshotResponse reports that no client baseline was updated.
         worldmonitor_infrastructure_v1_GetCableHealthRequest:
             type: object
             description: GetCableHealthRequest requests the current health status of all monitored submarine cables.

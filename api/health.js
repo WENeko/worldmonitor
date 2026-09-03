@@ -1438,10 +1438,10 @@ const SEED_META = {
   intelHistoryIngestConflictAcled:       { key: 'seed-meta:intel-history:conflict:acled-intel',            maxStaleMin: 38 },  // mirrors acledIntel
   intelHistoryIngestMilitaryCrossStrait: { key: 'seed-meta:intel-history:military:cross-strait-activity',  maxStaleMin: 720 }, // mirrors crossStraitActivity
   intelHistoryIngestEnergyIntelligence:  { key: 'seed-meta:intel-history:energy:intelligence',             maxStaleMin: 720 }, // mirrors energyIntelligence
-  // Unofficial tsimobile.viarail.ca JSON. Optional: 404/shape-break writes
-  // sourceState unavailable (NOT_CONFIGURED) rather than SEED_ERROR. 15min
-  // cron; 45 = 3x cadence. EMPTY_DATA_OK so an unconfigured deploy is STALE_SEED
-  // (warn), not EMPTY (crit), until the first producer tick.
+  // Unofficial tsimobile.viarail.ca JSON. The source needs no credentials, so
+  // fetch/shape failures write sourceState stale and surface as SEED_ERROR when
+  // no last-good value exists. 15min cron; 45 = 3x cadence. EMPTY_DATA_OK makes
+  // a pre-first-publish absence STALE_SEED (warn), not EMPTY (crit).
   viarailLive: {
     key: 'seed-meta:transit:viarail-live',
     maxStaleMin: 45,
@@ -3034,6 +3034,7 @@ function projectChinaCoverageStatus(raw, readError = false) {
   if (
     status === 'CHINA_DEGRADED'
     && candidate.degradedStreak === CHINA_DEGRADED_MIN_CONSECUTIVE - 1
+    && typeof candidate.degradedProblemKey === 'string'
   ) {
     status = 'OK';
   }
@@ -3051,6 +3052,9 @@ function projectChinaCoverageStatus(raw, readError = false) {
     // debounce becomes indistinguishable from health.
     ...(Number.isInteger(candidate.degradedStreak)
       ? { degradedStreak: candidate.degradedStreak }
+      : {}),
+    ...(typeof candidate.degradedProblemKey === 'string'
+      ? { degradedProblemKey: candidate.degradedProblemKey }
       : {}),
     ...(problems.length > 0 ? { problems } : {}),
   };
@@ -3260,14 +3264,15 @@ function computeOverallStatus(counts, totalChecks) {
 }
 
 // Failure-log / ?history=1 problem set. Distinct from the compact `problems` map
-// in exactly one way: EMPTY_ON_DEMAND is suppressed here. It is warn-level for
-// visibility only (realWarnCount subtracts it, it never flips `overall`), so an
-// unrequested on-demand key must not pollute the incident signature and cause a
-// spurious failure-log append. That single exception is the ONLY divergence —
-// everything else defers to isProblemStatus.
-function collectFailureLogProblems(checks) {
+// because EMPTY_ON_DEMAND and active stale-content grace are not active faults.
+// Both remain visible in diagnostics without polluting the incident signature.
+function collectFailureLogProblems(checks, now = Date.now()) {
   const entries = Object.entries(checks)
-    .filter(([, c]) => isProblemStatus(c.status) && c.status !== 'EMPTY_ON_DEMAND');
+    .filter(([, c]) => (
+      isProblemStatus(c.status)
+      && healthStatusBucket(c, now) !== 'ok'
+      && c.status !== 'EMPTY_ON_DEMAND'
+    ));
   return {
     problemKeys: entries.map(([k, c]) => `${k}:${c.status}${c.seedAgeMin != null ? `(${c.seedAgeMin}min)` : ''}`),
     // The dedupe signature uses only key:status (no age) so a long STALE_SEED
@@ -3732,7 +3737,7 @@ export async function handleHealth(req, ctx, options = {}) {
     // problemKeys includes seedAgeMin for the snapshot (useful for post-mortem),
     // but the dedupe signature uses only key:status (no age) so a long STALE_SEED
     // window doesn't produce a new log entry on every poll.
-    const { problemKeys, sigKeys } = collectFailureLogProblems(checks);
+    const { problemKeys, sigKeys } = collectFailureLogProblems(checks, evaluationNow);
     console.log('[health] %s problems=[%s]', overall, problemKeys.join(', '));
     const failureLogEntry = {
       at: new Date(evaluationNow).toISOString(),
