@@ -20,12 +20,24 @@ scheduled; `seed-conflict-intel.mjs` itself skips ACLED when
 
 | Name | Cadence | Seed script | Covers (health keys) |
 |---|---|---|---|
-| `insights` | 15 min | `seed-insights.mjs` | `newsInsights` → `get_world_brief`, `get_news_intelligence` (headlines-only without `OPENROUTER_API_KEY`, LLM-enriched with it) |
-| `ucdp` | 15 min | `seed-ucdp-events.mjs` | `ucdpEvents` (+ bootstrap) |
-| `conflict` | 15 min | `seed-conflict-intel.mjs` | `acledIntel` via HAPI HDX (ACLED-derived, open), GDELT conflict feed, humanitarian keys |
-| `gdelt-bulk` | 30 min | `seed-gdelt-bulk-materializer.mjs` | `gdeltIntel` (the production producer since #5843) |
-| `military-flights` | 10 min | `seed-military-flights.mjs` | `militaryFlights` (live) — keyless via adsb.lol + Wingbits; feeds `get_hotspot_escalation` flight inputs |
-| `social-velocity` | 3 h | `seed-social-velocity.mjs` (fork-owned, in this dir) | `socialVelocity` → `get_social_velocity` — mini port of the relay's Reddit loop (worldnews + geopolitics, velocity-scored) |
+| `insights` | 2 h | `seed-insights.mjs` | `newsInsights` → `get_world_brief`, `get_news_intelligence` (headlines-only without `OPENROUTER_API_KEY`, LLM-enriched with it) |
+| `ucdp` | disabled | `seed-ucdp-events.mjs` | `ucdpEvents` (+ bootstrap) — off until `UCDP_ACCESS_TOKEN` is set |
+| `conflict` | 60 min | `seed-conflict-intel.mjs` | `acledIntel` via HAPI HDX (ACLED-derived, open), GDELT conflict feed, humanitarian keys |
+| `gdelt-bulk` | 2 h | `seed-gdelt-bulk-materializer.mjs` | `gdeltIntel` (the production producer since #5843) — 2 h is the hard ceiling (8-file catch-up cap) |
+| `military-flights` | 60 min | `seed-military-flights.mjs` | `militaryFlights` — keyless via adsb.lol + Wingbits; data stays present via 24 h STALE fallback keys |
+| `social-velocity` | 6 h | `seed-social-velocity.mjs` (fork-owned, in this dir) | `socialVelocity` → `get_social_velocity` — mini port of the relay's Reddit loop (worldnews + geopolitics, velocity-scored) |
+
+Cadences are stretched from upstream defaults to fit the Upstash free tier
+(500k commands/month per database) — each seeder issues several individual
+REST commands per run, so run frequency, not payload size, dominates quota
+burn. The 12-hourly `seed-upstash.yml` full-fleet cron (the previous biggest
+burner, tens of thousands of commands per run) was removed 2026-09-02; on
+2026-09-03 the cadences above were stretched again after the fork DB reached
+431k/500k monthly commands. Each cadence is bounded by the seeder's own data
+TTL so keys never expire between runs; the fork accepts `STALE` health flags
+on the stretched datasets (cosmetic for the Hermès/MCP consumers). Re-tighten
+after a paid upgrade. Rationale and measurements:
+`run-seeds.sh`.
 
 `social-velocity` fetch precedence (mirrors the relay): ScrapeCreators when
 `SCRAPECREATORS_API_KEY` is set, then Reddit OAuth when `REDDIT_CLIENT_ID` +

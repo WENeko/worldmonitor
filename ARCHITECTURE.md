@@ -57,13 +57,13 @@ GitHub Actions seed-upstash.yml (manual only — cron removed 2026-09-02) → sa
 | Seeder | Cadence | Sources | Data key written |
 |---|---|---|---|
 | `conflict` | 60 min | HAPI HDX (ACLED-derived), GDELT | `intelligence:conflict:v1` |
-| `gdelt-bulk` | 60 min | GDELT bulk materializer | `intelligence:gdelt-intel:v1` |
-| `insights` | 60 min | Fork RPC digest warm (`list-feed-digest`) + optional LLM briefs | `news:insights:v1` |
-| `military-flights` | 30 min | adsb.lol (keyless), Wingbits (optional key) | `military:flights:v1` |
-| `social-velocity` | 3 h | ScrapeCreators → Reddit OAuth → public (relay parity) | `intelligence:social:reddit:v1` |
+| `gdelt-bulk` | 2 h | GDELT bulk materializer | `intelligence:gdelt-intel:v1` |
+| `insights` | 2 h | Fork RPC digest warm (`list-feed-digest`) + optional LLM briefs | `news:insights:v1` |
+| `military-flights` | 60 min | adsb.lol (keyless), Wingbits (optional key) | `military:flights:v1` |
+| `social-velocity` | 6 h | ScrapeCreators → Reddit OAuth → public (relay parity) | `intelligence:social:reddit:v1` |
 | `ucdp` | disabled | UCDP GED API (requires `UCDP_ACCESS_TOKEN`; until then it only burned quota on 401 retries) | `ucdp:events:*` |
 
-Cadences are stretched from upstream defaults to fit the Upstash free tier (500k commands/month per database) — each seeder issues several individual REST commands per run, so run frequency, not payload size, dominates quota burn. The fork accepts `STALE` health flags on the stretched datasets (cosmetic for the Hermès/MCP consumers). Rationale and measurements: `deploy/oci/seeds-lite/run-seeds.sh`.
+Cadences are stretched from upstream defaults to fit the Upstash free tier (500k commands/month per database) — each seeder issues several individual REST commands per run, so run frequency, not payload size, dominates quota burn. `seed-upstash.yml`'s 12-hourly full-fleet cron (tens of thousands of commands per run) was removed 2026-09-02; on 2026-09-03 these cadences were stretched again after the fork DB hit 431k/500k monthly commands. Each cadence is bounded by the seeder's own data TTL so keys never expire between runs (`conflict` is pinned at 60 min by its 45-min `ACLED_TTL` publish TTL; `gdelt-bulk` at 2 h by its 8-file catch-up cap). The fork accepts `STALE` health flags on the stretched datasets (cosmetic for the Hermès/MCP consumers). Rationale and measurements: `deploy/oci/seeds-lite/run-seeds.sh`.
 
 ### feed-intel news layer (Hermès Macro Director)
 

@@ -38,24 +38,38 @@ command -v timeout >/dev/null 2>&1 || fail "timeout(1) not found in image"
 
 # name | cadence_seconds | seed script | per-run cap seconds
 # Cadences are intentionally LOOSER than upstream defaults to stay inside the
-# Upstash free tier (500k requests/month per database). Each seeder issues
+# Upstash free tier (500k commands/month per database). Each seeder issues
 # several individual REST commands per run (no pipelining), so run frequency
 # — not payload size — dominates quota burn. Measured bottleneck:
 # military-flights at 10min ≈ 23 commands/run ≈ ~100k req/month alone.
 # Trade-off accepted: fork health may report STALE for stretched datasets
 # (cosmetic for the Hermès/MCP consumers). Re-tighten after a paid upgrade.
-#   - military-flights: 30min (health maxStaleMin=30) — was 10min
-#   - ucdp: DISABLED until UCDP_ACCESS_TOKEN is provided (it only burned quota
-#     on 401 retries every 15min; re-enable after the token lands)
-#   - insights/conflict/gdelt-bulk: 60min — was 15/15/30min
-#   - social-velocity: relay parity (ais-relay.cjs runs every 3h; faster
-#     polling trips Reddit datacenter-IP rate limits)
+#
+# 2026-09-03 — deeper stretch after the fork DB hit 431k/500k monthly
+# commands (the other big burner, the 12-hourly seed-upstash.yml full-fleet
+# cron, was removed 2026-09-02; this run is now the only 24/7 writer). New
+# cadences are bounded by each seeder's own data TTL so keys never expire
+# between runs:
+#   - insights: 120min (CACHE_TTL=3h leaves 1h headroom; also halves the
+#     digest-warm HTTP calls to the fork, whose Redis reads count too)
+#   - conflict: 60min UNCHANGED — publish TTL is 2700s (45min,
+#     ACLED_TTL in seed-conflict-intel.mjs), so a slower cadence would make
+#     the acledIntel key expire between runs (EMPTY crit instead of STALE)
+#   - gdelt-bulk: 120min — hard ceiling: each run catches up at most 8
+#     GDELT files/kind (MAX_CATCHUP_FILES_PER_KIND), 15min apart = 2h.
+#     Output TTLs (4.5h-48h) all outlive a 2h cadence. On a late tick the
+#     oldest 15-min slice is silently dropped (coverage gap, no crash)
+#   - military-flights: 60min (was 30; health maxStaleMin=30 → STALE flag,
+#     data stays present via the 24h STALE_TTL fallback keys)
+#   - social-velocity: 6h (DATA_TTL=12h, health maxStaleMin=540min)
+#   - ucdp: DISABLED until UCDP_ACCESS_TOKEN is provided (it only burned
+#     quota on 401 retries every 15min; re-enable after the token lands)
 PLAN="
-insights         | 3600 | seed-insights.mjs                | 1200
+insights         | 7200 | seed-insights.mjs                | 1200
 conflict         | 3600 | seed-conflict-intel.mjs          | 1500
-gdelt-bulk       | 3600 | seed-gdelt-bulk-materializer.mjs | 2400
-military-flights | 1800 | seed-military-flights.mjs        | 600
-social-velocity  | 10800| seed-social-velocity.mjs         | 300
+gdelt-bulk       | 7200 | seed-gdelt-bulk-materializer.mjs | 2400
+military-flights | 3600 | seed-military-flights.mjs        | 600
+social-velocity  | 21600| seed-social-velocity.mjs         | 300
 "
 
 should_run() {
