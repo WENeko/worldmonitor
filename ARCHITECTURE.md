@@ -56,14 +56,14 @@ GitHub Actions seed-upstash.yml (manual only — cron removed 2026-09-02) → sa
 
 | Seeder | Cadence | Sources | Data key written |
 |---|---|---|---|
-| `conflict` | 60 min | HAPI HDX (ACLED-derived), GDELT | `intelligence:conflict:v1` |
+| `conflict` | 3 h | HAPI HDX (ACLED-derived), GDELT | `intelligence:conflict:v1` |
 | `gdelt-bulk` | 2 h | GDELT bulk materializer | `intelligence:gdelt-intel:v1` |
-| `insights` | 2 h | Fork RPC digest warm (`list-feed-digest`) + optional LLM briefs | `news:insights:v1` |
+| `insights` | 3 h | Fork RPC digest warm (`list-feed-digest`) + optional LLM briefs | `news:insights:v1` |
 | `military-flights` | 60 min | adsb.lol (keyless), Wingbits (optional key) | `military:flights:v1` |
 | `social-velocity` | 6 h | ScrapeCreators → Reddit OAuth → public (relay parity) | `intelligence:social:reddit:v1` |
 | `ucdp` | disabled | UCDP GED API (requires `UCDP_ACCESS_TOKEN`; until then it only burned quota on 401 retries) | `ucdp:events:*` |
 
-Cadences are stretched from upstream defaults to fit the Upstash free tier (500k commands/month per database) — each seeder issues several individual REST commands per run, so run frequency, not payload size, dominates quota burn. `seed-upstash.yml`'s 12-hourly full-fleet cron (tens of thousands of commands per run) was removed 2026-09-02; on 2026-09-03 these cadences were stretched again after the fork DB hit 431k/500k monthly commands. Each cadence is bounded by the seeder's own data TTL so keys never expire between runs (`conflict` is pinned at 60 min by its 45-min `ACLED_TTL` publish TTL; `gdelt-bulk` at 2 h by its 8-file catch-up cap). The fork accepts `STALE` health flags on the stretched datasets (cosmetic for the Hermès/MCP consumers). Rationale and measurements: `deploy/oci/seeds-lite/run-seeds.sh`.
+Cadences are stretched from upstream defaults to fit the Upstash free tier (500k commands/month per database) — each seeder issues several individual REST commands per run, so run frequency, not payload size, dominates quota burn. `seed-upstash.yml`'s 12-hourly full-fleet cron (tens of thousands of commands per run) was removed 2026-09-02; on 2026-09-03 these cadences were stretched twice after the fork DB hit 431k/500k monthly commands (`gdelt-bulk` stays at 2 h — its 8-file catch-up cap is a hard ceiling). Each cadence is bounded by the seeder's data TTL so keys never expire between runs; to un-pin `conflict` and `insights` from their upstream TTLs (45-min `ACLED_TTL` / 10-min `PIZZINT_TTL` / 3-h `CACHE_TTL`), the seeds-lite image re-applies fork TTL overrides at build time via `deploy/oci/seeds-lite/patch-ttls.mjs` (ACLED_TTL and PIZZINT_TTL to 4 h, CACHE_TTL to 6 h — an upstream sync can revert in-place edits of `scripts/`, so the patch re-anchors at every build). The fork accepts `STALE` health flags on the stretched datasets (cosmetic for the Hermès/MCP consumers). Rationale and measurements: `deploy/oci/seeds-lite/run-seeds.sh`.
 
 ### feed-intel news layer (Hermès Macro Director)
 
@@ -105,6 +105,7 @@ Cadences are stretched from upstream defaults to fit the Upstash free tier (500k
 ### Fork-local source patches (must survive upstream syncs)
 
 - `api/mcp/dispatch.ts` — attach `structuredContent` (parsed JSON text) to `tools/call` results. Registry tools advertise an `outputSchema`; strict agents (Hermès) raise `Tool … did not return structured content` when it is absent. Held in `prepare-vercel.mjs`'s patch seam or re-applied after each sync (currently only on `oci-trading-stack`).
+- `deploy/oci/seeds-lite/patch-ttls.mjs` — re-applies the seeds-lite TTL overrides (ACLED/PIZZINT to 4 h, insights CACHE_TTL to 6 h) inside the image at build time. Lives under fork-owned `deploy/oci`, so the sync never touches it; it patches the upstream-owned `scripts/` copy the Dockerfile just laid down and fails the build if an anchor constant moved upstream.
 
 ---
 

@@ -20,9 +20,9 @@ scheduled; `seed-conflict-intel.mjs` itself skips ACLED when
 
 | Name | Cadence | Seed script | Covers (health keys) |
 |---|---|---|---|
-| `insights` | 2 h | `seed-insights.mjs` | `newsInsights` → `get_world_brief`, `get_news_intelligence` (headlines-only without `OPENROUTER_API_KEY`, LLM-enriched with it) |
+| `insights` | 3 h | `seed-insights.mjs` | `newsInsights` → `get_world_brief`, `get_news_intelligence` (headlines-only without `OPENROUTER_API_KEY`, LLM-enriched with it) — CACHE_TTL patched to 6 h in the image leaves 3 h headroom |
 | `ucdp` | disabled | `seed-ucdp-events.mjs` | `ucdpEvents` (+ bootstrap) — off until `UCDP_ACCESS_TOKEN` is set |
-| `conflict` | 60 min | `seed-conflict-intel.mjs` | `acledIntel` via HAPI HDX (ACLED-derived, open), GDELT conflict feed, humanitarian keys |
+| `conflict` | 3 h | `seed-conflict-intel.mjs` | `acledIntel` via HAPI HDX (ACLED-derived, open), GDELT conflict feed, humanitarian keys — ACLED/PIZZINT TTLs patched to 4 h in the image leave 1 h headroom |
 | `gdelt-bulk` | 2 h | `seed-gdelt-bulk-materializer.mjs` | `gdeltIntel` (the production producer since #5843) — 2 h is the hard ceiling (8-file catch-up cap) |
 | `military-flights` | 60 min | `seed-military-flights.mjs` | `militaryFlights` — keyless via adsb.lol + Wingbits; data stays present via 24 h STALE fallback keys |
 | `social-velocity` | 6 h | `seed-social-velocity.mjs` (fork-owned, in this dir) | `socialVelocity` → `get_social_velocity` — mini port of the relay's Reddit loop (worldnews + geopolitics, velocity-scored) |
@@ -32,12 +32,22 @@ Cadences are stretched from upstream defaults to fit the Upstash free tier
 REST commands per run, so run frequency, not payload size, dominates quota
 burn. The 12-hourly `seed-upstash.yml` full-fleet cron (the previous biggest
 burner, tens of thousands of commands per run) was removed 2026-09-02; on
-2026-09-03 the cadences above were stretched again after the fork DB reached
-431k/500k monthly commands. Each cadence is bounded by the seeder's own data
-TTL so keys never expire between runs; the fork accepts `STALE` health flags
-on the stretched datasets (cosmetic for the Hermès/MCP consumers). Re-tighten
-after a paid upgrade. Rationale and measurements:
+2026-09-03 the cadences above were stretched twice after the fork DB reached
+431k/500k monthly commands (first pass: 2026-09-03 `d3b77966`; second pass,
+this one, pushes `conflict` and `insights` to 3 h). Each cadence is bounded by
+the seeder's data TTL so keys never expire between runs; the fork accepts
+`STALE` health flags on the stretched datasets (cosmetic for the Hermès/MCP
+consumers). Re-tighten after a paid upgrade. Rationale and measurements:
 `run-seeds.sh`.
+
+`conflict` and `insights` were previously pinned to shorter cadences by their
+upstream TTLs (45 min ACLED / 10 min PIZZINT / 3 h CACHE_TTL). Because an
+upstream sync can silently revert in-place edits of `scripts/`, the image
+re-applies fork TTL overrides at build time — `patch-ttls.mjs` runs from the
+Dockerfile after `COPY scripts/` and rewrites the exact upstream constant
+lines (ACLED_TTL and PIZZINT_TTL to 4 h in `seed-conflict-intel.mjs`,
+CACHE_TTL to 6 h in `seed-insights.mjs`), failing the build loudly if an
+anchor moves upstream.
 
 `social-velocity` fetch precedence (mirrors the relay): ScrapeCreators when
 `SCRAPECREATORS_API_KEY` is set, then Reddit OAuth when `REDDIT_CLIENT_ID` +
@@ -49,6 +59,7 @@ free Reddit OAuth "script" app (`reddit.com/prefs/apps`, redirect uri
 the seeder logs the 403 and retries each tick.
 
 Not covered (relay/credential-gated, documented):
+
 - `risk:scores:sebuf:v8` / `intelligence:military-cii:v1` → written by
   `seed-military-cii.mjs`, which requires the relay's `WS_RELAY_URL` AIS vessel
   feed, and the risk scores themselves are computed live by the Vercel edge

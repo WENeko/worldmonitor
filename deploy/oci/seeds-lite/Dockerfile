@@ -31,6 +31,13 @@ WORKDIR /app
 COPY scripts/ ./scripts/
 COPY deploy/oci/seeds-lite/seed-social-velocity.mjs ./scripts/
 
+# Fork TTL overrides: re-apply the cadence-enabling TTL constants that an
+# upstream sync can silently revert in scripts/ (see patch-ttls.mjs). Fails
+# the build loudly if an anchor moved upstream, so a rename is reviewed
+# rather than silently skipped.
+COPY deploy/oci/seeds-lite/patch-ttls.mjs /tmp/patch-ttls.mjs
+RUN node /tmp/patch-ttls.mjs /app/scripts && rm /tmp/patch-ttls.mjs
+
 # papaparse (scripts/_conflict-hapi.mjs) is the ONLY external dep the
 # scheduled seeders import (verified by walking the import closure of the
 # four scheduled scripts), and it is pure JS. Install it in a scratch dir:

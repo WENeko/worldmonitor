@@ -47,26 +47,34 @@ command -v timeout >/dev/null 2>&1 || fail "timeout(1) not found in image"
 #
 # 2026-09-03 — deeper stretch after the fork DB hit 431k/500k monthly
 # commands (the other big burner, the 12-hourly seed-upstash.yml full-fleet
-# cron, was removed 2026-09-02; this run is now the only 24/7 writer). New
-# cadences are bounded by each seeder's own data TTL so keys never expire
-# between runs:
-#   - insights: 120min (CACHE_TTL=3h leaves 1h headroom; also halves the
-#     digest-warm HTTP calls to the fork, whose Redis reads count too)
-#   - conflict: 60min UNCHANGED — publish TTL is 2700s (45min,
-#     ACLED_TTL in seed-conflict-intel.mjs), so a slower cadence would make
-#     the acledIntel key expire between runs (EMPTY crit instead of STALE)
-#   - gdelt-bulk: 120min — hard ceiling: each run catches up at most 8
+# cron, was removed 2026-09-02; this run is now the only 24/7 writer).
+#
+# Second pass later the same day: the image now re-applies fork TTL overrides
+# at build time (deploy/oci/seeds-lite/patch-ttls.mjs — an upstream sync can
+# revert in-place edits of scripts/), which un-pins the two seeders whose
+# upstream TTLs previously capped the cadence. Patched inside the image:
+# ACLED_TTL 2700->14400s (4h) and PIZZINT_TTL 600->14400s (4h) in
+# seed-conflict-intel.mjs, CACHE_TTL 10800->21600s (6h) in
+# seed-insights.mjs. Cadences below are bounded by the PATCHED TTLs so keys
+# never expire between runs:
+#   - insights: 3h (CACHE_TTL=6h leaves 3h headroom against a missed/late
+#     tick; also cuts the digest-warm HTTP calls to the fork, whose Redis
+#     reads count too)
+#   - conflict: 3h (was 60min, itself pinned by the 45min upstream
+#     ACLED_TTL; the patched 4h TTL leaves 1h headroom)
+#   - gdelt-bulk: 2h — hard ceiling: each run catches up at most 8
 #     GDELT files/kind (MAX_CATCHUP_FILES_PER_KIND), 15min apart = 2h.
 #     Output TTLs (4.5h-48h) all outlive a 2h cadence. On a late tick the
 #     oldest 15-min slice is silently dropped (coverage gap, no crash)
 #   - military-flights: 60min (was 30; health maxStaleMin=30 → STALE flag,
-#     data stays present via the 24h STALE_TTL fallback keys)
+#     data stays present via the 24h STALE_TTL fallback keys). Most
+#     freshness-sensitive dataset — deliberately not stretched further.
 #   - social-velocity: 6h (DATA_TTL=12h, health maxStaleMin=540min)
 #   - ucdp: DISABLED until UCDP_ACCESS_TOKEN is provided (it only burned
 #     quota on 401 retries every 15min; re-enable after the token lands)
 PLAN="
-insights         | 7200 | seed-insights.mjs                | 1200
-conflict         | 3600 | seed-conflict-intel.mjs          | 1500
+insights         | 10800| seed-insights.mjs                | 1200
+conflict         | 10800| seed-conflict-intel.mjs          | 1500
 gdelt-bulk       | 7200 | seed-gdelt-bulk-materializer.mjs | 2400
 military-flights | 3600 | seed-military-flights.mjs        | 600
 social-velocity  | 21600| seed-social-velocity.mjs         | 300
