@@ -3,6 +3,13 @@
 
 model_list:
   # All entries share the public alias requested by Vibe-Trading.
+  # Set at least ONE provider key in .env. Keys are checked at call time:
+  # a provider whose key is missing fails that attempt and LiteLLM retries /
+  # falls back across the group. GEMINI_API_KEY and GROQ_API_KEY have free
+  # tiers; DEEPSEEK_API_KEY is pay-per-token.
+  # The former OpenRouter free alias (meta-llama/llama-3.3-70b-instruct:free)
+  # was retired by OpenRouter (HTTP 404 "unavailable for free") and removed;
+  # paid OpenRouter models can be re-added as openrouter/<slug> with credits.
   - model_name: vibe-trading-critical
     litellm_params:
       model: deepseek/deepseek-chat
@@ -12,11 +19,6 @@ model_list:
     litellm_params:
       model: gemini/gemini-2.5-flash
       api_key: os.environ/GEMINI_API_KEY
-
-  - model_name: vibe-trading-critical
-    litellm_params:
-      model: openrouter/meta-llama/llama-3.3-70b-instruct:free
-      api_key: os.environ/OPENROUTER_API_KEY
 
   - model_name: vibe-trading-utility
     litellm_params:
