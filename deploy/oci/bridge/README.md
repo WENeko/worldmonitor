@@ -46,9 +46,16 @@ Hermès (Macro Director)                    bridge container                  Vi
 - **Exchange volume** `bridge_data` is the ring buffer:
   - `/var/lib/bridge/directives` — owned by uid 1000 (Hermès's
     `HERMES_UID` default); Hermès drops directive JSON here.
-  - `/var/lib/bridge/executions` — owned by the bridge runtime user; one
-    receipt JSON per `directive_id`, plus `audit/audits.jsonl`.
-  - Hermès sees the same volume as `/opt/data/bridge`.
+  - `/var/lib/bridge/executions` — owned by the bridge runtime user
+    (`vibe`, a system uid < 1000) and mode 0755 so Hermès (uid 1000) can
+    read receipts back; one receipt JSON per `directive_id`, plus
+    `audit/audits.jsonl`.
+  - Hermès sees the same volume as `/opt/data/bridge` (mounted inside the
+    hermes container). **Do not write to `~/.hermes/bridge/*` on the
+    host**: that bind-mount directory is shadowed by the `bridge_data`
+    volume at `/opt/data/bridge` and the bridge never sees it. Drop
+    directives through a container (`docker cp` below) or from inside
+    Hermès at `/opt/data/bridge/directives/`.
 
 ## Directive contract (what Hermès writes)
 
@@ -112,13 +119,17 @@ docker compose run --rm bridge --check
 docker compose run --rm -e BRIDGE_DRY_RUN=1 bridge --once
 
 # synthetic end-to-end test (1 share AAPL, paper):
-#   1) Hermès (or you, in its data dir) copies sample-directive-synthetic.json
-#      into the exchange:  ~/.hermes/bridge/directives/  (host view of /opt/data/bridge)
-#   2) watch the bridge process it:
+#   1) drop the sample into the exchange. From the HOST, copy into the
+#      bridge container (same volume Hermès sees at /opt/data/bridge):
+docker cp ~/wm-stack/deploy/oci/bridge/sample-directive-synthetic.json \
+       bridge:/var/lib/bridge/directives/
+#      (Hermès itself writes here as uid 1000: /opt/data/bridge/directives/)
+#   2) watch the bridge process it (<= BRIDGE_POLL_S + agent run):
 docker logs -f bridge
 #   3) confirm the fill independently:
 docker exec vibe-trading vibe-trading connector positions
-#   4) Hermès reads /opt/data/bridge/executions/DIR-SYNTH-*.json
+#   4) read the receipt (bridge view == Hermès view of the same volume):
+docker exec bridge cat /var/lib/bridge/executions/DIR-SYNTH-20260904-070100-001.json
 
 # research commission (read-only, no order):
 #   1) copy sample-directive-research.json into the exchange (as above)
@@ -142,8 +153,17 @@ docker exec vibe-trading vibe-trading connector positions
 | `BRIDGE_ALLOW_RESEARCH` | `0` | `1` lets `mode: RESEARCH` commissions run as read-only agent tasks |
 | `BRIDGE_VIBE_TRADING_BIN` | `vibe-trading` | CLI binary path |
 
-**Stand-down**: touching `/var/lib/bridge/halt` (i.e.
-`~/.hermes/bridge/halt` on the host) pauses processing until removed.
+**Stand-down**: touching `/var/lib/bridge/halt` pauses processing until
+removed. From the host (the volume has no host path — see above):
+
+```bash
+docker exec bridge touch /var/lib/bridge/halt   # stand down (runs as vibe)
+```
+
+Remove the file to resume (`docker exec bridge rm -f /var/lib/bridge/halt`).
+Only the bridge runtime user (or root) can create it — Hermès's uid 1000
+cannot write the volume root, which is intentional: stand-down is an
+operator action.
 
 ## Resource posture (2 OCPU / 12 GB host)
 
