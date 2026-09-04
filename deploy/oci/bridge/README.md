@@ -114,8 +114,11 @@ vocabulary is the *learning signal*: Hermès updates priors from
 cd ~/wm-stack && git pull --ff-only origin oci-trading-stack && cd deploy/oci
 docker compose up -d --build bridge
 
-# sanity + one-shot dry-run (no agent call):
+# sanity + one-shot dry-run (no agent call). Both forms work:
+#   - compose run applies the image ENTRYPOINT (python /app/bridge.py)
+#   - docker exec IGNORES the ENTRYPOINT, so the interpreter must be explicit
 docker compose run --rm bridge --check
+docker exec bridge python /app/bridge.py --check      # container already up
 docker compose run --rm -e BRIDGE_DRY_RUN=1 bridge --once
 
 # synthetic end-to-end test (1 share AAPL, paper):
@@ -183,6 +186,27 @@ The bridge is intentionally the *cheapest* container in the stack:
   RSS. If you ever need the memory back, the leanest option is to drop the
   watch loop entirely and poll on cron instead:
   `docker compose run --rm bridge --once` (processes pending, exits).
+
+## Troubleshooting
+
+- **Receipt `FAILED` with `openai.OpenAIError: Missing credentials` in
+  `stderr_tail`**: the bridge was created before `LITELLM_MASTER_KEY`
+  existed in `deploy/oci/.env`, or `.env` changed without a recreate.
+  Compose only injects values at container-create time, so a running
+  container never sees a later `.env` edit. Recreate the LLM consumers
+  (`docker compose up -d --build litellm vibe-trading bridge`) and re-drop
+  the directive under a **fresh `directive_id`** — receipts are idempotent
+  and a `FAILED` id never re-runs. `bridge --check` now prints the LLM env
+  state (`llm_env: api_key=… base_url=…`) so this is visible in one call.
+- **`docker exec bridge --check` → `executable file not found`**: `docker
+  exec` ignores the image ENTRYPOINT; call the interpreter explicitly:
+  `docker exec bridge python /app/bridge.py --check`.
+- **`docker compose up` → `Container "/vibe-trading" is already in use`**:
+  a leftover standalone `vibe-trading` container from the old
+  `~/trading-stack` quickstart still holds the name. Retire that project
+  once (`cd ~/trading-stack && docker compose down` — the `vibe_data`
+  volume and the paper profile are kept), then bring the consolidated
+  stack up from `deploy/oci`.
 
 ## Companion documents
 

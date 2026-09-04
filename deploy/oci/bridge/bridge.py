@@ -130,7 +130,9 @@ class BridgeConfig:
             f"timeout_s={self.timeout_s}\n"
             f"connector={self.connector} dry_run={self.dry_run}\n"
             f"research_allowed={self.research_allowed}\n"
-            f"vibe_trading_bin={self.vibe_bin or 'NOT FOUND'}"
+            f"vibe_trading_bin={self.vibe_bin or 'NOT FOUND'}\n"
+            f"llm_env: api_key={'set' if os.environ.get('OPENAI_API_KEY') else 'MISSING'} "
+            f"base_url={os.environ.get('OPENAI_BASE_URL') or 'UNSET (would default to api.openai.com)'}"
         )
 
 
@@ -300,6 +302,30 @@ def run_agent(cfg: BridgeConfig, prompt: str) -> dict:
         return {
             "status": "FAILED",
             "error": "vibe-trading binary not found on PATH",
+        }
+    # Fail-closed LLM routing guard: the agent subprocess inherits this
+    # process env. Without OPENAI_API_KEY the run dies with an opaque OpenAI
+    # traceback (seen in the field); with a LiteLLM master key set but
+    # OPENAI_BASE_URL unset, the key would be sent to api.openai.com instead
+    # of the local gateway. Refuse loudly and point at the fix.
+    if not os.environ.get("OPENAI_API_KEY"):
+        return {
+            "status": "FAILED",
+            "error": (
+                "OPENAI_API_KEY is empty — set LITELLM_MASTER_KEY in "
+                "deploy/oci/.env, then recreate the stack: docker compose up "
+                "-d --build litellm vibe-trading bridge"
+            ),
+        }
+    base_url = os.environ.get("OPENAI_BASE_URL") or ""
+    if "127.0.0.1" not in base_url and "localhost" not in base_url:
+        return {
+            "status": "FAILED",
+            "error": (
+                f"OPENAI_BASE_URL '{base_url or '(unset)'}' does not point at "
+                "the local LiteLLM gateway (expected "
+                "http://127.0.0.1:4000/v1); refusing to send the key elsewhere"
+            ),
         }
     cmd = [cfg.vibe_bin, "-p", prompt, "--json", "--max-iter", str(cfg.max_iter)]
     LOG.info("running %s (%d chars prompt, max_iter=%d)",
