@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "directive_id": "DIR-20260904-070000-001",
+  "timestamp": "2026-09-04T07:00:00.000Z",
+  "target_asset": "SPY",
+  "macro_bias": "NEUTRAL",
+  "confidence_score": 0.78,
+  "timeframe_hours": 4,
+  "action_directive": "NO_ACTION",
+  "mode": "PAPER",
+  "reasoning": "Template directive. Replace with the actual Macro Director JSON — the bridge only needs this schema, plus mode PAPER or PAPER_SYNTHETIC_TEST.",
+  "sources_used": []
+}

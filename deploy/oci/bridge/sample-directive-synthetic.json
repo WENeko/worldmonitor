@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "directive_id": "DIR-SYNTH-20260904-070100-001",
+  "timestamp": "2026-09-04T07:01:00.000Z",
+  "target_asset": "AAPL",
+  "macro_bias": "BULLISH",
+  "confidence_score": 0.95,
+  "timeframe_hours": 1,
+  "action_directive": "INCREASE_LONG_SENSITIVITY",
+  "mode": "PAPER_SYNTHETIC_TEST",
+  "reasoning": "Operator-labelled synthetic end-to-end test: prove the bridge → Vibe-Trading agent → Alpaca paper path with one minimal market order.",
+  "execution_request": {
+    "symbol": "AAPL",
+    "side": "BUY",
+    "qty": 1,
+    "order_type": "market"
+  }
+}

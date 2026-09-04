@@ -16,6 +16,10 @@ services:
       # sources — feed-intel picks it up at the next cycle, no restart).
       - feed_intel_data:/opt/data/feed-intel:ro
       - ./feeds/sources.json:/opt/data/feed-sources.json:rw
+      # directive-bridge (deploy/oci/bridge): the exchange volume where
+      # Hermès drops directive JSON (/opt/data/bridge/directives) and reads
+      # execution receipts (/opt/data/bridge/executions) back.
+      - bridge_data:/opt/data/bridge
 
     environment:
       HERMES_UID: ${HERMES_UID:-1000}
@@ -88,6 +92,57 @@ services:
       driver: json-file
       options:
         max-size: "20m"
+        max-file: "3"
+
+  # directive-bridge: the operator-owned automation between a Hermès
+  # directive and its execution. Extends the local vibe-trading:arm64 image
+  # (same runtime, CLI and vibe_data credentials) and invokes the headless
+  # agent (`vibe-trading -p ... --json`) for actionable paper directives;
+  # Hermès never touches an order tool. See bridge/README.md.
+  bridge:
+    build:
+      context: ../..
+      dockerfile: deploy/oci/bridge/Dockerfile
+    image: bridge:arm64
+    container_name: bridge
+    restart: unless-stopped
+    # Reaches LiteLLM on the host network like the other LLM consumers.
+    network_mode: host
+
+    volumes:
+      # Shared Vibe-Trading runtime: connector selection + paper credentials.
+      - vibe_data:/home/vibe/.vibe-trading
+      # Ring-buffer exchange with Hermès: directives in, receipts out.
+      - bridge_data:/var/lib/bridge
+
+    environment:
+      # Same LangChain-style provider config as vibe-trading (agent/.env.example).
+      LANGCHAIN_PROVIDER: openai
+      LANGCHAIN_MODEL_NAME: ${VIBE_TRADING_MODEL:-vibe-trading-critical}
+      OPENAI_API_KEY: ${LITELLM_MASTER_KEY:-}
+      OPENAI_BASE_URL: http://127.0.0.1:4000/v1
+      LANGCHAIN_TEMPERATURE: "0.0"
+      TIMEOUT_SECONDS: "180"
+      MAX_RETRIES: "2"
+      BRIDGE_POLL_S: ${BRIDGE_POLL_S:-15}
+      BRIDGE_MAX_ITER: ${BRIDGE_MAX_ITER:-30}
+      BRIDGE_TIMEOUT_S: ${BRIDGE_TIMEOUT_S:-900}
+      BRIDGE_DRY_RUN: ${BRIDGE_DRY_RUN:-0}
+      TZ: ${TZ:-UTC}
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 2g
+        reservations:
+          cpus: "0.1"
+          memory: 256m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
         max-file: "3"
 
   litellm:
@@ -226,3 +281,5 @@ volumes:
     name: seeds_lite_data
   feed_intel_data:
     name: feed_intel_data
+  bridge_data:
+    name: bridge_data

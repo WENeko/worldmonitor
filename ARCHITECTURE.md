@@ -12,7 +12,7 @@ World Monitor is a real-time global intelligence dashboard built as a TypeScript
 
 ## 0. Fork / Self-Host Stack (WENeko/worldmonitor)
 
-> **Scope**: sections 1–12 describe the upstream World Monitor product architecture. This section documents the fork's full operational stack: the Vercel production branch, the hourly upstream sync, the self-hosted seeder container on OCI, the GitHub Actions seed fallback, the agent (Hermès) MCP client that consumes the Redis-backed tools, and `feed-intel` — Hermès's own file-based news layer (RSS/Atom/scrape, editable source catalog).
+> **Scope**: sections 1–12 describe the upstream World Monitor product architecture. This section documents the fork's full operational stack: the Vercel production branch, the hourly upstream sync, the self-hosted seeder container on OCI, the GitHub Actions seed fallback, the agent (Hermès) MCP client that consumes the Redis-backed tools, `feed-intel` — Hermès's own file-based news layer (RSS/Atom/scrape, editable source catalog) — and `directive-bridge` — the operator-owned automation that turns a Hermès directive into a Vibe-Trading paper execution and feeds the receipt back.
 
 ```
 Upstream koala73/worldmonitor main
@@ -35,8 +35,14 @@ Hermès agent (config.yaml MCP server)     seeds-lite (Docker container, OCI VM)
         │                                     └── 5 seeders → Upstash Redis
         │  file reads: /opt/data/feed-intel/*.json    (ucdp disabled until token)
         │  edits catalog: /opt/data/feed-sources.json
+        │  writes /opt/data/bridge/directives/*.json → directive-bridge
+        │  reads  /opt/data/bridge/executions/*.json  ← directive-bridge
 feed-intel (Docker container, OCI VM) — writes that same JSON volume
         └── RSS/Atom/scrape poll → per-sector snapshots (zero Redis)
+
+directive-bridge (Docker container, OCI VM) — Hermès ⇄ Vibe-Trading glue
+        └── vibe-trading -p "<directive>" --json → vibe-trading agent
+            → Alpaca paper (alpaca-paper-trade) → receipt back to Hermès
 
 GitHub Actions seed-upstash.yml (manual only — cron removed 2026-09-02) → same Redis
 ```
@@ -50,6 +56,7 @@ GitHub Actions seed-upstash.yml (manual only — cron removed 2026-09-02) → sa
 | `seed-upstash.yml` | GitHub Actions, dispatch only (12-hourly cron removed 2026-09-02) | Canonical repo seeders against the fork's Upstash Redis; writes LLM-enriched briefs (its OpenRouter key works). Every manual run rewrites the whole fleet (tens of thousands of commands) — keep it as a deliberate rescue, not a cadence |
 | `seeds-lite` | Docker container on the OCI VM (`deploy/oci/`) | Five active seeders feeding the fork's Redis on quota-stretched cadences (see table below); ucdp disabled until a token lands; build ~15 s, zero cloud cost |
 | feed-intel | Docker container on the OCI VM (`deploy/oci/feeds/`) | Hermès's own news layer: dependency-free RSS/Atom/scrape poller over an editable catalog (`sources.json`) writing per-sector JSON snapshots + per-source reliability health into a volume Hermès mounts read-only. Zero external APIs, zero Redis writes |
+| `directive-bridge` | Docker container on the OCI VM (`deploy/oci/bridge/`) | Hermès ⇄ Vibe-Trading execution glue: watches the `bridge_data` exchange volume for directive JSON, validates fail-closed (paper-only, actionable actions), hands actionable directives to the Vibe-Trading agent (`vibe-trading -p … --json`, sharing the `vibe_data` runtime + credentials) and writes execution receipts back for Hermès. The bridge — not Hermès — is the only automated path to order execution |
 | Hermès MCP client | `/opt/data/config.yaml` on the Hermès host | `world-monitor` server → fork `/mcp`, header auth `X-WorldMonitor-Key: ${MCP_WORLD_MONITOR_API_KEY}`, `connect_timeout: 60000`, all 74 tools enabled |
 
 ### seeds-lite seeders
@@ -79,6 +86,16 @@ Cadences are stretched from upstream defaults to fit the Upstash free tier (500k
 1. *Live* — the JSON snapshots above remain the freshness surface for Hermès: cheap, debuggable, no schema. This is the current implementation.
 2. *Archive* — an **append-only SQLite database on the same volume** (`archive.sqlite`, `node:sqlite`, zero new deps) holds the permanent history: `items` (one row per first-seen item: fingerprint `sourceId::itemId`, `first_seen_at`, title/url/sectors/reliability at first sight) and `polls` (one row per source per cycle: fetched/new counts, ok flag). Purpose: **backtesting the Macro Director's decisions point-in-time** (“what did the layer know when the directive was issued”) and source-quality analytics — questions the 72 h rolling files cannot answer. It is append-only by construction; re-polls are idempotent via `INSERT OR IGNORE`. The files are never replaced by the DB; the DB sits behind them. (Implemented together with the archive module; see `deploy/oci/feeds/README.md` for schema and example queries.)
 
+### directive-bridge (Hermès ⇄ Vibe-Trading)
+
+`deploy/oci/bridge/` closes the loop from Hermès's macro reading to Vibe-Trading execution, without letting Hermès touch an order tool. The upstream Vibe-Trading MCP server deliberately exposes **no order/cancel tools**; the only execution surface is the internal agent runtime (`trading_place_order`, behind its mandate and fail-closed pre-trade checks). The bridge reuses the local `vibe-trading:arm64` image and the shared `vibe_data` volume (connector profile + paper credentials) and invokes the same headless command the operator would type by hand: `vibe-trading -p "<directive>" --json --max-iter N`.
+
+- **Exchange** (`bridge_data` volume, shared with Hermès at `/opt/data/bridge`): Hermès drops directive JSON into `directives/` (owned uid 1000); the bridge writes one receipt per `directive_id` into `executions/` plus an append-only `audit/audits.jsonl` trail for backtesting the loop itself.
+- **Fail-closed classification**: `mode` must be `PAPER` / `PAPER_SYNTHETIC_TEST` (else `REJECTED`); `NO_ACTION` / `PAUSE_TRADING` / `DE_RISK` are recorded as `NO_EXECUTION`, never executed (DE_RISK position reduction is a later version); actionable directives (`INCREASE_LONG_*`) are executed with hard prompt guardrails — paper only, connector `alpaca-paper-trade`, max size, no leverage/options. Idempotent by `directive_id`. `BRIDGE_DRY_RUN=1` and a `halt` file give cheap kill switches.
+- **Synthetic test**: `sample-directive-synthetic.json` carries an `execution_request` (1 share AAPL market) the agent executes verbatim — the deterministic end-to-end proof before any real directive.
+
+Contract, receipts, env and runbook: `deploy/oci/bridge/README.md`.
+
 ### Environment wiring (fork)
 
 | Variable | Where | Purpose |
@@ -92,6 +109,8 @@ Cadences are stretched from upstream defaults to fit the Upstash free tier (500k
 | `FEED_POLL_S` | `deploy/oci/.env` (optional; default 60) | feed-intel loop tick (seconds). Each source additionally obeys its own `pollIntervalS` in `feeds/sources.json` |
 | `FEED_ARCHIVE_DB` | `deploy/oci/.env` (optional; default `<state>/archive.sqlite`) | feed-intel append-only SQLite history path; override only if the volume layout changes |
 | `OPENROUTER_API_KEY` | `deploy/oci/.env` (optional) | LLM brief enrichment; absent → degraded headlines mode, data still written |
+| `VIBE_TRADING_MODEL` / `LITELLM_MASTER_KEY` | `deploy/oci/.env` | Shared with `vibe-trading`: the bridge routes through the same LiteLLM gateway (`OPENAI_BASE_URL=http://127.0.0.1:4000/v1`) |
+| `BRIDGE_POLL_S` / `BRIDGE_MAX_ITER` / `BRIDGE_TIMEOUT_S` / `BRIDGE_DRY_RUN` | `deploy/oci/.env` (optional) | directive-bridge tuning: watch tick, agent iteration cap, agent timeout, dry-run (log prompt, never invoke the agent) |
 
 ### MCP tools consumed by Hermès
 
