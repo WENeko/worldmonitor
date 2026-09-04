@@ -20,6 +20,11 @@ model_list:
       model: gemini/gemini-2.5-flash
       api_key: os.environ/GEMINI_API_KEY
 
+  - model_name: vibe-trading-critical
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+
   - model_name: vibe-trading-utility
     litellm_params:
       model: gemini/gemini-2.5-flash
