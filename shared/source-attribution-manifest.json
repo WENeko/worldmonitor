@@ -827,6 +827,9 @@
           "path": "scripts/dispatch-stale-railway-reconcile.mjs"
         },
         {
+          "path": "scripts/freeze-github-stars.mjs"
+        },
+        {
           "path": "scripts/resolve-railway-reconcile-control.mjs"
         },
         {
@@ -14255,6 +14258,9 @@
         },
         {
           "path": "scripts/generate-sandbox-fixtures.mjs"
+        },
+        {
+          "path": "scripts/github-stars-snapshot.mjs"
         },
         {
           "path": "scripts/mcp-live-smoke.mjs"
