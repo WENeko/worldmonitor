@@ -22,7 +22,10 @@ ENV TZ=UTC \
     BRIDGE_POLL_S=15 \
     BRIDGE_MAX_ITER=30 \
     BRIDGE_TIMEOUT_S=900 \
-    BRIDGE_CONNECTOR=alpaca-paper-trade
+    BRIDGE_CONNECTOR=alpaca-paper-trade \
+    # Research commissions (mode: RESEARCH) are read-only agent runs, gated
+    # OFF by default: parked as GATED receipts until the operator opts in.
+    BRIDGE_ALLOW_RESEARCH=0
 
 WORKDIR /app
 

@@ -128,16 +128,25 @@ services:
       BRIDGE_MAX_ITER: ${BRIDGE_MAX_ITER:-30}
       BRIDGE_TIMEOUT_S: ${BRIDGE_TIMEOUT_S:-900}
       BRIDGE_DRY_RUN: ${BRIDGE_DRY_RUN:-0}
+      # Research commissions (mode: RESEARCH) — opt-in, off by default.
+      BRIDGE_ALLOW_RESEARCH: ${BRIDGE_ALLOW_RESEARCH:-0}
       TZ: ${TZ:-UTC}
 
+    # 2 OCPU / 12 GB host budget (pay-as-you-go beyond). Limits are per-
+    # container ceilings, not allocations: they stop one runaway (e.g. an
+    # agent subprocess) from OOM-killing the host or its siblings. The
+    # bridge idles near 50-100 MB (stdlib watcher) and only spawns the
+    # agent while a directive is processed; 1 GB is comfortable for one
+    # bounded run. Real usage is measured with `docker stats --no-stream`
+    # (see bridge/README.md "Resource posture").
     deploy:
       resources:
         limits:
           cpus: "0.5"
-          memory: 2g
+          memory: 1g
         reservations:
-          cpus: "0.1"
-          memory: 256m
+          cpus: "0.05"
+          memory: 64m
 
     logging:
       driver: json-file

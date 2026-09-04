@@ -26,9 +26,15 @@ Fail-closed rules:
 - `NO_ACTION` / `PAUSE_TRADING` / `DE_RISK` are never executed by this
   version: they are recorded as NO_EXECUTION so the loop is auditable
   (later versions may turn DE_RISK into a position-reduction order).
+- `mode: RESEARCH` directives are never executed against the broker:
+  they are handed to the agent as a read-only research task (market data,
+  indicators, correlations) with orders forbidden. Research is gated by
+  `BRIDGE_ALLOW_RESEARCH` (default off); while gated, a RESEARCH
+  directive is recorded as `GATED` and re-processable once enabled.
 - Execution is idempotent: one receipt per `directive_id`, in
   `<home>/executions/<directive_id>.json`. Re-delivering the same
-  directive does nothing.
+  directive does nothing (a `GATED` receipt is not final and can be
+  re-processed).
 - `BRIDGE_DRY_RUN=1` logs what would run instead of invoking the agent.
 
 Modes:
@@ -52,7 +58,7 @@ from pathlib import Path
 
 LOG = logging.getLogger("directive-bridge")
 
-DIRECTIVE_VERSION = 1
+DIRECTIVE_VERSION = 2
 
 # Directional directives that actually request exposure change. Everything
 # else (NO_ACTION / PAUSE_TRADING / DE_RISK) is recorded, never executed.
@@ -65,7 +71,7 @@ KNOWN_ACTIONS = EXECUTABLE_ACTIONS | {
     "DE_RISK",
 }
 KNOWN_BIASES = {"BULLISH", "BEARISH", "NEUTRAL"}
-ALLOWED_MODES = {"PAPER", "PAPER_SYNTHETIC_TEST"}
+ALLOWED_MODES = {"PAPER", "PAPER_SYNTHETIC_TEST", "RESEARCH"}
 
 REQUIRED_FIELDS = (
     "directive_id",
@@ -100,6 +106,11 @@ class BridgeConfig:
         self.timeout_s = int(env_setting("BRIDGE_TIMEOUT_S", "900"))
         self.connector = env_setting("BRIDGE_CONNECTOR", "alpaca-paper-trade")
         self.dry_run = env_setting("BRIDGE_DRY_RUN", "0") not in ("", "0", "false")
+        self.research_allowed = env_setting("BRIDGE_ALLOW_RESEARCH", "0") not in (
+            "",
+            "0",
+            "false",
+        )
         self.max_qty = int(env_setting("BRIDGE_MAX_QTY", "3"))
         self.vibe_bin = shutil.which(
             env_setting("BRIDGE_VIBE_TRADING_BIN", "vibe-trading")
@@ -118,6 +129,7 @@ class BridgeConfig:
             f"poll_s={self.poll_s} max_iter={self.max_iter} "
             f"timeout_s={self.timeout_s}\n"
             f"connector={self.connector} dry_run={self.dry_run}\n"
+            f"research_allowed={self.research_allowed}\n"
             f"vibe_trading_bin={self.vibe_bin or 'NOT FOUND'}"
         )
 
@@ -169,14 +181,21 @@ def validate_directive(data: dict) -> tuple[bool, str]:
             return False, "execution_request.qty is not positive"
         if execution.get("side") not in ("BUY", "SELL"):
             return False, "execution_request.side must be BUY or SELL"
+    if mode == "RESEARCH":
+        if execution is not None:
+            return False, "execution_request is forbidden in RESEARCH mode"
+        if not str(data.get("research_question") or "").strip():
+            return False, "RESEARCH mode requires non-empty 'research_question'"
     return True, "ok"
 
 
 def classify_directive(data: dict) -> str:
-    """Return one of EXECUTE / NO_EXECUTION / REJECTED."""
+    """Return one of EXECUTE / NO_EXECUTION / RESEARCH / REJECTED."""
     ok, error = validate_directive(data)
     if not ok:
         return "REJECTED"
+    if data.get("mode") == "RESEARCH":
+        return "RESEARCH"
     if data["action_directive"] in EXECUTABLE_ACTIONS:
         return "EXECUTE"
     return "NO_EXECUTION"
@@ -246,6 +265,33 @@ EXECUTION RULES (operator contract, non-negotiable):
    include the resulting state in your final summary.
 6. Report as concise JSON: run id, what you did, order result, and the
    resulting account/position state."""
+
+
+def build_research_prompt(cfg: BridgeConfig, data: dict) -> str:
+    directive = json.dumps(data, indent=2, ensure_ascii=False)
+    question = data.get("research_question", "")
+    return f"""You are the research arm of a Macro Director loop, running a
+read-only research commission delivered by the operator's automation bridge
+(Hermès ⇄ Vibe-Trading).
+
+RESEARCH COMMISSION:
+{directive}
+
+QUESTION TO ANSWER:
+{question}
+
+RESEARCH RULES (operator contract, non-negotiable):
+1. This is a RESEARCH task. You are strictly read-only: you may query
+   quotes, bars, account state, strategies and evidence using the
+   connector "{cfg.connector}" and Vibe-Trading's analytical tools.
+2. You MUST NOT place, modify or cancel any order, and you must not
+   invoke any order/execution tool. If the question seems to require a
+   trade, answer with the analysis and note that no order was placed.
+3. Stay on paper market data; never reference or select a live profile.
+4. Keep compute bounded: stop at a concise, evidence-backed answer.
+   Cite which data/tools you actually used.
+5. Report as concise JSON: summary finding, key numbers/evidence,
+   tools_used, and an explicit "orders_placed": 0."""
 
 
 def run_agent(cfg: BridgeConfig, prompt: str) -> dict:
@@ -338,8 +384,24 @@ def process_file(cfg: BridgeConfig, path: Path) -> None:
 
     receipt_path = cfg.executions / f"{directive_id}.json"
     if receipt_path.exists():
-        LOG.info("directive %s already processed; skipping", directive_id)
-        return
+        try:
+            previous = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            previous = None
+        parked_and_gate_open = (
+            previous is not None
+            and previous.get("status") == "GATED"
+            and cfg.research_allowed
+        )
+        if previous is not None and not parked_and_gate_open:
+            LOG.info("directive %s already processed; skipping", directive_id)
+            return
+        if parked_and_gate_open:
+            LOG.info(
+                "directive %s has a GATED receipt and research is now "
+                "enabled; re-processing",
+                directive_id,
+            )
 
     classification = classify_directive(data)
     LOG.info("directive %s classified as %s", directive_id, classification)
@@ -361,6 +423,43 @@ def process_file(cfg: BridgeConfig, path: Path) -> None:
         })
         write_receipt(cfg, receipt)
         LOG.info("recorded %s as NO_EXECUTION", directive_id)
+        return
+
+    if classification == "RESEARCH":
+        if not cfg.research_allowed:
+            receipt = build_receipt(cfg, data, "GATED", {
+                "note": "BRIDGE_ALLOW_RESEARCH=0 — research commission parked "
+                        "without execution; re-processed automatically once the "
+                        "gate is enabled (this receipt is not final).",
+            })
+            write_receipt(cfg, receipt)
+            LOG.info("research %s parked as GATED (gate closed)", directive_id)
+            return
+
+        prompt = build_research_prompt(cfg, data)
+        if cfg.dry_run:
+            receipt = build_receipt(cfg, data, "DRY_RUN", {
+                "note": "BRIDGE_DRY_RUN=1 — agent not invoked",
+                "prompt": prompt,
+            })
+            write_receipt(cfg, receipt)
+            LOG.info("dry-run: would research %s (%d chars)", directive_id, len(prompt))
+            return
+
+        fragment = run_agent(cfg, prompt)
+        if fragment["status"] == "EXECUTED":
+            outcome = "RESEARCH_DONE"
+        elif fragment["status"] == "TIMEOUT":
+            outcome = "RESEARCH_TIMEOUT"
+        else:
+            outcome = "RESEARCH_FAILED"
+        receipt = build_receipt(cfg, data, outcome, {
+            "prompt_tail": prompt[-500:],
+            "commission_kind": "research",
+            **fragment,
+        })
+        write_receipt(cfg, receipt)
+        LOG.info("research %s → %s", directive_id, outcome)
         return
 
     # EXECUTE

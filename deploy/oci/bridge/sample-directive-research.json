@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "directive_id": "RES-20260904-100000-001",
+  "timestamp": "2026-09-04T10:00:00.000Z",
+  "target_asset": "SPY",
+  "macro_bias": "NEUTRAL",
+  "confidence_score": 1.0,
+  "timeframe_hours": 24,
+  "action_directive": "NO_ACTION",
+  "mode": "RESEARCH",
+  "reasoning": "Operator-labelled research commission: correlate the last five FOMC outcomes with the 2-hour forward move of SPY using Vibe-Trading read-only tools. No order is requested or allowed.",
+  "research_question": "For each of the last 5 FOMC rate decisions, what was SPY's price change in the 2 hours after the statement, and did any technical indicator flag the direction in advance?",
+  "sources_used": []
+}
