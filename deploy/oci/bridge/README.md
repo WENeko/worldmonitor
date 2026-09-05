@@ -209,10 +209,13 @@ The bridge is intentionally the *cheapest* container in the stack:
   the request reached LiteLLM's router — but the *provider* behind it
   rejects the credential. This is the upstream provider's 401 relayed by
   LiteLLM. Common cause: a placeholder value (`gsk_your_actual_key`) or no
-  key at all for the configured provider. The gateway config is Groq-only,
-  so one real `GROQ_API_KEY` in `.env` serves both model aliases. Fix the
-  value, `docker compose up -d litellm` (it reads config + env at startup;
-  bridge and vibe-trading are unaffected), then re-run the probe.
+  key at all for the configured provider. Each model group carries multiple
+  deployments (Gemini primary + two Groq keys), so the fix is to set the
+  real key(s) in `.env` (`GEMINI_API_KEY`, `GROQ_API_KEY`, `GROQ_API_KEY_2`
+  — the second Groq key only adds capacity if it belongs to a *different*
+  Groq org). Fix the value, `docker compose up -d litellm` (it reads config
+  + env at startup; bridge and vibe-trading are unaffected), then re-run the
+  probe.
 - **`probe: HTTP 404` with a body mentioning `model_not_found`**: the model
   id in `litellm_config.yaml` no longer exists on Groq (Groq decommissioned
   the llama 3.3/3.1 line on 2026-08-16; both config ids were updated to the
@@ -220,10 +223,14 @@ The bridge is intentionally the *cheapest* container in the stack:
   Check the live catalog with `curl -sS https://api.groq.com/openai/v1/models
   -H "Authorization: Bearer $GROQ_API_KEY"` before changing ids again.
 - **`probe: HTTP 429` with `No deployments available… cooldown_list`**: the
-  router marked the failing deployment down for `cooldown_time` (60 s) after
-  upstream errors. Recreating litellm resets the cooldown; a persistent 429
-  after a config fix means the fix never reached the container (did you
-  `docker compose up -d litellm` after editing the config?).
+  router marked the failing deployment(s) down after upstream errors. On
+  Groq free tier this is a hard ceiling (~6k tokens/min per org): one large
+  agent prompt exhausts the per-minute budget for ~200 s, and two keys from
+  the same console share the ceiling. The 429 cools only its own deployment
+  — with Gemini wired in (independent quota), the group falls through to it.
+  A persistent 429 across *all* deployments means every configured key is
+  throttled; `docker compose up -d --force-recreate litellm` resets
+  cooldowns and a fresh `.env` key rotation is the real fix.
 - **`docker exec bridge --check` → `executable file not found`**: `docker
   exec` ignores the image ENTRYPOINT; call the interpreter explicitly:
   `docker exec bridge python /app/bridge.py --check`.

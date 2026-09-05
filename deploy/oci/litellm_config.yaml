@@ -2,40 +2,53 @@
 # Secrets are read from the environment; do not put keys in this file.
 
 model_list:
-  # Single provider, single key: one credential in .env serves both aliases
-  # (free tier, ultra-low latency). Missing/invalid provider keys are the #1
-  # field failure: an entry whose key is absent wastes router retries, and a
-  # bad key surfaces as an upstream 401 relayed by LiteLLM (the gateway
-  # itself is fine — the router reached it). Keep at least one entry below
-  # with a real key in .env.
+  # Provider keys live in .env — never in this file. Each entry is one
+  # deployment; the router shuffles across deployments in a model group and
+  # isolates failures per deployment (a provider 429 cools only its own
+  # deployment, then the group falls through to the next one).
   #
-  # To add another provider, append an entry with the SAME model_name alias
-  # and set its key in .env, e.g.:
-  #   - model_name: vibe-trading-critical
-  #     litellm_params:
-  #       model: gemini/gemini-2.5-flash
-  #       api_key: os.environ/GEMINI_API_KEY
-  # (deepseek/deepseek-chat with a DEEPSEEK_API_KEY, or openrouter/<slug>
-  # with credits, work the same way. The old OpenRouter free alias was
-  # retired upstream with HTTP 404 "unavailable for free" — paid OpenRouter
-  # models are fine.)
+  # Quota model (2026-09): Groq's free tier caps ~6k tokens/min per ORG, so
+  # one 30k-token agent prompt can exhaust it for ~200 s. The Gemini free
+  # tier (gemini-2.5-flash: 15 RPM, 1M context) carries that load comfortably
+  # and has an INDEPENDENT quota, so each group pairs Gemini (primary) with
+  # two Groq keys as fallback. The second Groq key must belong to a different
+  # Groq org to add independent capacity — two keys from one console share
+  # the same ceiling and cool down together.
   #
-  # Model ids are Groq's current catalog (2026-09): the previous llama
-  # entries (llama-3.3-70b-versatile, llama-3.1-8b-instant) were
-  # decommissioned by Groq on 2026-08-16 and return upstream `model_not_found`
-  # (surfaced as HTTP 404). Per Groq's deprecation page the replacements are
-  # openai/gpt-oss-120b (critical) and openai/gpt-oss-20b (utility); the
-  # LiteLLM string keeps the groq/ prefix and passes the namespaced id
-  # through untouched.
+  # Model ids (2026-09): Groq decommissioned the llama-3.3/3.1 line on
+  # 2026-08-16 (upstream `model_not_found`); replacements per Groq's
+  # deprecation page are openai/gpt-oss-120b (critical) and
+  # openai/gpt-oss-20b (utility), passed through the LiteLLM `groq/` prefix.
+  # The old OpenRouter free alias was retired upstream (HTTP 404).
+  - model_name: vibe-trading-critical
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+
   - model_name: vibe-trading-critical
     litellm_params:
       model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
 
+  - model_name: vibe-trading-critical
+    litellm_params:
+      model: groq/openai/gpt-oss-120b
+      api_key: os.environ/GROQ_API_KEY_2
+
+  - model_name: vibe-trading-utility
+    litellm_params:
+      model: gemini/gemini-2.5-flash-lite
+      api_key: os.environ/GEMINI_API_KEY
+
   - model_name: vibe-trading-utility
     litellm_params:
       model: groq/openai/gpt-oss-20b
       api_key: os.environ/GROQ_API_KEY
+
+  - model_name: vibe-trading-utility
+    litellm_params:
+      model: groq/openai/gpt-oss-20b
+      api_key: os.environ/GROQ_API_KEY_2
 
 router_settings:
   routing_strategy: simple-shuffle
