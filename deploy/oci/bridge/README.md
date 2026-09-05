@@ -112,7 +112,11 @@ vocabulary is the *learning signal*: Hermès updates priors from
 
 ```bash
 cd ~/wm-stack && git pull --ff-only origin oci-trading-stack && cd deploy/oci
-docker compose up -d --build bridge
+# bridge extends the locally built vibe-trading:arm64 image, so rebuild the
+# base first when a stack Dockerfile changed (e.g. the alpaca-py install),
+# then the bridge itself; `up -d` recreates both since the image ids moved:
+docker compose build vibe-trading && docker compose build bridge
+docker compose up -d vibe-trading bridge
 
 # sanity + one-shot dry-run (no agent call). Both forms work:
 #   - compose run applies the image ENTRYPOINT (python /app/bridge.py)
@@ -223,6 +227,25 @@ The bridge is intentionally the *cheapest* container in the stack:
 - **`docker exec bridge --check` → `executable file not found`**: `docker
   exec` ignores the image ENTRYPOINT; call the interpreter explicitly:
   `docker exec bridge python /app/bridge.py --check`.
+- **`Connector positions failed: alpaca-py is not installed`** (from
+  `vibe-trading` or inside a bridge agent run): the oci images install only
+  the `vibe-trading-ai` core package — broker SDKs are separate pip
+  packages. The retired standalone `~/trading-stack` quickstart image
+  happened to carry alpaca-py; once that project was stopped, rebuilt oci
+  images lost it. The repo fix lives in
+  `deploy/oci/vibe-trading.Dockerfile` (a dedicated `pip install
+  alpaca-py` RUN, inherited by bridge via `FROM vibe-trading:arm64`).
+  After pulling, rebuild in order — `docker compose build vibe-trading &&
+  docker compose build bridge && docker compose up -d vibe-trading bridge`
+  — then verify with `docker exec vibe-trading vibe-trading connector check
+  alpaca-paper-trade`. The connector profile and paper credentials live in
+  the shared `vibe_data` volume, so they survive the rebuild.
+- **`tee: … Permission denied` when dropping a directive**: `directives/` is
+  owned by uid 1000 (Hermès) by design — the bridge container runs as
+  `vibe` and may only *read* directives. Drop test directives from the host
+  with `docker cp` (daemon-side copy, as in the runbook above), never
+  `docker exec … tee`. Hermès writes there through its own container as uid
+  1000.
 - **`docker compose up` → `Container "/vibe-trading" is already in use`**:
   a leftover standalone `vibe-trading` container from the old
   `~/trading-stack` quickstart still holds the name. Retire that project

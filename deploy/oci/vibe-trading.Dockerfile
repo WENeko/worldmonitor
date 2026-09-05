@@ -37,6 +37,13 @@ RUN groupadd -r vibe && useradd -r -g vibe -m -d /home/vibe vibe
 RUN pip install --no-cache-dir \
     "vibe-trading-ai @ git+https://github.com/HKUDS/Vibe-Trading.git@${VIBE_TRADING_VERSION}"
 
+# Broker SDK for the alpaca connector (paper/live). The core package ships
+# WITHOUT broker SDKs: every connector call fails with "alpaca-py is not
+# installed; run pip install alpaca-py" until this is present. Separate RUN
+# keeps the heavy vibe-trading layer above cached across image rebuilds.
+# bridge (FROM vibe-trading:arm64) inherits this install too.
+RUN pip install --no-cache-dir "alpaca-py"
+
 # Data directory (volume mount point)
 RUN mkdir -p /home/vibe/.vibe-trading && chown -R vibe:vibe /home/vibe/.vibe-trading
 
