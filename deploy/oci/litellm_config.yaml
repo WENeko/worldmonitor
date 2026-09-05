@@ -2,33 +2,27 @@
 # Secrets are read from the environment; do not put keys in this file.
 
 model_list:
-  # All entries share the public alias requested by Vibe-Trading.
-  # Set at least ONE provider key in .env. Keys are checked at call time:
-  # a provider whose key is missing fails that attempt and LiteLLM retries /
-  # falls back across the group. GEMINI_API_KEY and GROQ_API_KEY have free
-  # tiers; DEEPSEEK_API_KEY is pay-per-token.
-  # The former OpenRouter free alias (meta-llama/llama-3.3-70b-instruct:free)
-  # was retired by OpenRouter (HTTP 404 "unavailable for free") and removed;
-  # paid OpenRouter models can be re-added as openrouter/<slug> with credits.
-  - model_name: vibe-trading-critical
-    litellm_params:
-      model: deepseek/deepseek-chat
-      api_key: os.environ/DEEPSEEK_API_KEY
-
-  - model_name: vibe-trading-critical
-    litellm_params:
-      model: gemini/gemini-2.5-flash
-      api_key: os.environ/GEMINI_API_KEY
-
+  # Single provider, single key: one credential in .env serves both aliases
+  # (free tier, ultra-low latency). Missing/invalid provider keys are the #1
+  # field failure: an entry whose key is absent wastes router retries, and a
+  # bad key surfaces as an upstream 401 relayed by LiteLLM (the gateway
+  # itself is fine — the router reached it). Keep at least one entry below
+  # with a real key in .env.
+  #
+  # To add another provider, append an entry with the SAME model_name alias
+  # and set its key in .env, e.g.:
+  #   - model_name: vibe-trading-critical
+  #     litellm_params:
+  #       model: gemini/gemini-2.5-flash
+  #       api_key: os.environ/GEMINI_API_KEY
+  # (deepseek/deepseek-chat with a DEEPSEEK_API_KEY, or openrouter/<slug>
+  # with credits, work the same way. The old OpenRouter free alias was
+  # retired upstream with HTTP 404 "unavailable for free" — paid OpenRouter
+  # models are fine.)
   - model_name: vibe-trading-critical
     litellm_params:
       model: groq/llama-3.3-70b-versatile
       api_key: os.environ/GROQ_API_KEY
-
-  - model_name: vibe-trading-utility
-    litellm_params:
-      model: gemini/gemini-2.5-flash
-      api_key: os.environ/GEMINI_API_KEY
 
   - model_name: vibe-trading-utility
     litellm_params:

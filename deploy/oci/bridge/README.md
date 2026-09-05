@@ -118,7 +118,9 @@ docker compose up -d --build bridge
 #   - compose run applies the image ENTRYPOINT (python /app/bridge.py)
 #   - docker exec IGNORES the ENTRYPOINT, so the interpreter must be explicit
 docker compose run --rm bridge --check
-docker exec bridge python /app/bridge.py --check      # container already up
+docker exec bridge python /app/bridge.py --check --probe  # container up;
+#   --probe additionally pings the LLM gateway through the same env the
+#   agent uses and prints e.g. "probe: HTTP 200" (exit 1 unless 200)
 docker compose run --rm -e BRIDGE_DRY_RUN=1 bridge --once
 
 # synthetic end-to-end test (1 share AAPL, paper):
@@ -198,6 +200,15 @@ The bridge is intentionally the *cheapest* container in the stack:
   the directive under a **fresh `directive_id`** — receipts are idempotent
   and a `FAILED` id never re-runs. `bridge --check` now prints the LLM env
   state (`llm_env: api_key=… base_url=…`) so this is visible in one call.
+- **`bridge --check --probe` → `probe: HTTP 401` (or a body mentioning
+  `Authentication Fails` / `Invalid API Key`)**: the gateway is healthy —
+  the request reached LiteLLM's router — but the *provider* behind it
+  rejects the credential. This is the upstream provider's 401 relayed by
+  LiteLLM. Common cause: a placeholder value (`gsk_your_actual_key`) or no
+  key at all for the configured provider. The gateway config is Groq-only,
+  so one real `GROQ_API_KEY` in `.env` serves both model aliases. Fix the
+  value, `docker compose up -d litellm` (it reads config + env at startup;
+  bridge and vibe-trading are unaffected), then re-run the probe.
 - **`docker exec bridge --check` → `executable file not found`**: `docker
   exec` ignores the image ENTRYPOINT; call the interpreter explicitly:
   `docker exec bridge python /app/bridge.py --check`.

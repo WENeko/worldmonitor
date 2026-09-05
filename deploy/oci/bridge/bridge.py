@@ -41,6 +41,8 @@ Modes:
     python bridge.py --loop      watch forever (container default)
     python bridge.py --once      process everything pending, then exit
     python bridge.py --check     print configuration and directory layout
+    python bridge.py --check --probe  same, plus a live LLM gateway ping
+                                (prints HTTP status; exit 1 unless 200)
     python bridge.py --file X    process a single directive file
 """
 
@@ -134,6 +136,54 @@ class BridgeConfig:
             f"llm_env: api_key={'set' if os.environ.get('OPENAI_API_KEY') else 'MISSING'} "
             f"base_url={os.environ.get('OPENAI_BASE_URL') or 'UNSET (would default to api.openai.com)'}"
         )
+
+
+# ---------------------------------------------------------------------------
+# LLM gateway probe
+# ---------------------------------------------------------------------------
+
+
+def probe_llm_gateway() -> tuple[int, str]:
+    """Live ping of the LiteLLM gateway through the same env the agent uses.
+
+    Uses OPENAI_API_KEY (the LiteLLM master key), OPENAI_BASE_URL and
+    LANGCHAIN_MODEL_NAME — all injected by compose. Returns (http_status,
+    detail); status is 0 when the gateway was unreachable. A 401/400 body
+    here means the gateway is healthy and the *provider* behind it rejected
+    the credential (missing or invalid provider key in .env) — not a bridge
+    problem.
+    """
+    import urllib.error
+    import urllib.request
+
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    base_url = os.environ.get("OPENAI_BASE_URL", "")
+    model = os.environ.get("LANGCHAIN_MODEL_NAME", "")
+    if not api_key:
+        return 0, "OPENAI_API_KEY is empty (master key not propagated to bridge)"
+    if "127.0.0.1" not in base_url and "localhost" not in base_url:
+        return 0, f"OPENAI_BASE_URL '{base_url}' does not point at the local gateway"
+    url = base_url.rstrip("/") + "/chat/completions"
+    payload = json.dumps(
+        {"model": model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 8}
+    ).encode()
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return response.status, ""
+    except urllib.error.HTTPError as error:
+        body = error.read().decode("utf-8", "replace")
+        return error.code, body[:280].replace("\n", " ")
+    except Exception as error:  # connection refused, timeout, DNS…
+        return 0, f"{type(error).__name__}: {error}"
 
 
 # ---------------------------------------------------------------------------
@@ -528,6 +578,10 @@ def main(argv: list[str]) -> int:
     if "--check" in argv:
         print(cfg.describe())
         print("directories:", "ok" if cfg.directives.is_dir() and cfg.executions.is_dir() else "MISSING")
+        if "--probe" in argv:
+            code, detail = probe_llm_gateway()
+            print(f"probe: HTTP {code}" + (f" — {detail}" if detail else ""))
+            return 0 if code == 200 else 1
         return 0
 
     if "--file" in argv:
