@@ -444,9 +444,6 @@
         },
         {
           "path": "scripts/seed-cyber-threats.mjs"
-        },
-        {
-          "path": "server/worldmonitor/cyber/v1/_shared.ts"
         }
       ]
     },
@@ -1383,6 +1380,9 @@
         },
         {
           "path": "scripts/audit-resilience-cohorts.mjs"
+        },
+        {
+          "path": "scripts/capture-seed-recovery.mjs"
         },
         {
           "path": "scripts/check-seed-freshness.mjs"
@@ -4184,9 +4184,6 @@
       "references": [
         {
           "path": "scripts/seed-cyber-threats.mjs"
-        },
-        {
-          "path": "server/worldmonitor/cyber/v1/_shared.ts"
         }
       ]
     },
@@ -4278,9 +4275,6 @@
           "path": "server/worldmonitor/market/v1/_quote-provider.ts"
         },
         {
-          "path": "server/worldmonitor/market/v1/_shared.ts"
-        },
-        {
           "path": "server/worldmonitor/market/v1/get-insider-transactions.ts"
         }
       ]
@@ -4303,15 +4297,10 @@
       "host": "firms2.modaps.eosdis.nasa.gov",
       "provider": "NASA FIRMS",
       "kind": "structured",
-      "observed": true,
+      "observed": false,
       "license": "NASA FIRMS provider terms apply; redistribution terms require review",
       "attribution": "Credit NASA FIRMS and link to the original upstream API or dataset.",
-      "status": "terms-review",
-      "references": [
-        {
-          "path": "scripts/wildfire/firms-area.mjs"
-        }
-      ]
+      "status": "excluded"
     },
     {
       "host": "focustaiwan.tw",
@@ -4400,9 +4389,6 @@
       "references": [
         {
           "path": "scripts/seed-cyber-threats.mjs"
-        },
-        {
-          "path": "server/worldmonitor/cyber/v1/_shared.ts"
         }
       ]
     },
@@ -5175,9 +5161,6 @@
       "references": [
         {
           "path": "scripts/seed-cyber-threats.mjs"
-        },
-        {
-          "path": "server/worldmonitor/cyber/v1/_shared.ts"
         }
       ]
     },
@@ -6922,9 +6905,6 @@
       "references": [
         {
           "path": "scripts/seed-cyber-threats.mjs"
-        },
-        {
-          "path": "server/worldmonitor/cyber/v1/_shared.ts"
         }
       ]
     },
@@ -7467,9 +7447,6 @@
           "path": "scripts/seed-market-quotes.mjs"
         },
         {
-          "path": "server/worldmonitor/market/v1/_shared.ts"
-        },
-        {
           "path": "server/worldmonitor/market/v1/analyze-stock.ts"
         },
         {
@@ -7573,9 +7550,6 @@
         },
         {
           "path": "scripts/seed-disease-outbreaks.mjs"
-        },
-        {
-          "path": "server/worldmonitor/cyber/v1/_shared.ts"
         }
       ]
     },
@@ -9756,9 +9730,6 @@
         },
         {
           "path": "scripts/seed-cyber-threats.mjs"
-        },
-        {
-          "path": "server/worldmonitor/cyber/v1/_shared.ts"
         }
       ]
     },
@@ -10115,9 +10086,6 @@
           "path": "api/mcp/skill-extension/generated.ts"
         },
         {
-          "path": "api/not-found.ts"
-        },
-        {
           "path": "api/oauth/authorize.js"
         },
         {
@@ -10152,9 +10120,6 @@
         },
         {
           "path": "scripts/cross-strait-activity/adapters.mjs"
-        },
-        {
-          "path": "scripts/generate-sandbox-fixtures.mjs"
         },
         {
           "path": "scripts/lib/brief-embedding.mjs"
@@ -10527,9 +10492,6 @@
         },
         {
           "path": "server/worldmonitor/market/v1/_quote-provider.ts"
-        },
-        {
-          "path": "server/worldmonitor/market/v1/_shared.ts"
         }
       ]
     },
@@ -14248,6 +14210,9 @@
         },
         {
           "path": "api/not-found.ts"
+        },
+        {
+          "path": "scripts/build-agent-skills-index.mjs"
         },
         {
           "path": "scripts/build-ai-search.mjs"

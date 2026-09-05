@@ -66,11 +66,17 @@ export interface BaseToolDef {
   // envelope instead of the oversized payload. Required so a new tool can't
   // be added without an explicit budget choice.
   _outputBudgetBytes: number;
-  // Attribution-bound responses may opt out of the universal JMESPath
-  // projection when projecting fields independently would make an otherwise
-  // permitted value unsafe to redistribute. The dispatcher also enforces the
-  // denial as defence in depth.
-  _jmespathDisabled?: true;
+  // JMESPath expression extracting this tool's source list from its
+  // UNPROJECTED payload. Declared by every tool whose `outputSchema` carries a
+  // licence marker (`shared/attribution-rider.ts::LICENCE_MARKER_FIELDS`), and
+  // enforced by `tests/mcp-attribution-rider.test.mjs` — a new tool with an
+  // `attribution` field and no extraction fails the build.
+  //
+  // When a caller projects such a tool, the dispatcher re-attaches the
+  // extracted sources as `_attribution` AFTER `jmespath.search`, so the
+  // projection cannot separate the values from the attribution that licenses
+  // their redistribution.
+  _attribution?: string;
   // U7 (R7, R9): membership in the always-free subset — servable to an
   // uncredentialed caller, consuming no quota for any principal. Declared HERE,
   // on the tool itself, so the roster and the tool definition cannot drift
@@ -353,7 +359,14 @@ export interface PublicToolShape {
 // otherwise-successful 200 — the shape readExistsFlags branches on. While this
 // omitted `error`, a consumer could not read that field without a local cast
 // (api/mcp/dispatch.ts carried one, with a comment saying so, until #6152).
-export type PipelineFn = (commands: Array<Array<string | number>>, timeoutMs?: number) => Promise<Array<{ result?: unknown; error?: unknown }> | null>;
+//
+// PRECONDITION (#7674): the production binding (PRODUCTION_DEPS.redisPipeline)
+// sends commands VERBATIM (raw = true default) because the MCP quota and
+// free-account-allowance counters are already deployment-prefixed by
+// quota.ts / free-account-allowance.ts at construction. Only pass logical,
+// unprefixed keys through this dep if you also flip the binding — the raw
+// default is deliberate and inverts the shared helpers' prefix-by-default.
+export type PipelineFn = (commands: Array<Array<string | number>>, timeoutMs?: number, raw?: boolean) => Promise<Array<{ result?: unknown; error?: unknown }> | null>;
 
 export interface QuotaReserved {
   ok: true;
