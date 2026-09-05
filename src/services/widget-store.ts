@@ -234,12 +234,9 @@ export function isProWidgetEnabled(): boolean {
 }
 
 export function isProUser(): boolean {
-  return (
-    isWidgetFeatureEnabled() ||
-    isProWidgetEnabled() ||
-    getAuthState().user?.role === 'pro' ||
-    isEntitled()
-  );
+  // [fork-deploy] Pro gates removed on the Vercel single-function branch.
+  void (isEntitled);
+  return true;
 }
 
 /**

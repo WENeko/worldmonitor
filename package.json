@@ -86,12 +86,12 @@
     "dev:happy": "cross-env VITE_VARIANT=happy vite",
     "dev:commodity": "cross-env VITE_VARIANT=commodity vite",
     "dev:energy": "cross-env VITE_VARIANT=energy vite",
-    "postinstall": "npm run inventory:facts",
+    "postinstall": "cross-env npm_config_allow_scripts= npm --prefix blog-site ci --prefer-offline",
     "ci:blog-site": "cross-env npm_config_allow_scripts= npm --prefix blog-site ci --prefer-offline",
     "prebuild:blog": "npm run product:facts",
     "build:blog": "npm run build:blog:raw",
     "build:blog:raw": "cross-env npm_config_allow_scripts= npm --prefix blog-site ci --prefer-offline && cd blog-site && npm run build && rm -rf ../public/blog && mkdir -p ../public/blog && cp -r dist/* ../public/blog/",
-    "build:crawlable-corpus": "node --import tsx scripts/build-crawlable-corpus.mjs",
+    "build:crawlable-corpus": "node --import tsx scripts/build-crawlable-corpus.mjs --skip-source-attribution",
     "audit:microstate-corpus": "node scripts/audit-microstate-corpus-similarity.mjs --check",
     "build:llms-full": "node --import tsx scripts/build-llms-full.mjs",
     "build:llms-full:check": "node --import tsx scripts/build-llms-full.mjs --check",
@@ -120,7 +120,7 @@
     "build:sidecar-sebuf": "node scripts/build-sidecar-sebuf.mjs",
     "prebuild:desktop": "npm run product:facts",
     "build:desktop": "npm run security:vite-env-secrets -- --strict-local && node scripts/generate-third-party-notices.mjs && node scripts/build-sidecar-sebuf.mjs && node scripts/build-sidecar-handlers.mjs && tsc && vite build",
-    "prebuild:full": "npm run docs:dates -- --fetch-history && npm run product:facts",
+    "prebuild:full": "npm run product:facts:vercel",
     "build:full": "npm run security:vite-env-secrets -- --strict-local && npm run build:openapi && npm run build:agent-skills && npm run build:blog:raw && npm run build:pro && npm run build:crawlable-corpus && npm run build:sitemap && cross-env-shell VITE_VARIANT=full \"tsc && vite build\"",
     "prebuild:tech": "npm run docs:dates -- --fetch-history && npm run product:facts",
     "build:tech": "npm run security:vite-env-secrets -- --strict-local && npm run build:openapi && npm run build:agent-skills && cross-env-shell VITE_VARIANT=tech \"tsc && vite build\"",
@@ -203,7 +203,8 @@
     "legal:pdfs:check": "node scripts/build-legal-pdfs.mjs --check",
     "docs:dates": "node scripts/generate-docs-page-dates.mjs",
     "docs:dates:check": "node scripts/generate-docs-page-dates.mjs --check",
-    "freeze:github-stars": "node scripts/freeze-github-stars.mjs"
+    "freeze:github-stars": "node scripts/freeze-github-stars.mjs",
+    "product:facts:vercel": "node --import tsx scripts/generate-product-config.mjs && node --import tsx scripts/generate-public-product-facts.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",

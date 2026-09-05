@@ -1086,6 +1086,9 @@ function walkSourceFiles(rootDir) {
     }
   };
   for (const root of SOURCE_ROOTS) visit(root);
+  // [fork-patch] single-function branch mirrors api/ into .vercel-api-routes/;
+  // scan it too so scan-parity with the committed api/ manifest holds.
+  visit('.vercel-api-routes');
   return files.sort();
 }
 
@@ -1125,6 +1128,7 @@ export function scanUpstreamHosts(rootDir = ROOT) {
     hosts.set(host, current);
   };
   for (const relativePath of walkSourceFiles(rootDir)) {
+    const refPath = relativePath.startsWith('.vercel-api-routes/') ? 'api/' + relativePath.slice('.vercel-api-routes/'.length) : relativePath;
     const source = read(rootDir, relativePath);
     const lineStarts = [0];
     for (let offset = source.indexOf('\n'); offset !== -1; offset = source.indexOf('\n', offset + 1)) {
@@ -1158,12 +1162,12 @@ export function scanUpstreamHosts(rootDir = ROOT) {
       if (!candidate) continue;
       const host = hostFromUrl(match[0]);
       if (!host) continue;
-      const kind = relativePath === STATUS_FILE
+      const kind = refPath === STATUS_FILE
         ? 'operational-status'
-        : FEED_FILES.has(relativePath)
+        : FEED_FILES.has(refPath)
           ? 'feed'
           : 'structured';
-      recordHost(host, kind, relativePath);
+      recordHost(host, kind, refPath);
       if (host === 'news.google.com' && FEED_FILES.has(relativePath)) {
         let query = '';
         try {

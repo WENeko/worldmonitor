@@ -805,7 +805,7 @@ export class EventHandlerManager implements AppModule {
     };
     document.addEventListener('keydown', this.boundUndoHandler);
 
-    const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || (location.hostname !== 'worldmonitor.app' && location.hostname !== 'www.worldmonitor.app' && !location.hostname.endsWith('.worldmonitor.app'));
     this.ctx.container.querySelectorAll<HTMLAnchorElement>('.variant-option').forEach(link => {
       link.addEventListener('click', (e) => {
         const variant = link.dataset.variant;
@@ -1920,7 +1920,7 @@ export class EventHandlerManager implements AppModule {
       `.variant-option[data-variant="${variant}"]`,
     );
     if (!link) return 'unavailable';
-    const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || (location.hostname !== 'worldmonitor.app' && location.hostname !== 'www.worldmonitor.app' && !location.hostname.endsWith('.worldmonitor.app'));
     return this.navigateToVariant(variant, {
       href: link.href,
       isLocalDev,

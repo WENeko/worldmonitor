@@ -3604,7 +3604,15 @@ export async function handleHealth(req, ctx, options = {}) {
       String(HEALTH_VERDICT_REFRESH_LOCK_TTL_SECONDS),
       'NX',
     ]], 4_000, true);
-    if (!lockResult || lockResult[0]?.error) throw new Error('Redis snapshot lock failed');
+    if (!lockResult || lockResult[0]?.error) {
+      // [fork-patch] Surface the Upstash per-command error so a fork
+      // operator can see WHY the write lock fails (e.g. a read-only token).
+      const redisErr = lockResult?.[0]?.error;
+      throw new Error(
+        'Redis snapshot lock failed' +
+        (redisErr ? `: ${String(redisErr)}` : ' (empty Upstash pipeline reply)')
+      );
+    }
     ownsSnapshotRefreshLock = lockResult[0]?.result === 'OK';
 
     if (!ownsSnapshotRefreshLock) {

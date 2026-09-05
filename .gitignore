@@ -154,3 +154,10 @@ playground-pricing.html
 # compile time — `cargo test` fails on a resource path that does not exist.
 src-tauri/notices/*
 !src-tauri/notices/.gitkeep
+
+# Vercel single-function deploy branch: the staged route tree mirrors api/,
+# so internal/ and skills/ endpoints stay tracked under .vercel-api-routes/.
+!.vercel-api-routes/internal/
+!.vercel-api-routes/internal/*
+!.vercel-api-routes/skills/
+!.vercel-api-routes/skills/*

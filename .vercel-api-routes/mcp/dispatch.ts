@@ -33,6 +33,24 @@ import type {
   McpToolExecutionContext,
 } from './types';
 import { utf8ByteLength } from './utils';
+
+// [fork-patch] Interop: registry tools declare an `outputSchema`, and stricter MCP
+// agents (e.g. Hermès) require the structured payload back in `tools/call`'s
+// `structuredContent` — not only as JSON inside `content[].text`. Attach the
+// parsed JSON object when the text is JSON-parseable; leave text-only prose
+// responses untouched so non-JSON tools keep working unchanged.
+function withStructuredContent(text: string): Record<string, unknown> {
+  const result: Record<string, unknown> = { content: [{ type: 'text', text }] };
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      result.structuredContent = parsed;
+    }
+  } catch {
+    // Non-JSON text — keep the response text-only.
+  }
+  return result;
+}
 // Currently the only stored-contract violation a post-filter can raise; add to this seam
 // rather than widening the catch below if another dataset grows one.
 import { isPhysicalDivergenceContractError as isMcpStoredContractError } from '../../server/_shared/physical-divergence-snapshot';
@@ -501,14 +519,14 @@ export async function dispatchToolsCall(
       const hint = jmespathUsed
         ? 'Response still exceeds tool output budget after JMESPath projection. Use a more selective expression to project fewer fields, or apply tool-level filters to narrow the result set.'
         : 'Response exceeds tool output budget. Use the jmespath argument to project only the fields you need, or apply filters to narrow the result set.';
-      return rpcOk(id, { content: [{ type: 'text', text: JSON.stringify({
+      return rpcOk(id, withStructuredContent(JSON.stringify({
         _budget_exceeded: true,
         budget_bytes: budget,
         actual_bytes: textBytes,
         hint,
-      }) }] }, corsHeaders);
+      })), corsHeaders);
     }
-    return rpcOk(id, { content: [{ type: 'text', text }] }, corsHeaders);
+    return rpcOk(id, withStructuredContent(text), corsHeaders);
   } catch (err: unknown) {
     // `latency_ms` is time-in-tool (from tStart, captured after the quota
     // reservation) so the P95 error-path dashboard isn't skewed by reservation

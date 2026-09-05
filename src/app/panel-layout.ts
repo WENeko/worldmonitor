@@ -1049,7 +1049,8 @@ export class PanelLayoutManager implements AppModule {
       <div class="header" role="banner">
         <div class="header-left">
           <div class="variant-switcher">${(() => {
-        const local = this.ctx.isDesktopApp || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+        const _h = location.hostname;
+const local = this.ctx.isDesktopApp || _h === 'localhost' || _h === '127.0.0.1' || (_h !== 'worldmonitor.app' && _h !== 'www.worldmonitor.app' && !_h.endsWith('.worldmonitor.app'));
         const inIframe = window.self !== window.top;
         const vHref = (v: keyof typeof VARIANT_SWITCHER_DASHBOARD_URLS) =>
           variantSwitcherHref(v, SITE_VARIANT, local);
