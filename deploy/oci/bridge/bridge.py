@@ -35,6 +35,11 @@ Fail-closed rules:
   `<home>/executions/<directive_id>.json`. Re-delivering the same
   directive does nothing (a `GATED` receipt is not final and can be
   re-processed).
+- For directives that carry an `execution_request`, the bridge verifies
+  the mandated order actually landed — connector positions before/after
+  the run — before writing `EXECUTED`. An agent that exits 0 without a
+  matching fill is recorded as `FAILED` with reason `order_not_filled`
+  (opt out per-operations with `BRIDGE_SKIP_FILL_CHECK=1`).
 - `BRIDGE_DRY_RUN=1` logs what would run instead of invoking the agent.
 
 Modes:
@@ -113,6 +118,11 @@ class BridgeConfig:
             "0",
             "false",
         )
+        self.skip_fill_check = env_setting("BRIDGE_SKIP_FILL_CHECK", "0") not in (
+            "",
+            "0",
+            "false",
+        )
         self.max_qty = int(env_setting("BRIDGE_MAX_QTY", "3"))
         self.vibe_bin = shutil.which(
             env_setting("BRIDGE_VIBE_TRADING_BIN", "vibe-trading")
@@ -132,6 +142,7 @@ class BridgeConfig:
             f"timeout_s={self.timeout_s}\n"
             f"connector={self.connector} dry_run={self.dry_run}\n"
             f"research_allowed={self.research_allowed}\n"
+            f"fill_check={'SKIPPED' if self.skip_fill_check else 'on'}\n"
             f"vibe_trading_bin={self.vibe_bin or 'NOT FOUND'}\n"
             f"llm_env: api_key={'set' if os.environ.get('OPENAI_API_KEY') else 'MISSING'} "
             f"base_url={os.environ.get('OPENAI_BASE_URL') or 'UNSET (would default to api.openai.com)'}"
@@ -184,6 +195,173 @@ def probe_llm_gateway() -> tuple[int, str]:
         return error.code, body[:280].replace("\n", " ")
     except Exception as error:  # connection refused, timeout, DNS…
         return 0, f"{type(error).__name__}: {error}"
+
+
+# ---------------------------------------------------------------------------
+# Fill verification (execution_request directives only)
+# ---------------------------------------------------------------------------
+
+
+def _as_float(value: object) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _position_qty(positions: dict, symbol: str) -> float:
+    """Quantity held for `symbol`, tolerating venue suffixes (.US / -USD)."""
+    key = symbol.upper()
+    for candidate in (key, key + ".US", key + "-USD"):
+        if candidate in positions:
+            return float(positions[candidate])
+    for held, qty in positions.items():
+        if str(held).upper().replace(".US", "").replace("-USD", "") == key:
+            return float(qty)
+    return 0.0
+
+
+def _parse_positions(output: str) -> dict[str, float] | None:
+    """Parse `vibe-trading connector positions` output into {SYMBOL: qty}.
+
+    Accepts a JSON object/list (symbol -> qty or [{symbol, qty}, …]) or the
+    CLI's aligned table (a symbol token followed by a numeric qty on the
+    same line). Returns None when the shape is unrecognized so callers can
+    fail closed instead of guessing.
+    """
+    try:
+        parsed = json.loads(output)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        result = {}
+        for sym, qty in parsed.items():
+            value = _as_float(qty)
+            if value is not None:
+                result[str(sym).upper()] = value
+        return result or None
+    if isinstance(parsed, list):
+        result = {}
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            sym = item.get("symbol") or item.get("ticker")
+            qty = item.get("qty", item.get("quantity", item.get("position_qty")))
+            value = _as_float(qty)
+            if sym and value is not None:
+                result[str(sym).upper()] = value
+        return result or None
+
+    result = {}
+    stopwords = {
+        "SYMBOL", "QTY", "QUANTITY", "POSITION", "AVG", "PRICE", "MARKET",
+        "VALUE", "FIELD", "ACCOUNT", "CURRENCY", "SIDE", "TYPE", "TICKER",
+        "STATUS", "NOTES",
+    }
+    for line in output.splitlines():
+        tokens = line.split()
+        for index, token in enumerate(tokens):
+            bare = token.strip(",;()").upper()
+            if not (1 <= len(bare) <= 10) or not bare[0].isalpha():
+                continue
+            if not all(char.isalnum() or char in ".-" for char in bare):
+                continue
+            if bare in stopwords:
+                continue
+            for following in tokens[index + 1 :]:
+                qty = _as_float(following.strip(",;()"))
+                if qty is not None and 0 < abs(qty) < 1e9:
+                    result[bare] = qty
+                    break
+    return result or None
+
+
+def query_positions(cfg: BridgeConfig) -> dict[str, float] | None:
+    """Live connector positions via the shared vibe-trading CLI.
+
+    Returns {SYMBOL: qty} ({} when flat) or None when the query failed or
+    the output shape was unrecognized — callers treat None as unverifiable.
+    """
+    if cfg.vibe_bin is None:
+        LOG.warning("fill check: vibe-trading binary not found")
+        return None
+    command = [cfg.vibe_bin, "connector", "positions"]
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=os.environ.copy(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        LOG.warning("fill check: positions query failed: %s", exc)
+        return None
+    if proc.returncode != 0:
+        LOG.warning("fill check: positions query exit %s", proc.returncode)
+        return None
+    output = (proc.stdout or "").strip()
+    if not output or "no positions" in output.lower():
+        return {}
+    positions = _parse_positions(output)
+    if positions is None:
+        LOG.warning(
+            "fill check: could not parse positions output: %r", output[:200]
+        )
+    return positions
+
+
+def verify_fill(
+    cfg: BridgeConfig, execution: dict, pre_positions: dict | None
+) -> dict:
+    """Confirm a mandated execution_request actually landed.
+
+    Returns {"ok": bool, "reason": str | None, "detail": str}. Runs the
+    connector positions query itself (the post-run state).
+    """
+    symbol = str(execution.get("symbol") or "").upper()
+    side = str(execution.get("side") or "").upper()
+    qty = _as_float(execution.get("qty")) or 0.0
+    post_positions = query_positions(cfg)
+    if post_positions is None:
+        return {
+            "ok": False,
+            "reason": "fill_verification_unavailable",
+            "detail": (
+                "connector positions query failed or output was unparseable; "
+                "cannot confirm the mandated order landed"
+            ),
+        }
+    before = _position_qty(pre_positions or {}, symbol)
+    after = _position_qty(post_positions, symbol)
+    delta = after - before
+    tolerance = 1e-6
+    if side == "BUY":
+        expected = f"expected {symbol} qty to rise by >= {qty:g} (was {before:g})"
+        ok = delta >= qty - tolerance
+    elif side == "SELL":
+        if before <= tolerance:
+            expected = (
+                f"expected a {symbol} SELL fill but none was held before the run"
+            )
+            ok = False
+        else:
+            expected = f"expected {symbol} qty to fall by >= {qty:g} (was {before:g})"
+            ok = delta <= -qty + tolerance
+    else:
+        return {
+            "ok": False,
+            "reason": "invalid_execution_request",
+            "detail": f"side '{side}' is not BUY or SELL",
+        }
+    detail = f"{symbol}: {before:g} -> {after:g} (delta {delta:g}); {expected}"
+    if not ok:
+        detail += "; connector positions do not show the mandated fill"
+    return {
+        "ok": ok,
+        "reason": None if ok else "order_not_filled",
+        "detail": detail,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -549,13 +727,34 @@ def process_file(cfg: BridgeConfig, path: Path) -> None:
         LOG.info("dry-run: would execute %s (%d chars)", directive_id, len(prompt))
         return
 
+    execution = data.get("execution_request")
+    pre_positions = None
+    if execution is not None and not cfg.skip_fill_check:
+        pre_positions = query_positions(cfg)
+        if pre_positions is None:
+            LOG.warning(
+                "directive %s: pre-run positions query failed", directive_id
+            )
+
     fragment = run_agent(cfg, prompt)
-    receipt = build_receipt(cfg, data, fragment["status"], {
-        "prompt_tail": prompt[-500:],
-        **fragment,
-    })
+    outcome = fragment["status"]
+    extra: dict = {"prompt_tail": prompt[-500:], **fragment}
+
+    if execution is not None and outcome == "EXECUTED" and not cfg.skip_fill_check:
+        verification = verify_fill(cfg, execution, pre_positions)
+        extra["fill_verification"] = verification
+        if not verification["ok"]:
+            outcome = "FAILED"
+            extra["status"] = "FAILED"
+            extra["error"] = (
+                "agent reported success but the mandated order did not land: "
+                f"{verification['reason']} — {verification['detail']}"
+            )
+            LOG.error("directive %s: %s", directive_id, extra["error"])
+
+    receipt = build_receipt(cfg, data, outcome, extra)
     write_receipt(cfg, receipt)
-    LOG.info("directive %s → %s", directive_id, fragment["status"])
+    LOG.info("directive %s → %s", directive_id, outcome)
 
 
 def collect_pending(cfg: BridgeConfig) -> list[Path]:

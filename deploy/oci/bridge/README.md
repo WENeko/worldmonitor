@@ -102,7 +102,12 @@ CONTRACT fields. See `sample-directive.json`.
 `status` (`EXECUTED` / `NO_EXECUTION` / `RESEARCH_DONE` /
 `RESEARCH_TIMEOUT` / `RESEARCH_FAILED` / `GATED` / `REJECTED` / `FAILED` /
 `TIMEOUT` / `DRY_RUN`), `processed_at`, `connector`, the agent's JSON result
-(`run_id`, order, account/position state) and error tails. `audit/audits.jsonl`
+(`run_id`, order, account/position state) and error tails. For directives
+that carry an `execution_request`, the receipt also includes a
+`fill_verification` block (connector positions before/after the run); a
+`FAILED` status with reason `order_not_filled` means the agent finished
+successfully but the mandated order did not land — the bridge no longer
+trusts the agent's exit code alone for mandated orders. `audit/audits.jsonl`
 is the append-only trail for backtesting the loop itself. The status
 vocabulary is the *learning signal*: Hermès updates priors from
 `RESEARCH_DONE` findings and `EXECUTED` outcomes (see
@@ -160,6 +165,7 @@ docker exec bridge cat /var/lib/bridge/executions/DIR-SYNTH-20260904-070100-001.
 | `BRIDGE_MAX_QTY` | `3` | Soft per-order cap (embedded in the prompt) |
 | `BRIDGE_DRY_RUN` | `0` | `1` logs the prompt, never invokes the agent |
 | `BRIDGE_ALLOW_RESEARCH` | `0` | `1` lets `mode: RESEARCH` commissions run as read-only agent tasks |
+| `BRIDGE_SKIP_FILL_CHECK` | `0` | `1` trusts the agent's exit code for `execution_request` directives (disables the positions-based fill verification — not recommended) |
 | `BRIDGE_VIBE_TRADING_BIN` | `vibe-trading` | CLI binary path |
 
 **Stand-down**: touching `/var/lib/bridge/halt` pauses processing until
@@ -253,6 +259,20 @@ The bridge is intentionally the *cheapest* container in the stack:
   with `docker cp` (daemon-side copy, as in the runbook above), never
   `docker exec … tee`. Hermès writes there through its own container as uid
   1000.
+- **Receipt `FAILED` with `order_not_filled` / `fill_verification_unavailable`
+  after the agent returned exit 0**: the fill guard doing its job. The
+  bridge now compares connector positions before and after a mandated
+  `execution_request` run and fails the receipt when the order did not
+  land. Common causes: the US market is closed (a market order cannot fill
+  outside 13:30–20:00 UTC on weekdays), or an agent-side execution failure
+  that still exits 0 (seen in the field: an internal `identity_required`
+  error — the run's `grounding_evidence.json` shows the `trading_place_order`
+  attempt, the `tool_failures` entry, and no fill). The agent run id is in
+  `agent_result.run_id` and its artifacts at
+  `/home/vibe/.vibe-trading/runs/<run_id>/`. Re-drop under a **fresh
+  `directive_id`** after fixing the cause. Re-runs outside US market hours
+  will legitimately fail closed — that is the intended behavior. Opt out
+  per-operations with `BRIDGE_SKIP_FILL_CHECK=1`.
 - **`docker compose up` → `Container "/vibe-trading" is already in use`**:
   a leftover standalone `vibe-trading` container from the old
   `~/trading-stack` quickstart still holds the name. Retire that project
@@ -272,8 +292,10 @@ The bridge is intentionally the *cheapest* container in the stack:
 ## Limits of this version (declare them)
 
 - Execution is delegated to the agent's judgment within the prompt's
-  guardrails; the bridge does not re-price or validate fills itself.
-  `execution_request` is the deterministic path for tests.
+  guardrails; the bridge does not re-price orders. For directives that
+  carry an `execution_request` it DOES verify the fill against connector
+  positions and fails the receipt when the mandated order did not land;
+  discretionary directives (no `execution_request`) are not fill-checked.
 - Research commissions are read-only by *prompt contract*, not by sandbox:
   the agent is trusted to stay out of order tools. Keep
   `BRIDGE_ALLOW_RESEARCH=0` unless you accept that trust boundary.
