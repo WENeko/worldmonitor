@@ -14277,6 +14277,9 @@
           "path": "scripts/seo-indexnow-submit.mjs"
         },
         {
+          "path": "scripts/verify-agent-readiness.mjs"
+        },
+        {
           "path": "scripts/verify-sitemaps.mjs"
         },
         {

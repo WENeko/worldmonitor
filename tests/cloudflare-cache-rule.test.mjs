@@ -23,7 +23,13 @@ import { fileURLToPath } from 'node:url';
 
 import { CONTENT_CORPUS_PREFIXES } from '../scripts/discover-content-corpus-pages.mjs';
 import {
+  AGENT_TEXT_FILES,
   CORPUS_HOST,
+  EDGE_CACHED_FAMILIES,
+  FAMILY_EXCLUSIONS,
+  NEGOTIATED_MEDIA_TYPES,
+  RSC_REQUEST_HEADERS,
+  SINGLE_REPRESENTATION_EXTENSIONS,
   buildCorpusCacheRule,
   diffLiveRuleset,
   planApply,
@@ -42,34 +48,111 @@ const HTML_ENTRY_EDGE_CACHE = 'public, s-maxage=600, stale-while-revalidate=60';
  */
 const ENTRY_DOCUMENT_SOURCES = new Set(['/', '/dashboard', '/dashboard.html']);
 
-/** `/(a|b|c)` and `/(a|b|c)/(.*)` -> ['a', 'b', 'c']. */
-function familiesFromVercelSource(source) {
-  const match = source.match(/^\/\(([^)]+)\)(?:\/\(\.\*\))?$/);
-  if (!match) return [];
-  return match[1].split('|');
+/**
+ * Classify one vercel.json header source that advertises the shared TTL.
+ *
+ * Shapes in use:
+ *   /(a|b|c)                       bare corpus families (308s, mirrored anyway)
+ *   /(a|b|c)/(.*)                  nested corpus families
+ *   /blog                          a bare family that is itself a document
+ *   /blog/((?!_astro/|og/).*)      a nested family with carve-outs; `x$` marks an exact path
+ *   /(llms\.txt|home\.md)          root-level files, dots escaped
+ *
+ * Returns null for anything else so the caller can fail loudly: a shape this
+ * parser does not know would otherwise contribute nothing and let the rule
+ * silently under-claim — the drift that produced #7659.
+ */
+function classifyVercelSource(source) {
+  let match = source.match(/^\/\(([^()]+)\)\/\(\.\*\)$/);
+  if (match) {
+    return { nested: match[1].split('|').map((family) => [family, { prefixes: [], exact: [] }]) };
+  }
+  match = source.match(/^\/([a-z-]+)\/\(\(\?!([^()]+)\)\.\*\)$/);
+  if (match) {
+    const carveOuts = match[2].split('|');
+    return {
+      nested: [[match[1], {
+        prefixes: carveOuts.filter((carveOut) => !carveOut.endsWith('$')),
+        exact: carveOuts.filter((carveOut) => carveOut.endsWith('$')).map((carveOut) => carveOut.slice(0, -1)),
+      }]],
+    };
+  }
+  match = source.match(/^\/\(([^()]+)\)$/);
+  if (match) {
+    const names = match[1].split('|').map((name) => name.replace(/\\\./g, '.'));
+    return {
+      bare: names.filter((name) => !name.includes('.')),
+      files: names.filter((name) => name.includes('.')),
+    };
+  }
+  match = source.match(/^\/([a-z-]+)$/);
+  if (match) return { bare: [match[1]] };
+  return null;
 }
 
-/** Every vercel.json header rule that advertises a shared-cacheable HTML family. */
-function vercelPublicCorpusFamilies() {
-  const families = new Set();
+/** Everything vercel.json advertises as shared-cacheable, by shape. */
+function vercelEdgeCacheSurface() {
+  const surface = { bare: new Set(), nested: new Map(), files: new Set() };
   for (const entry of vercelConfig.headers ?? []) {
     const cdn = entry.headers.find((header) => header.key === 'CDN-Cache-Control');
     if (cdn?.value !== HTML_ENTRY_EDGE_CACHE) continue;
     if (ENTRY_DOCUMENT_SOURCES.has(entry.source)) continue;
-    const parsed = familiesFromVercelSource(entry.source);
-    // Failing open here would gut the guard below: a family added under a source
-    // shape this regex does not recognise would silently contribute nothing, and
-    // the comparison would pass while the Cloudflare rule was missing it — the
-    // exact drift the test exists to catch.
+    const parsed = classifyVercelSource(entry.source);
     assert.ok(
-      parsed.length,
-      `${entry.source} advertises a shared CDN-Cache-Control but does not parse as a corpus family source;`
-        + ' teach familiesFromVercelSource() its shape or add it to ENTRY_DOCUMENT_SOURCES',
+      parsed,
+      `${entry.source} advertises a shared CDN-Cache-Control but is not a shape this test knows;`
+        + ' teach classifyVercelSource() its shape or add it to ENTRY_DOCUMENT_SOURCES',
     );
-    for (const family of parsed) families.add(family);
+    for (const name of parsed.bare ?? []) surface.bare.add(name);
+    for (const name of parsed.files ?? []) surface.files.add(name);
+    for (const [family, carveOuts] of parsed.nested ?? []) surface.nested.set(family, carveOuts);
   }
-  return families;
+  return surface;
 }
+
+/**
+ * Everything the generated expression claims, in the same shape, read back from
+ * the wirefilter text rather than from the constants that produced it — the
+ * point is to catch the expression builder dropping something, not to compare a
+ * constant with itself.
+ */
+function ruleClaims(expression) {
+  const claims = { bare: new Set(), nested: new Map(), files: new Set() };
+  for (const set of expression.matchAll(/http\.request\.uri\.path in \{([^}]*)\}/g)) {
+    for (const literal of set[1].match(/"[^"]+"/g) ?? []) {
+      const name = literal.slice(2, -1);
+      (name.includes('.') ? claims.files : claims.bare).add(name);
+    }
+  }
+  let current = null;
+  for (const line of expression.split('\n')) {
+    const claim = line.match(/^\s*or \(?starts_with\(http\.request\.uri\.path, "\/([^/"]+)\/"\)/);
+    if (claim) {
+      claims.nested.set(claim[1], { prefixes: [], exact: [] });
+      current = line.includes('or (') ? claim[1] : null;
+      continue;
+    }
+    if (!current) continue;
+    if (/^\s*\)\s*$/.test(line)) {
+      current = null;
+      continue;
+    }
+    const prefix = line.match(/and not starts_with\(http\.request\.uri\.path, "\/([^/"]+)\/(.+)"\)/);
+    if (prefix) {
+      assert.equal(prefix[1], current, `carve-out ${line.trim()} sits under the wrong family`);
+      claims.nested.get(current).prefixes.push(prefix[2]);
+      continue;
+    }
+    const exact = line.match(/and http\.request\.uri\.path ne "\/([^/"]+)\/(.+)"/);
+    if (exact) {
+      assert.equal(exact[1], current, `carve-out ${line.trim()} sits under the wrong family`);
+      claims.nested.get(current).exact.push(exact[2]);
+    }
+  }
+  return claims;
+}
+
+const sorted = (iterable) => [...iterable].sort();
 
 describe('cloudflare corpus cache rule', () => {
   const rule = buildCorpusCacheRule();
@@ -89,19 +172,104 @@ describe('cloudflare corpus cache rule', () => {
     }
   });
 
-  it('matches exactly the families vercel.json advertises as shared-cacheable', () => {
-    // The failure this guards is the one that produced #7659 in the first place:
-    // a family gains its origin CDN-Cache-Control header and nobody extends the
-    // Cloudflare rule, so the header is correct and the page still never caches.
-    const claimed = new Set(
-      [...rule.expression.matchAll(/starts_with\(http\.request\.uri\.path, "\/([^/"]+)\/"\)/g)]
-        .map((match) => match[1]),
-    );
+  it('claims exactly the surface vercel.json advertises as shared-cacheable', () => {
+    // The failure this guards is the one that produced #7659 and then #7747: a
+    // route gains its origin CDN-Cache-Control header and nobody extends the
+    // Cloudflare rule (or the reverse), so one half is correct and the page still
+    // never caches. Both directions, all three shapes.
+    const advertised = vercelEdgeCacheSurface();
+    const claimed = ruleClaims(rule.expression);
+
+    // Positive controls: the parsers must actually be seeing the new shapes.
+    assert.ok(advertised.nested.has('blog') && advertised.nested.has('docs'), 'vercel.json must advertise /blog and /docs');
+    assert.ok(advertised.files.has('llms.txt'), 'vercel.json must advertise /llms.txt');
+    assert.ok(claimed.nested.get('docs')?.exact.length, 'the rule must carve an exact path out of /docs');
+
+    assert.deepEqual(sorted(claimed.bare), sorted(advertised.bare), 'bare document paths');
+    assert.deepEqual(sorted(claimed.files), sorted(advertised.files), 'root agent text files');
+    assert.deepEqual(sorted(claimed.nested.keys()), sorted(advertised.nested.keys()), 'prefix-claimed families');
+    for (const [family, carveOuts] of advertised.nested) {
+      const inRule = claimed.nested.get(family);
+      assert.deepEqual(sorted(inRule.prefixes), sorted(carveOuts.prefixes), `${family}: carve-out prefixes`);
+      assert.deepEqual(sorted(inRule.exact), sorted(carveOuts.exact), `${family}: carve-out exact paths`);
+    }
+
+    // And the constants the script exports are what both halves were built from.
+    assert.deepEqual(sorted(claimed.nested.keys()), sorted(EDGE_CACHED_FAMILIES));
+    assert.deepEqual(sorted(claimed.files), sorted(AGENT_TEXT_FILES));
+  });
+
+  it('admits an HTML document only for the HTML representation: no RSC flight headers, no negotiated media types', () => {
+    // Vercel answers `Accept: text/markdown` with markdown for the corpus and the
+    // blog; Mintlify does the same for text/markdown and text/plain and serves an
+    // RSC flight for `RSC: 1` / the next-router-* headers. Cloudflare keys on the
+    // URL, so a request asking for any of those must not be admitted — it is
+    // neither stored nor answered from the store, and reaches the origin as
+    // before. Pinned lists: dropping one entry re-opens a poisoning path.
     assert.deepEqual(
-      [...claimed].sort(),
-      [...vercelPublicCorpusFamilies()].sort(),
-      'the Cloudflare rule and the vercel.json CDN-Cache-Control rules must cover the same families',
+      [...RSC_REQUEST_HEADERS],
+      ['rsc', 'next-router-state-tree', 'next-router-prefetch', 'next-router-segment-prefetch'],
     );
+    assert.deepEqual([...NEGOTIATED_MEDIA_TYPES], ['text/markdown', 'text/plain', 'text/x-component']);
+    const guards = [
+      ...RSC_REQUEST_HEADERS.map((name) => `not any(http.request.headers.names[*] == "${name}")`),
+      // Every Accept value, lowercased: Accept may arrive as several header lines
+      // and the origins honour the combined list (measured: a second line
+      // `Accept: text/markdown` still yields markdown), and both origins match
+      // media types case-insensitively (`Accept: TEXT/MARKDOWN` -> text/markdown).
+      // `[0]` alone would admit a request whose first line is harmless.
+      ...NEGOTIATED_MEDIA_TYPES.map((type) => `not any(lower(http.request.headers["accept"][*])[*] contains "${type}")`),
+    ];
+    for (const guard of guards) {
+      assert.ok(rule.expression.includes(guard), `missing guard: ${guard}`);
+    }
+    assert.ok(!rule.expression.includes('["accept"][0]'), 'only the first Accept line was inspected');
+
+    // Structure: one guard block, gating every HTML document family, disjoined
+    // with the single-representation exemption, and closed before the path
+    // disjunction opens.
+    const lines = rule.expression.split('\n');
+    const exemption = lines.findIndex((line) => line.trim() === `http.request.uri.path.extension in {${SINGLE_REPRESENTATION_EXTENSIONS.map((ext) => `"${ext}"`).join(' ')}}`);
+    assert.ok(exemption > 0, 'the single-representation exemption must be present');
+    assert.equal(lines[exemption - 1].trim(), 'and (', 'the exemption opens the guard block');
+    assert.ok(lines[exemption + 1].trim().startsWith(`or (${guards[0]}`), 'the guard conjunction is the exemption\'s alternative');
+    const guardClose = lines.findIndex((line, index) => index > exemption && line.trim() === ')');
+    const blockClose = guardClose + 1;
+    assert.equal(lines[blockClose].trim(), ')', 'the guard block closes');
+    assert.equal(lines[blockClose + 1].trim(), 'and (', 'the path disjunction follows the guard block');
+    for (const guard of guards) {
+      const at = lines.findIndex((line) => line.includes(guard));
+      assert.ok(at > exemption && at < guardClose, `${guard} must sit inside the guard block`);
+    }
+    assert.ok(
+      !lines.slice(blockClose + 1).some((line) => line.includes('headers.names') || line.includes('["accept"]')),
+      'no per-family guard: the block applies to every family once',
+    );
+  });
+
+  it('exempts single-representation files from the representation guard', () => {
+    // /countries/iran.md, /docs/documentation.md, /llms.txt, /blog/rss.xml and
+    // the sitemaps answer the same body for every Accept value and for `RSC: 1`
+    // (measured 2026-09-05). Guarding them would push agents that advertise
+    // `Accept: text/plain` or `text/markdown` — the clients these files exist for
+    // — off the cache. An allowlist, not "any extension": a document slug with a
+    // dot in it (`/docs/v1.2`) must keep the guard.
+    assert.deepEqual([...SINGLE_REPRESENTATION_EXTENSIONS], ['md', 'txt', 'xml']);
+    assert.ok(rule.expression.includes('http.request.uri.path.extension in {"md" "txt" "xml"}'));
+    assert.ok(!rule.expression.includes('path.extension ne ""'), 'must not exempt every extension');
+    assert.ok(!rule.expression.includes('path.extension in {"" "html"}'), 'the exemption is an allowlist of files, not a denylist of documents');
+  });
+
+  it('leaves the blog asset prefixes to the zone\'s older "Blog" rule', () => {
+    // That rule gives /blog/_astro/, /blog/og/ and /blog/images/ a month-long
+    // override TTL. Cloudflare lets the last matching rule write edge_ttl, so
+    // claiming them here would replace the month with "respect origin" — for
+    // Vercel's static default, an origin round-trip per request.
+    assert.deepEqual([...FAMILY_EXCLUSIONS.blog.prefixes], ['_astro/', 'og/', 'images/']);
+    for (const prefix of FAMILY_EXCLUSIONS.blog.prefixes) {
+      assert.ok(rule.expression.includes(`and not starts_with(http.request.uri.path, "/blog/${prefix}")`));
+    }
+    assert.ok(rule.expression.includes('"/blog"'), '/blog is the blog index, a document in its own right');
   });
 
   it('deliberately claims the agent-facing markdown twins alongside the HTML', () => {
@@ -113,10 +281,11 @@ describe('cloudflare corpus cache rule', () => {
       rule.expression.includes('starts_with(http.request.uri.path, "/countries/")'),
       'the prefix clause is what admits both /countries/iran/ and /countries/iran.md',
     );
-    assert.ok(
-      !rule.expression.includes('http.request.uri.path.extension'),
-      'no extension filter: narrowing to HTML would drop the .md twins crawlers fetch',
-    );
+    // The only use of the path extension is the single-representation exemption,
+    // which widens what is admitted for .md/.txt/.xml; nothing narrows the path
+    // claims to HTML, which would drop the .md twins crawlers fetch.
+    const extensionUses = rule.expression.match(/http\.request\.uri\.path\.extension[^\n]*/g) ?? [];
+    assert.deepEqual(extensionUses, ['http.request.uri.path.extension in {"md" "txt" "xml"}']);
   });
 
   it('is scoped to query-free GETs of the www document host', () => {
@@ -139,13 +308,57 @@ describe('cloudflare corpus cache rule', () => {
     );
   });
 
-  it('never reaches the authenticated, API, or proxied-docs surfaces', () => {
-    for (const forbidden of ['/pro', '/api/', '/dashboard', '/docs', '/mcp']) {
+  it('never reaches the authenticated or API surfaces, and carves the MCP server and Mintlify internals out of /docs', () => {
+    for (const forbidden of ['/pro', '/api/', '/dashboard', '/mcp"']) {
       assert.ok(
         !rule.expression.includes(`"${forbidden}`),
         `${forbidden} must stay outside the corpus cache rule`,
       );
     }
+    // /docs/mcp is api/docs-mcp.ts — a no-store JSON-RPC endpoint that answers
+    // GET as well as POST — and /docs/_* is Mintlify's asset and API space. Both
+    // share the prefix with the documents and neither is one. The exact-path
+    // form matters: a prefix carve-out on "/docs/mcp" would also drop the
+    // /docs/mcp-overview page.
+    assert.deepEqual(FAMILY_EXCLUSIONS.docs, { prefixes: ['_', 'mcp/'], exact: ['mcp'] });
+    assert.ok(rule.expression.includes('and http.request.uri.path ne "/docs/mcp"'));
+    assert.ok(rule.expression.includes('and not starts_with(http.request.uri.path, "/docs/mcp/")'));
+    assert.ok(rule.expression.includes('and not starts_with(http.request.uri.path, "/docs/_")'));
+    assert.ok(!rule.expression.includes('not starts_with(http.request.uri.path, "/docs/mcp")'), 'a prefix carve-out would swallow /docs/mcp-overview');
+    // Bare /docs is a 307 with no vercel.json header rule of its own, so it is
+    // the one family whose bare form is not mirrored.
+    assert.ok(!/in \{[^}]*"\/docs"[^}]*\}/.test(rule.expression), 'bare /docs must not be claimed');
+  });
+
+  it('adopts a rule whose ref is Cloudflare\'s default — its own id', () => {
+    // Cloudflare fills an unset ref with the rule id. The first corpus rule was
+    // applied before this script set a ref and lived in that state; treating the
+    // echoed id as a foreign ref made --check report "ambiguous" against a zone
+    // that held exactly one copy, and --apply refuse to touch it.
+    const bypass = { id: 'a', description: 'Bypass cache - WWW documents', action_parameters: { cache: false } };
+    const echoed = {
+      ...rule,
+      id: '7a9b6e5ba37940ecb103d9063db3a5f2',
+      ref: '7a9b6e5ba37940ecb103d9063db3a5f2',
+      expression: '(http.host eq "the #7659 expression")',
+    };
+    const plan = planApply([bypass, echoed], rule);
+    assert.equal(plan.op, 'update');
+    assert.equal(plan.id, echoed.id);
+    // The echoed ref is not reported: Cloudflare refuses to change it (error
+    // 20142 on the live zone, 2026-09-05), so it can never be "repaired", and a
+    // drift that can never clear would keep --check red on a correct zone.
+    assert.deepEqual(plan.diff.problems, ['expression differs']);
+    assert.equal(plan.refLocked, true);
+
+    // Once the content matches, the rule is current under its default ref.
+    assert.equal(planApply([bypass, { ...echoed, expression: rule.expression }], rule).op, 'none');
+
+    // A genuinely foreign ref on the same description is still a conflict.
+    const foreign = { ...rule, id: 'x', ref: 'someone_elses_ref' };
+    assert.equal(planApply([bypass, foreign], rule).op, 'duplicates');
+    // And an echoed-id copy next to a managed copy is still two copies.
+    assert.equal(planApply([bypass, { ...rule, id: 'mine' }, echoed], rule).op, 'duplicates');
   });
 
   it('defers the TTL to the origin and refuses to cache anything but a 2xx', () => {
@@ -219,10 +432,18 @@ describe('cloudflare corpus cache rule', () => {
   });
 
   it('adopts one legacy description-only rule and rejects ambiguous identity', () => {
-    const legacy = { ...rule, id: 'legacy' };
+    const legacy = { ...rule, id: 'legacy', expression: '(http.host eq "stale")' };
     delete legacy.ref;
-    assert.equal(planApply([legacy], rule).op, 'update');
-    assert.equal(planApply([legacy], rule).id, 'legacy');
+    const plan = planApply([legacy], rule);
+    assert.equal(plan.op, 'update');
+    assert.equal(plan.id, 'legacy');
+    assert.equal(plan.refLocked, true, 'a PATCH must not try to give the adopted rule our ref');
+    assert.deepEqual(plan.diff.problems, ['expression differs'], 'the missing ref itself is not drift');
+
+    // Identical content under a default ref is simply current.
+    const current = { ...rule, id: 'legacy' };
+    delete current.ref;
+    assert.equal(planApply([current], rule).op, 'none');
 
     const renamed = { ...rule, id: 'managed', description: 'renamed in the dashboard' };
     const ambiguous = planApply([renamed, legacy], rule);
@@ -524,15 +745,18 @@ describe('cloudflare cache rule runner', () => {
     ]);
   });
 
-  it('adopts exactly one legacy description-only rule with PATCH', async () => {
+  it('adopts exactly one legacy description-only rule with a PATCH that leaves its ref alone', async () => {
     const rule = buildCorpusCacheRule();
-    const legacy = { ...rule, id: 'legacy-id' };
+    const legacy = { ...rule, id: 'legacy-id', expression: '(http.host eq "stale")' };
     delete legacy.ref;
+    const { ref: _ref, ...ruleWithoutRef } = rule;
+    // Cloudflare echoes the default ref (the id) back; that must read as current.
+    const adopted = { ...rule, id: 'legacy-id', ref: 'legacy-id' };
     const intercepted = interceptedFetch([
       cloudflareResponse({ id: 'zone-id', name: 'worldmonitor.app' }),
       cloudflareResponse({ id: 'ruleset-id', version: '8', rules: [legacy] }),
-      cloudflareResponse({ ...rule, id: 'legacy-id' }),
-      cloudflareResponse({ id: 'ruleset-id', version: '9', rules: [{ ...rule, id: 'legacy-id' }] }),
+      cloudflareResponse(adopted),
+      cloudflareResponse({ id: 'ruleset-id', version: '9', rules: [adopted] }),
     ]);
     const code = await runCloudflareCacheRule(['--apply'], {
       env: RUN_ENV,
@@ -545,9 +769,53 @@ describe('cloudflare cache rule runner', () => {
     assert.deepEqual(intercepted.calls, [
       { url: ZONE_PATH, method: 'GET', body: undefined },
       { url: ENTRYPOINT_PATH, method: 'GET', body: undefined },
-      { url: `${RULES_PATH}/legacy-id`, method: 'PATCH', body: rule },
+      { url: `${RULES_PATH}/legacy-id`, method: 'PATCH', body: ruleWithoutRef },
       { url: ENTRYPOINT_PATH, method: 'GET', body: undefined },
     ]);
+  });
+
+  it('re-expresses the live #7659 rule without touching its Cloudflare-default ref', async () => {
+    // The exact shape the zone held on 2026-09-05: our description, ref === id,
+    // the old expression, sitting last. The first attempt sent `ref` and
+    // Cloudflare answered 400 / 20142 "expected the reference to be empty".
+    const rule = buildCorpusCacheRule();
+    const { ref: _ref, ...ruleWithoutRef } = rule;
+    const live = {
+      ...rule,
+      id: '7a9b6e5ba37940ecb103d9063db3a5f2',
+      ref: '7a9b6e5ba37940ecb103d9063db3a5f2',
+      expression: '(http.host eq "the #7659 expression")',
+    };
+    const bypass = {
+      id: 'bypass-id',
+      description: 'Bypass cache - WWW documents',
+      action: 'set_cache_settings',
+      action_parameters: { cache: false },
+      enabled: true,
+    };
+    const after = { ...live, expression: rule.expression };
+    const intercepted = interceptedFetch([
+      cloudflareResponse({ id: 'zone-id', name: 'worldmonitor.app' }),
+      cloudflareResponse({ id: 'ruleset-id', version: '59', rules: [bypass, live] }),
+      cloudflareResponse(after),
+      cloudflareResponse({ id: 'ruleset-id', version: '60', rules: [bypass, after] }),
+    ]);
+    const stdout = outputSink();
+    const code = await runCloudflareCacheRule(['--apply'], {
+      env: RUN_ENV,
+      fetchImpl: intercepted.fetchImpl,
+      stdout: stdout.stream,
+      stderr: outputSink().stream,
+    });
+
+    assert.equal(code, 0);
+    assert.deepEqual(intercepted.calls[2], {
+      url: `${RULES_PATH}/${live.id}`,
+      method: 'PATCH',
+      body: ruleWithoutRef,
+    });
+    assert.ok(!('position' in intercepted.calls[2].body), 'already last: no move');
+    assert.match(stdout.chunks.join(''), /applied \(update\)/);
   });
 
   it('creates a missing rule with POST and verifies the result', async () => {

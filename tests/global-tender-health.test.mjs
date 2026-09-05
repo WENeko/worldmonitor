@@ -162,7 +162,8 @@ test('graced stale content stays in compact diagnostics but out of the failure l
     summary: { total: 2, ok: 1, warn: 0, crit: 1 },
     checks,
   }, true);
-  assert.equal(body.problems.temporalAnomalies.status, 'STALE_CONTENT');
+  assert.equal(body.pending.temporalAnomalies.status, 'STALE_CONTENT');
+  assert.equal(body.problems.temporalAnomalies, undefined);
 
   const expired = { ...checks, temporalAnomalies: {
     ...checks.temporalAnomalies,

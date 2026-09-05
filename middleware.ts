@@ -8,6 +8,9 @@ import {
   shouldTransformDocsUpstreamHtml,
 } from './src/config/docs-locale-seo';
 import { getRootlessDocsDestination } from './src/config/docs-root-redirects';
+import agentRequestPolicy from './shared/agent-request-policy.json';
+
+const AGENT_UA = new RegExp(`(?:^|[^a-z0-9-])(?:${agentRequestPolicy.userAgents.join('|')})(?:$|[^a-z0-9-])`, 'i');
 
 const BOT_UA =
   /bot|crawl|spider|slurp|archiver|wget|curl\/|python-requests|scrapy|httpclient|go-http|java\/|libwww|perl|ruby|php\/|ahrefsbot|semrushbot|mj12bot|dotbot|baiduspider|yandexbot|sogou|bytespider|petalbot|gptbot|claudebot|ccbot/i;
@@ -288,6 +291,25 @@ export default function middleware(request: Request) {
     return new Response(null, { status: 308, headers: uaConditionedRedirectHeaders(dashboardUrl) });
   }
 
+  if (
+    path === '/' &&
+    (host === 'www.worldmonitor.app' || host === 'worldmonitor.app') &&
+    (request.method === 'GET' || request.method === 'HEAD') &&
+    url.searchParams.get('mode') !== 'agent' &&
+    AGENT_UA.test(ua)
+  ) {
+    return new Response(null, {
+      headers: {
+        'x-middleware-rewrite': new URL('/home.md', url).toString(),
+        'Content-Type': 'text/markdown; charset=utf-8',
+        Vary: 'User-Agent',
+        'Cache-Control': 'private, no-store',
+        'CDN-Cache-Control': 'no-store',
+        'Vercel-CDN-Cache-Control': 'no-store',
+      },
+    });
+  }
+
   if (request.method === 'GET' || request.method === 'HEAD') {
     const docsDestination = getRootlessDocsDestination(path);
     if (docsDestination) {
@@ -444,19 +466,14 @@ export default function middleware(request: Request) {
     return;
   }
 
-  // Block bots from all API routes
-  if (BOT_UA.test(ua)) {
-    return new Response('{"error":"Forbidden"}', {
+  if (BOT_UA.test(ua) || !ua || ua.length < 10) {
+    return Response.json(agentRequestPolicy.blockedResponse, {
       status: 403,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  // No user-agent or suspiciously short — likely a script
-  if (!ua || ua.length < 10) {
-    return new Response('{"error":"Forbidden"}', {
-      status: 403,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Cache-Control': 'no-store',
+        'CDN-Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      },
     });
   }
 }

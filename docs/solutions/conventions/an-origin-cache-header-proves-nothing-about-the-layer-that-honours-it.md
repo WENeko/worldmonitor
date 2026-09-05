@@ -12,6 +12,7 @@ applies_when:
   - "Diagnosing cf-cache-status DYNAMIC on a route whose origin headers look correct"
   - "Changing anything about the crawlable corpus' caching, TTFB, or crawl budget"
   - "Reviewing a fix whose only evidence is a green offline config assertion"
+  - "Caching a proxied or content-negotiated route (Accept, RSC) at a shared edge"
 symptoms:
   - "Every corpus route answers with the configured CDN-Cache-Control and Cloudflare still reports cf-cache-status: DYNAMIC"
   - "tests/deploy-config.test.mjs is green on every family while production serves none of them from cache"
@@ -61,8 +62,9 @@ distinguishes the two caches.
 ## What this looks like in the repo
 
 - `scripts/cloudflare-cache-rule.mjs` generates the corrective Cloudflare rule
-  from `CONTENT_CORPUS_PREFIXES`, so the CDN rule cannot drift from the
-  `vercel.json` header rules it mirrors. `--check` compares it to the live zone;
+  from `CONTENT_CORPUS_PREFIXES` (and, since #7747, `EDGE_CACHED_FAMILIES` and
+  `AGENT_TEXT_FILES`), so the CDN rule cannot drift from the `vercel.json`
+  header rules it mirrors. `--check` compares it to the live zone;
   `--apply` reconciles it through the per-rule endpoints.
 - `tests/cloudflare-cache-rule.test.mjs` pins the rule's shape offline **and**
   asserts it covers exactly the families `vercel.json` advertises — the drift
@@ -95,6 +97,44 @@ distinguishes the two caches.
 - **`--apply` and a live probe are different guards.** `--check` catches config
   drift before it changes behaviour; the live probe catches behaviour whatever
   the config says. The probe is the one that would have caught both incidents.
+
+## Third time: #7747 (2026-09-05)
+
+The 582 sitemap URLs outside the corpus — `/docs/**`, `/blog/**`, the root
+agent text files — were still DYNAMIC after #7659, and the issue read the gap
+off a perfect correlation: every HIT carried `cdn-cache-control`, every DYNAMIC
+did not. The correlation was real and the causal reading was wrong. Header and
+Cloudflare rule were generated from the same prefix list, so every route had
+both or neither; adding the header alone would have changed nothing, because
+the bypass rule outranks it. The fix needed both halves again, and
+`tests/cloudflare-cache-rule.test.mjs` now fails when they disagree.
+
+What the widening surfaced:
+
+- **One URL, several bodies.** Vercel answers `Accept: text/markdown` with a
+  markdown rendering of any HTML document (corpus and blog, `Vary: accept`);
+  Mintlify does the same for `text/markdown` and `text/plain`, serves an RSC
+  flight for `RSC: 1` and the `next-router-*` headers, and both match media
+  types case-insensitively. Cloudflare keys on the URL. The rule therefore
+  admits an HTML document only when the request asks for it the way browsers
+  and crawlers do — inspecting every `Accept` value, since the header may
+  arrive as several lines and the origins honour the combined list — while
+  `.md`/`.txt`/`.xml` files, which answer one body whatever is asked, are
+  exempt so agents advertising their media type keep the cache. Negotiating
+  requests for documents fall through to the bypass, exactly as before. Probe
+  representations, not just routes, before caching anything behind a proxy.
+- **Vercel's own cache is a third layer with the same problem.** For the
+  Mintlify proxy `Vercel-CDN-Cache-Control: no-store` keeps Vercel from keying
+  the HTML and markdown bodies under one URL while `CDN-Cache-Control` still
+  gives Cloudflare its TTL.
+- **Cloudflare fills an unset rule `ref` with the rule's id.** The first
+  corpus rule was applied before the script set a `ref`, so the live `ref`
+  echoed the `id`, and the identity check read that as a foreign ref on our
+  description: `--check` said "ambiguous" against a zone holding exactly one
+  copy. A description match whose `ref === id` is a legacy rule to adopt.
+- **`curl -I` cannot see the rule.** It sends HEAD; the rule requires GET. A
+  HEAD probe reports DYNAMIC on a route every real client gets as HIT. Verify
+  with `curl -s -o /dev/null -D -`.
 
 ## Related
 

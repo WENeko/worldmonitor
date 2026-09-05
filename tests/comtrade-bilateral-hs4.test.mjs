@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { candidatePeriods } from '../scripts/seed-comtrade-bilateral-hs4.mjs';
+import { createCountryDeepDivePanelHarness } from './helpers/country-deep-dive-panel-harness.mjs';
 
 const root = join(import.meta.dirname, '..');
 
@@ -574,11 +575,24 @@ describe('CountryDeepDivePanel product imports section', () => {
     );
   });
 
-  it('sectionCard is used for the product imports card', () => {
-    assert.ok(
-      src.includes("this.sectionCard('Product Imports'"),
-      'CountryDeepDivePanel: product imports must use sectionCard for consistent card structure',
-    );
+  it('renders product imports in the brief grid with a heading and card body', async () => {
+    const harness = await createCountryDeepDivePanelHarness();
+    const panel = harness.createPanel();
+    try {
+      panel.show('United States', 'US', null, {});
+      for (let attempt = 0; attempt < 25 && harness.getWidgets().length === 0; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(harness.getWidgets().length, 1, 'lazy widgets must settle before cleanup');
+      const card = harness.getPanelRoot().querySelector('.cdp-grid').querySelector('#cdp-section-products');
+      assert.ok(card, 'Product Imports must be mounted in the brief grid');
+      assert.ok(card.classList.contains('cdp-card'));
+      assert.match(card.querySelector('.cdp-card-title').textContent, /Product Imports/);
+      assert.ok(card.querySelector('.cdp-card-body').querySelector('.cdp-pro-locked'));
+    } finally {
+      panel.hide();
+      harness.cleanup();
+    }
   });
 
   it('product imports card is appended to the body grid', () => {

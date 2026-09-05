@@ -549,6 +549,7 @@ test('snapshot TTL is clamped down to the nearest activation deadline', () => {
   // Content deadline on a per-check entry.
   assert.equal(snapshotTtlSeconds({ checks: { a: { status: 'OK', contentFreshnessPendingUntil: at(30_000) } } }, now), 30);
   assert.equal(snapshotTtlSeconds({ checks: { a: { status: 'STALE_CONTENT', staleContentGraceUntil: at(20_000) } } }, now), 20);
+  assert.equal(snapshotTtlSeconds({ problems: {}, pending: { a: { status: 'STALE_CONTENT', staleContentGraceUntil: at(20_000) } } }, now), 20);
   // Rollout deadline, which only counts on a ROLLOUT_PENDING entry.
   assert.equal(snapshotTtlSeconds({ checks: { a: { status: 'ROLLOUT_PENDING', rolloutPendingUntil: at(10_000) } } }, now), 10);
   // Compact shape: deadlines live under `summary`, because a graced check is OK
@@ -573,7 +574,8 @@ test('stale-content grace invalidates full and compact snapshots at the exact de
     checks: { temporalAnomalies: { status: 'STALE_CONTENT', staleContentGraceUntil: deadline } },
   };
   const compact = {
-    problems: { temporalAnomalies: { status: 'STALE_CONTENT', staleContentGraceUntil: deadline } },
+    problems: {},
+    pending: { temporalAnomalies: { status: 'STALE_CONTENT', staleContentGraceUntil: deadline } },
   };
 
   assert.equal(hasExpiredActivationGrace(full, now - 1), false);
@@ -611,6 +613,9 @@ test('a malformed or already-passed deadline collapses the TTL to its floor', ()
       1,
       `${label} must behave identically on the compact shape`,
     );
+    const pending = { pending: { a: { status: 'STALE_CONTENT', staleContentGraceUntil: value } }, problems: {} };
+    assert.equal(snapshotTtlSeconds(pending, now), 1, `${label} must expire pending entries too`);
+    assert.equal(hasExpiredActivationGrace(pending, now), true);
   }
 });
 
@@ -699,10 +704,15 @@ test('handleHealth claims, publishes, and reuses one stale-content deadline', as
     'cleanup must not ride along in the awaited claim pipeline',
   );
 
-  const problem = body.problems?.temporalAnomalies;
+  const problem = body.pending?.temporalAnomalies;
   assert.equal(problem?.status, 'STALE_CONTENT');
+  assert.equal(body.problems?.temporalAnomalies, undefined);
   assert.equal(problem.staleContentGraceUntil, new Date(Number(graceStore.get('temporalAnomalies'))).toISOString());
   assert.equal(body.summary.staleContent, 1, 'the diagnosis stays counted');
+  assert.equal(body.summary.pending, 1, 'active grace is counted separately');
+  const storedFull = JSON.parse(pipelines.flat().find(([op, key]) => op === 'SET' && key === HEALTH_SNAPSHOT_KEY)[2]);
+  assert.deepEqual(storedFull.summary, body.summary, 'full and compact summaries agree');
+  assert.deepEqual(storedFull.checks.temporalAnomalies, problem, 'full checks retain the raw diagnosis');
   // The graced entry is counted in `ok`, not `warn` — measured against the same
   // sweep with the claim failing, so this compares like with like rather than
   // against a hand-written expectation about the rest of the mock registry.
@@ -719,7 +729,7 @@ test('handleHealth claims, publishes, and reuses one stale-content deadline', as
   const second = await sweepCompactBody(sweepFetch({ graceStore }));
   assert.equal(graceStore.get('temporalAnomalies'), pinned, 'HSETNX must not overwrite the anchor');
   assert.equal(
-    second.problems?.temporalAnomalies?.staleContentGraceUntil,
+    second.pending?.temporalAnomalies?.staleContentGraceUntil,
     new Date(Number(pinned)).toISOString(),
   );
 });
@@ -749,7 +759,7 @@ test('handleHealth serves a graced snapshot until its deadline, then sweeps agai
     status: 'HEALTHY',
     summary: { total: 1, ok: 1, warn: 0, onDemandWarn: 0, staleContent: 1, crit: 0 },
     checkedAt: new Date(now - 1000).toISOString(),
-    problems: {
+    pending: {
       temporalAnomalies: {
         status: 'STALE_CONTENT',
         staleContentGraceUntil: new Date(now + 60_000).toISOString(),
@@ -769,10 +779,12 @@ test('handleHealth serves a graced snapshot until its deadline, then sweeps agai
 
   const served = await (await handler(new Request('https://api.worldmonitor.app/api/health?compact=1'))).json();
   assert.equal(served.checkedAt, graced.checkedAt, 'inside the window the cached verdict is reused');
+  assert.deepEqual(served.pending, graced.pending);
+  assert.equal(served.problems, undefined);
   assert.equal(sweeps, 0, 'no sweep while the published grace is still live');
 
   // At the exact deadline the cached verdict is no longer servable.
-  graced.problems.temporalAnomalies.staleContentGraceUntil = new Date(now).toISOString();
+  graced.pending.temporalAnomalies.staleContentGraceUntil = new Date(now).toISOString();
   await handler(new Request('https://api.worldmonitor.app/api/health?compact=1'));
   assert.equal(sweeps, 1, 'an expired grace must force a fresh sweep, not serve a stale ok');
 });

@@ -61,6 +61,10 @@ describe('#6038 CI code-path filter', () => {
     assert.equal(runFilter(program, ['docs/snapshots/resilience-ranking-2026-10-01.json']), '1');
   });
 
+  it('routes published blog Markdown to the unit job that guards it', () => {
+    assert.equal(runFilter(program, ['blog-site/src/content/blog/worldmonitor-vs-traditional-intelligence-tools.md']), '1');
+  });
+
   it('still excludes ordinary markdown and docs', () => {
     assert.equal(runFilter(program, ['README.md']), '0');
     assert.equal(runFilter(program, ['docs/about.mdx']), '0');

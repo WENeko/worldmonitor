@@ -16,18 +16,19 @@ import {
   fetchImdCycloneMarine,
   imdAfterPublish,
   imdContentMeta,
+  shouldActivateImdSnapshot,
   validateImdEnvelope,
 } from './lib/imd-cyclone-marine.mjs';
 
 loadEnvFile(import.meta.url);
 
-export const IMD_ACTIVATION_KEY = 'seed-activated:weather:imd-cyclone-marine';
+export const IMD_ACTIVATION_KEY = 'seed-activated:weather:imd-cyclone-marine:v2';
 
 const CACHE_TTL = 5400;
 
 async function markImdActivated(data) {
   const result = imdAfterPublish(data);
-  if (data?.coverageState === 'disabled') return result;
+  if (!shouldActivateImdSnapshot(data)) return result;
   try {
     const creds = getOptionalUpstashCreds();
     if (!creds) return result;

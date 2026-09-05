@@ -104,22 +104,23 @@ describe('issue #7377 GEO content credibility', () => {
     assert.match(about, new RegExp(GITHUB_STARS_BADGE_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.match(llms, /2M\+ people/);
     assert.match(llms, /190\+ countries/);
-    assert.match(llms, new RegExp(SILICON_CANALS_2M_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(llms, /\[product identity document\]\(https:\/\/www\.worldmonitor\.app\/world-monitor\.md\)/);
+    assert.ok(read('public/world-monitor.md').includes(SILICON_CANALS_2M_URL));
   });
 
   it('(c) surfaces press URLs, About, and the Silicon Canals 2M citation', () => {
-    const llms = read('public/llms.txt');
+    const identity = read('public/world-monitor.md');
     const hero = read('pro-test/src/welcome/Hero.tsx');
     const footer = read('pro-test/src/components/Footer.tsx');
     const pressNav = read('pro-test/src/components/PressFooterNav.tsx');
     const pressModule = read('shared/press.ts');
 
-    assert.match(llms, new RegExp(WIRED_FEATURE_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    assert.match(llms, new RegExp(SILICON_CANALS_2M_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.ok(identity.includes(WIRED_FEATURE_URL));
+    assert.ok(identity.includes(SILICON_CANALS_2M_URL));
     for (const link of PRESS_LINKS) {
       assert.ok(
-        llms.includes(`](${link.url})`) || llms.includes(link.url),
-        `llms.txt must include exact ${link.label} URL`,
+        identity.includes(`](${link.url})`),
+        `the identity document linked from llms.txt must include exact ${link.label} URL`,
       );
       assert.ok(pressModule.includes(link.url), `shared/press.ts must include ${link.label}`);
     }
@@ -138,15 +139,14 @@ describe('issue #7377 GEO content credibility', () => {
     assert.match(pressNav, /In the press/);
   });
 
-  // The four agent-facing press lists drifted: docs/about.mdx carried The
-  // Economic Times and Arabian Business that public/llms.txt and
-  // public/world-monitor.md never had, and neither pair had The Atlantic or
-  // El Pais (#7530). Nothing compared them, so each addition only ever landed
-  // wherever the author happened to be editing. Compare the URL SETS, not the
-  // presence of a few pinned links.
-  it('(c2) keeps every agent-facing press list carrying the same outlets', () => {
+  it('(c2) keeps the indexed press document and about pages carrying the same outlets', () => {
+    const index = read('public/llms.txt').match(/## Product identity and press references\n([\s\S]*?)(?=\n## |$)/)?.[1];
+    assert.ok(index, 'llms.txt must expose its press references');
+    assert.match(index, /\]\(https:\/\/www\.worldmonitor\.app\/world-monitor\.md\)/);
+    for (const match of index.matchAll(/\]\((https?:\/\/[^)]+)\)/g)) {
+      assert.equal(new URL(match[1]).hostname, 'www.worldmonitor.app', 'the discovery index uses first-party press documents');
+    }
     const sections = {
-      'public/llms.txt': ['## In the press', /^## /m],
       'public/world-monitor.md': ['## Press mentions that name World Monitor', /^## /m],
       'docs/about.mdx': ['## In the press', /^## /m],
       'docs/zh/about.mdx': ['## 媒体报道', /^## /m],

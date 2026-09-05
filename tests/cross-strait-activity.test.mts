@@ -1449,7 +1449,7 @@ describe('quantified cross-Strait activity (#5575)', () => {
     const healthWrites = new Map<string, unknown>();
     await writeSourceHealth(snapshot, async (key: string, value: unknown) => {
       healthWrites.set(key, value);
-    });
+    }, async () => null);
 
     assert.ok(snapshot.observations.length >= 3);
     assert.equal(validateCrossStraitActivitySnapshot(snapshot), true);
@@ -1464,6 +1464,10 @@ describe('quantified cross-Strait activity (#5575)', () => {
         ).length,
         sourceState: 'ok',
         stale: false,
+        firstSourceFailureAt: null,
+        lastSourceAttemptAt: Date.parse(retrievedAt),
+        lastSourceFailureCode: null,
+        consecutiveSourceFailures: 0,
       },
     );
     assert.ok(

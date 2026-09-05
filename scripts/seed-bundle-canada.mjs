@@ -71,8 +71,8 @@ const CANADA_SECTIONS = [
   // after the first successful canonical publish.
   { label: 'Toronto-TFS', script: 'seed-toronto-tfs.mjs', seedMetaKey: 'seed-meta:safety:toronto-tfs', canonicalKey: 'safety:toronto-tfs:v1', completionMetaKey: 'seed-completion:safety:toronto-tfs', intervalMs: 5 * MIN, timeoutMs: 60_000 },
   // Official TPS C4S_Public_NoGO FeatureServer. Own key; privacy exclusions
-  // stay empty. 15min matches the 15–20min map refresh; stale at 45min.
-  { label: 'Toronto-TPS', script: 'seed-toronto-tps.mjs', seedMetaKey: 'seed-meta:safety:toronto-tps', canonicalKey: 'safety:toronto-tps:v1', completionMetaKey: 'seed-completion:safety:toronto-tps', intervalMs: 15 * MIN, timeoutMs: 105_000 },
+  // stay empty.
+  { label: 'Toronto-TPS', script: 'seed-toronto-tps.mjs', seedMetaKey: 'seed-meta:safety:toronto-tps', canonicalKey: 'safety:toronto-tps:v1', completionMetaKey: 'seed-completion:safety:toronto-tps', intervalMs: 30 * MIN, timeoutMs: 105_000 },
   // TPS Open Data (#7012/#7036) — the retrospective MCI and annual Calls
   // Attended datasets, distinct from the live C4S CAD member above.
   //

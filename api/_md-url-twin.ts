@@ -139,6 +139,12 @@ function jsonToMarkdown(raw: string, heading: string): string {
   return `# ${heading}\n\n\`\`\`json\n${pretty}\n\`\`\``.slice(0, MAX_TWIN_CHARS);
 }
 
+function withMarkdownMetadata(markdown: string, canonical: string): string {
+  if (markdown.startsWith('---\n')) return markdown;
+  const title = markdown.match(/^# (.+)$/m)?.[1] ?? headingFromPath(new URL(canonical).pathname);
+  return `---\ntitle: ${JSON.stringify(title)}\ncanonical: ${JSON.stringify(canonical)}\n---\n\n${markdown}`;
+}
+
 function markdownHeaders(req: Request, markdownPath: string, extra: Record<string, string> = {}): Record<string, string> {
   const origin = new URL(req.url).origin;
   return {
@@ -277,7 +283,7 @@ export async function buildMarkdownTwinResponse(
   const location = siblingRes.headers.get('location');
   if (siblingRes.status >= 300 && siblingRes.status < 400 && location) {
     const body = `# ${headingFromPath(sibling)}\n\nThis resource redirects to [${location}](${location}).\n`;
-    return new Response(req.method === 'HEAD' ? null : body, {
+    return new Response(req.method === 'HEAD' ? null : withMarkdownMetadata(body, new URL(markdownPath, req.url).href), {
       status: 200,
       headers: markdownHeaders(req, markdownPath),
     });
@@ -332,7 +338,7 @@ export async function buildMarkdownTwinResponse(
     });
   }
 
-  return new Response(markdown, {
+  return new Response(withMarkdownMetadata(markdown, new URL(markdownPath, req.url).href), {
     status: siblingStatus,
     headers: markdownHeaders(req, markdownPath, responseHeaders),
   });

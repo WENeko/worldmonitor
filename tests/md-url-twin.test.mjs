@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
+import { load } from 'js-yaml';
 
 import handler from '../api/md-twin.ts';
 import {
@@ -62,6 +63,41 @@ describe('api/md-twin.ts vary coverage (#7616 U4)', () => {
 });
 
 describe('api/md-twin.ts', () => {
+  it('includes metadata when a sibling redirects to its canonical page', async () => {
+    const response = await buildMarkdownTwinResponse(
+      new Request('https://www.worldmonitor.app/countries.md'),
+      '/countries.md',
+      async () => new Response(null, { status: 308, headers: { Location: '/countries/' } }),
+    );
+    assert.equal(response.status, 200);
+    const document = await response.text();
+    const block = document.match(/^---\n([\s\S]*?)\n---\n/);
+    assert.ok(block, 'redirect documents must carry metadata');
+    assert.deepEqual(load(block[1]), {
+      title: 'countries',
+      canonical: 'https://www.worldmonitor.app/countries.md',
+    });
+    assert.match(document, /\[\/countries\/\]\(\/countries\/\)/);
+  });
+
+  it('adds escaped title and canonical metadata to generated documents', async () => {
+    const response = await buildMarkdownTwinResponse(
+      new Request('https://www.worldmonitor.app/example.md'),
+      '/example.md',
+      async () => new Response('<h1>Title: &quot;quoted&quot;</h1><p>Content.</p>', {
+        headers: { 'Content-Type': 'text/html' },
+      }),
+    );
+    const document = await response.text();
+    const block = document.match(/^---\n([\s\S]*?)\n---\n/);
+    assert.ok(block);
+    assert.deepEqual(load(block[1]), {
+      title: 'Title: "quoted"',
+      canonical: 'https://www.worldmonitor.app/example.md',
+    });
+    assert.match(document, /Content\./);
+  });
+
   it('returns the deprecation policy Link on OPTIONS preflights', async () => {
     const res = await buildMarkdownTwinResponse(
       new Request('https://www.worldmonitor.app/dashboard.md', { method: 'OPTIONS' }),

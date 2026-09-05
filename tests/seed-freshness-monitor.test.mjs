@@ -16,7 +16,7 @@ import {
   formatAcceptanceReport,
   formatAcceptanceMarkdown,
   isOnDemandProblem,
-  findGracedStaleContent,
+  findPendingDiagnostics,
   isStaleContentGraceProblem,
   MAX_STALE_CONTENT_GRACE_MS,
   STALE_CONTENT_GRACE_SKEW_SLACK_MS,
@@ -41,6 +41,29 @@ const readRailwayServices = () => JSON.parse(readFileSync(RAILWAY_SERVICES_URL, 
 describe('production acceptance summary', () => {
   const now = Date.parse('2026-09-05T07:00:00.000Z');
   const baseline = { expiresAt: '2026-09-06', acknowledged: [] };
+
+  it('keeps bounded source failures visible while pending and alerts at the deadline', () => {
+    const problem = {
+      status: 'SEED_ERROR', records: 133, seedAgeMin: 1, maxStaleMin: 720,
+      errorCode: 'MND_SOURCE_ERROR', lastSourceFailureCode: 'MND_SOURCE_ERROR',
+      consecutiveSourceFailures: 1,
+      sourceFailurePendingUntil: new Date(now + 210 * 60_000).toISOString(),
+    };
+    const payload = { status: 'HEALTHY', pending: { crossStraitActivityTaiwanMnd: problem } };
+    assert.deepEqual(findOperationalProblems(payload, now), []);
+    assert.deepEqual(findPendingDiagnostics(payload, now), [{ name: 'crossStraitActivityTaiwanMnd', status: 'SEED_ERROR', graceUntil: problem.sourceFailurePendingUntil }]);
+    for (const over of [
+      { sourceFailurePendingUntil: new Date(now).toISOString() },
+      { sourceFailurePendingUntil: null }, { sourceFailurePendingUntil: 'bad' },
+      { sourceFailurePendingUntil: [problem.sourceFailurePendingUntil] },
+      { sourceFailurePendingUntil: new Date(now + 216 * 60_000).toISOString() },
+      { consecutiveSourceFailures: 2 }, { records: 0 }, { seedAgeMin: 721 },
+      { seedAgeMin: -1 }, { lastSourceFailureCode: 'MND_OTHER' }, { status: 'EMPTY' },
+    ]) {
+      const invalid = { status: 'HEALTHY', pending: { crossStraitActivityTaiwanMnd: { ...problem, ...over } } };
+      assert.equal(findOperationalProblems(invalid, now).length, 1, JSON.stringify(over));
+    }
+  });
   const observation = (problems, accepted = baseline) => buildAcceptanceObservation({
     status: Object.keys(problems).length ? 'WARNING' : 'HEALTHY',
     checkedAt: new Date(now).toISOString(),
@@ -279,15 +302,18 @@ describe('scheduled seed freshness monitor', () => {
     };
 
     assert.equal(isStaleContentGraceProblem(problem, now), true);
-    assert.deepEqual(findOperationalProblems({
-      status: 'HEALTHY',
-      problems: { temporalAnomalies: problem },
-    }, now), []);
+    for (const collection of ['problems', 'pending']) {
+      assert.deepEqual(findOperationalProblems({
+        status: 'HEALTHY',
+        [collection]: { temporalAnomalies: problem },
+      }, now), []);
+    }
 
     for (const [label, candidate] of [
       ['exact deadline', { ...problem, staleContentGraceUntil: new Date(now).toISOString() }],
       ['missing deadline', { status: 'STALE_CONTENT' }],
       ['malformed deadline', { ...problem, staleContentGraceUntil: 'not-a-date' }],
+      ['non-string deadline', { ...problem, staleContentGraceUntil: [problem.staleContentGraceUntil] }],
       ['excessive deadline', {
         ...problem,
         staleContentGraceUntil: new Date(now + MAX_STALE_CONTENT_GRACE_MS + 1).toISOString(),
@@ -299,10 +325,12 @@ describe('scheduled seed freshness monitor', () => {
       ['wrong status', { ...problem, status: 'STALE_SEED' }],
     ]) {
       assert.equal(isStaleContentGraceProblem(candidate, now), false, label);
-      assert.equal(findOperationalProblems({
-        status: 'WARNING',
-        problems: { temporalAnomalies: candidate },
-      }, now).length, 1, label);
+      for (const collection of ['problems', 'pending']) {
+        assert.equal(findOperationalProblems({
+          status: 'HEALTHY',
+          [collection]: { temporalAnomalies: candidate },
+        }, now).length, 1, `${collection}: ${label}`);
+      }
     }
   });
 
@@ -314,7 +342,7 @@ describe('scheduled seed freshness monitor', () => {
     const graceUntil = new Date(now + 60 * 60 * 1000).toISOString();
     const payload = {
       status: 'HEALTHY',
-      problems: {
+      pending: {
         temporalAnomalies: { status: 'STALE_CONTENT', staleContentGraceUntil: graceUntil },
         expired: {
           status: 'STALE_CONTENT',
@@ -323,7 +351,7 @@ describe('scheduled seed freshness monitor', () => {
       },
     };
 
-    assert.deepEqual(findGracedStaleContent(payload, now), [
+    assert.deepEqual(findPendingDiagnostics(payload, now), [
       { name: 'temporalAnomalies', status: 'STALE_CONTENT', graceUntil },
     ]);
     // The expired one is not "in grace" — it is a real operational problem.
@@ -331,6 +359,15 @@ describe('scheduled seed freshness monitor', () => {
       findOperationalProblems(payload, now).map((p) => p.name),
       ['expired'],
     );
+    const duplicateWarning = {
+      ...payload,
+      problems: { temporalAnomalies: { status: 'SEED_ERROR', records: 1 } },
+    };
+    assert.deepEqual(findPendingDiagnostics(duplicateWarning, now), [], 'pending cannot hide a duplicate warning');
+    assert.deepEqual(findOperationalProblems(duplicateWarning, now).map((p) => p.name), ['expired', 'temporalAnomalies']);
+    assert.deepEqual(findPendingDiagnostics({ ...payload, problems: payload.pending }, now), [
+      { name: 'temporalAnomalies', status: 'STALE_CONTENT', graceUntil },
+    ], 'legacy and new collections do not duplicate the same grace');
   });
 
   it('treats every non-on-demand health problem as an operational failure', () => {
@@ -499,6 +536,10 @@ describe('scheduled seed freshness monitor', () => {
       () => validateCompactHealthPayload({ status: 'HEALTHY', problems: [] }),
       /problems/,
     );
+    for (const pending of [[], null, false, 'pending', { source: null }, { source: [] }]) {
+      assert.throws(() => validateCompactHealthPayload({ status: 'HEALTHY', pending }), /pending/);
+      assert.throws(() => findPendingDiagnostics({ status: 'HEALTHY', pending }), /pending/);
+    }
   });
 
   describe('accepted-problem baseline', () => {

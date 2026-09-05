@@ -36,6 +36,55 @@ const {
 const NOW = 1_700_000_000_000;
 const ONE_MIN_MS = 60_000;
 
+test('MND first-failure pending requires fresh last-good and expires without another poll', () => {
+  const name = 'crossStraitActivityTaiwanMnd';
+  const key = STANDALONE_KEYS[name];
+  const meta = {
+    fetchedAt: NOW - ONE_MIN_MS,
+    recordCount: 133,
+    sourceState: 'degraded',
+    errorCode: 'MND_PUBLICATION_METADATA_MISSING',
+    consecutiveSourceFailures: 1,
+    lastSourceFailureCode: 'MND_PUBLICATION_METADATA_MISSING',
+    firstSourceFailureAt: NOW,
+    lastSourceAttemptAt: NOW,
+  };
+  const classify = (over = {}, now = NOW, bytes = 1024) => classifyKey(name, key, { allowOnDemand: false }, {
+    ...makeCtx({ strens: { [key]: bytes }, metaValues: { [SEED_META[name].key]: { ...meta, ...over } } }),
+    now,
+  });
+  const entry = classify();
+  assert.equal(entry.status, 'SEED_ERROR', 'retain the source diagnosis');
+  assert.equal(entry.sourceFailurePendingUntil, new Date(NOW + 210 * ONE_MIN_MS).toISOString());
+  assert.equal(__testing__.healthStatusBucket(entry, NOW), 'ok');
+  assert.deepEqual(classify(), entry, 'another health poll is not another failed source attempt');
+  const compact = healthResponseBody({ status: 'HEALTHY', summary: { pending: 1 }, checkedAt: new Date(NOW).toISOString(), checks: { [name]: entry } }, true);
+  assert.deepEqual(compact.pending, { [name]: entry });
+  assert.equal(compact.problems, undefined);
+  const deadline = NOW + 210 * ONE_MIN_MS;
+  assert.equal(__testing__.healthStatusBucket(entry, deadline), 'warn');
+  assert.equal(classify({}, deadline).sourceFailurePendingUntil, undefined);
+  assert.equal(__testing__.hasExpiredActivationGrace(compact, deadline), true);
+  assert.equal(__testing__.snapshotTtlSeconds(compact, deadline - 20_000), 20);
+  for (const over of [
+    { consecutiveSourceFailures: 2 }, { consecutiveSourceFailures: null },
+    { firstSourceFailureAt: null }, { firstSourceFailureAt: NOW + 1 },
+    { lastSourceAttemptAt: NOW + 1 }, { lastSourceAttemptAt: null },
+    { lastSourceFailureCode: 'MND_SOURCE_ERROR' },
+    { fetchedAt: NOW - 721 * ONE_MIN_MS }, { fetchedAt: NOW + 1 }, { fetchedAt: 0 },
+    { recordCount: 0 }, { recordCount: null }, { sourceState: 'error' },
+    { maxContentAgeMin: 60, newestItemAt: NOW - 120 * ONE_MIN_MS },
+  ]) {
+    const failed = classify(over);
+    assert.equal(failed.sourceFailurePendingUntil, undefined, JSON.stringify(over));
+    assert.notEqual(__testing__.healthStatusBucket(failed, NOW), 'ok', JSON.stringify(over));
+  }
+  assert.equal(classify({}, NOW, 0).status, 'EMPTY');
+  assert.equal(classify({}, NOW, 0).sourceFailurePendingUntil, undefined);
+  const nearStale = classify({ fetchedAt: NOW - 719 * ONE_MIN_MS });
+  assert.equal(nearStale.sourceFailurePendingUntil, new Date(NOW + ONE_MIN_MS).toISOString());
+});
+
 // Build the same ctx shape the handler constructs: four Maps + now.
 //   strens:     { redisDataKey -> byteLen }
 //   errors:     { redisDataKey -> errMsg }

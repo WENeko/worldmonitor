@@ -16,7 +16,9 @@ function createDeferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-test('cooldown queries do not reset the accumulated failure count', async () => {
+test('cooldown queries do not reset the accumulated failure count', (t) => {
+  let now = 1000;
+  t.mock.method(Date, 'now', () => now);
   clearAllCircuitBreakers();
   const breaker = createCircuitBreaker<{ value: string }>({
     name: 'state-contract-query',
@@ -28,7 +30,7 @@ test('cooldown queries do not reset the accumulated failure count', async () => 
   breaker.recordFailure('second');
   assert.equal(breaker.isOnCooldown(), true);
 
-  await sleep(30);
+  now += 30;
   assert.equal(breaker.getCooldownRemaining(), 0);
   breaker.recordFailure('post-expiry query');
 

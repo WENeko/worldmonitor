@@ -1097,6 +1097,18 @@ export function declareImdRecords(data) {
     + (data.coastalBulletins?.length || 0);
 }
 
+/**
+ * Activation proves this IMD deployment has received at least one documented
+ * product response. A valid empty/NIL response counts; carried last-good data,
+ * disabled products, and a total auth/product failure do not.
+ */
+export function shouldActivateImdSnapshot(data) {
+  return IMD_PRODUCT_IDS.some((id) => (
+    IMD_PRODUCTS[id].schema === 'documented'
+    && data?.products?.[id]?.status === 'ok'
+  ));
+}
+
 export function imdContentMeta(data, nowMs = Date.now()) {
   const stamps = [];
   const bags = [

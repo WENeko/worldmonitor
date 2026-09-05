@@ -573,7 +573,7 @@ function renderCompareHub({ tpl, baseUrl, lastmod }) {
     cards,
     '      </div>',
     '      <h2>Editorial comparison</h2>',
-    '      <p>The blog post <a href="/blog/posts/worldmonitor-vs-traditional-intelligence-tools/">World Monitor vs Bloomberg, Palantir, Dataminr, and Recorded Future</a> compares enterprise platforms with a full price matrix.</p>',
+    '      <p>The blog post <a href="/blog/posts/worldmonitor-vs-traditional-intelligence-tools/">World Monitor vs Bloomberg, Palantir, Dataminr, and Recorded Future</a> compares their capabilities and distinguishes published prices from enterprise-negotiated licensing.</p>',
     '      <p class="source">Prices and capabilities were checked at publication time and can change.</p>',
   ].join('\n');
   return pageDocument({

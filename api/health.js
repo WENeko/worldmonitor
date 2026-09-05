@@ -745,7 +745,15 @@ const SEED_META = {
   chinaStockConnect: { key: 'seed-meta:market:china-stock-connect', maxStaleMin: 180 },
   crossStraitActivity: { key: 'seed-meta:military:cross-strait-activity', maxStaleMin: 720 },
   crossStraitActivityBootstrap: { key: 'seed-meta:military:cross-strait-activity-bootstrap', maxStaleMin: 720 },
-  crossStraitActivityTaiwanMnd: { key: 'seed-meta:military:cross-strait-activity:taiwan-mnd', maxStaleMin: 720 },
+  crossStraitActivityTaiwanMnd: {
+    key: 'seed-meta:military:cross-strait-activity:taiwan-mnd',
+    maxStaleMin: 720,
+    sourceFailure: {
+      warnAfterConsecutive: 2,
+      maxPendingMin: 210,
+      failureCodePattern: /^MND_[A-Z0-9_]{1,60}$/,
+    },
+  },
   crossStraitActivityJapanMod:  { key: 'seed-meta:military:cross-strait-activity:japan-mod', maxStaleMin: 720 },
   chinaPolicyEvents: { key: 'seed-meta:china:policy-events', maxStaleMin: 2_160 },
   // decisionGroups (#6060): the seeder's afterPublish diagnostics name which
@@ -866,12 +874,12 @@ const SEED_META = {
   imdCycloneMarine: {
     key: 'seed-meta:weather:imd-cyclone-marine',
     maxStaleMin: 45, // 3× the live */15 Railway cron
-    activationKey: 'seed-activated:weather:imd-cyclone-marine',
+    activationKey: 'seed-activated:weather:imd-cyclone-marine:v2',
     cutover: {
       mode: 'activation-marker',
       fromKey: null,
       issue: 7005,
-      activationKey: 'seed-activated:weather:imd-cyclone-marine',
+      activationKey: 'seed-activated:weather:imd-cyclone-marine:v2',
     },
   },
   canadaRoads:      {
@@ -976,7 +984,7 @@ const SEED_META = {
   },
   torontoTps: {
     key: 'seed-meta:safety:toronto-tps',
-    maxStaleMin: 45, // TPS public map 15–20min; 45 = 3× interval
+    maxStaleMin: 90,
     activationKey: 'seed-activated:safety:toronto-tps',
     cutover: {
       mode: 'activation-marker',
@@ -2193,7 +2201,7 @@ function parseFiniteRecordCount(raw) {
   return null;
 }
 
-function projectSourceFailure(meta, policy) {
+function projectSourceFailure(meta, policy, now, maxStaleMin) {
   if (!policy || meta?.sourceState !== 'degraded') return null;
   const errorCode = typeof meta?.errorCode === 'string'
     && policy.failureCodePattern.test(meta.errorCode)
@@ -2208,14 +2216,29 @@ function projectSourceFailure(meta, policy) {
     && meta.consecutiveSourceFailures >= 1
     ? Math.min(meta.consecutiveSourceFailures, 100)
     : null;
-  const pending = lastSourceFailureCode === errorCode
+  let pending = lastSourceFailureCode === errorCode
     && consecutiveSourceFailures !== null
     && consecutiveSourceFailures < policy.warnAfterConsecutive;
+  let pendingUntil = null;
+  if (policy.maxPendingMin != null) {
+    const first = meta.firstSourceFailureAt;
+    const attempt = meta.lastSourceAttemptAt;
+    const success = meta.fetchedAt;
+    const validEpisode = [first, attempt, success].every((value) => Number.isSafeInteger(value) && value > 0)
+      && success <= first && first <= attempt && attempt <= now;
+    const deadline = validEpisode
+      ? Math.min(first + policy.maxPendingMin * 60_000, success + maxStaleMin * 60_000)
+      : NaN;
+    pending = pending && parseFiniteRecordCount(meta.count ?? meta.recordCount) > 0
+      && Number.isFinite(deadline) && now < deadline;
+    if (pending) pendingUntil = new Date(deadline).toISOString();
+  }
   return {
     errorCode,
     consecutiveSourceFailures,
     lastSourceFailureCode,
     pending,
+    pendingUntil,
   };
 }
 
@@ -2313,7 +2336,7 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
   // transport path is externally blocked. Keep that state visible without
   // treating it as a broken producer that can be repaired by another retry.
   const sourceBlocked = meta?.sourceState === 'blocked';
-  const sourceFailure = projectSourceFailure(meta, seedCfg.sourceFailure);
+  const sourceFailure = projectSourceFailure(meta, seedCfg.sourceFailure, now, seedCfg.maxStaleMin);
   // Source-specific producers can preserve usable last-good records while a
   // current upstream attempt is degraded. Surface that state immediately as a
   // warning without discarding the retained record count from health output.
@@ -2600,11 +2623,9 @@ function classifyKey(name, redisKey, opts, ctx) {
   const rankableRecordCount = name === 'educationAttainment' && Object.hasOwn(ctx, 'educationPayloadRankableCount')
     ? ctx.educationPayloadRankableCount
     : metaRankableCount;
-  // IMD is optional before its first successful publish, but a deployment that
-  // has already activated and then loses its IMD credentials needs operator action.
-  // Do not let the generic unconfigured-source exemption hide that regression.
   const sourceUnavailableAfterActivation = sourceUnavailable
     && name === 'imdCycloneMarine'
+    && errorCode !== 'IMD_API_KEY_MISSING'
     && ctx.activationStates?.get(name) === true;
 
   // Pending activation: the producer has never published a contentFreshness
@@ -2881,7 +2902,12 @@ function classifyKey(name, redisKey, opts, ctx) {
     if (sourceFailure.lastSourceFailureCode) {
       entry.lastSourceFailureCode = sourceFailure.lastSourceFailureCode;
     }
-    if (sourceFailure.pending) entry.sourceFailurePending = true;
+    if (sourceFailure.pendingUntil) {
+      if (status === 'OK' && hasData && records > 0 && metaCount > 0 && seedStale === false) {
+        entry.status = 'SEED_ERROR';
+        entry.sourceFailurePendingUntil = sourceFailure.pendingUntil;
+      }
+    } else if (sourceFailure.pending) entry.sourceFailurePending = true;
   }
   // Coarse producer-run diagnostic, relayed whenever the producer recorded it —
   // the whole point of #6323 is that a coverage shortfall's dominant cause is
@@ -2989,6 +3015,9 @@ const STATUS_COUNTS = {
 };
 
 function healthStatusBucket(entry, now) {
+  if (entry?.status === 'SEED_ERROR'
+    && typeof entry.sourceFailurePendingUntil === 'string'
+    && !isExpiredDeadline(entry.sourceFailurePendingUntil, now)) return 'ok';
   if (
     entry?.status === 'STALE_CONTENT'
     && Object.prototype.hasOwnProperty.call(entry, 'staleContentGraceUntil')
@@ -3204,10 +3233,14 @@ function isProblemStatus(status) {
   return STATUS_COUNTS[status] !== 'ok';
 }
 
+function isPendingHealthEntry(entry, now) {
+  return isProblemStatus(entry?.status) && healthStatusBucket(entry, now) === 'ok';
+}
+
 /**
  * True when a cached verdict still carries a health softening whose published
  * deadline has passed. Reads both snapshot shapes:
- * the full one keyed by `checks`, the compact one by `problems`.
+ * the full one keyed by `checks`, the compact one by `problems` and `pending`.
  */
 function isExpiredDeadline(raw, now) {
   const until = Date.parse(typeof raw === 'string' ? raw : '');
@@ -3229,6 +3262,7 @@ const ENTRY_SOFTENING_DEADLINES = [
   { field: 'rolloutPendingUntil', kind: 'rollout', status: 'ROLLOUT_PENDING' },
   { field: 'contentFreshnessPendingUntil', kind: 'content', status: null },
   { field: 'staleContentGraceUntil', kind: 'content', status: null },
+  { field: 'sourceFailurePendingUntil', kind: 'source', status: 'SEED_ERROR' },
 ];
 
 function entryDeadlineRaw(entry, { field, status }) {
@@ -3236,16 +3270,19 @@ function entryDeadlineRaw(entry, { field, status }) {
   return Object.prototype.hasOwnProperty.call(entry ?? {}, field) ? entry[field] : undefined;
 }
 
+function snapshotCheckEntries(snapshot) {
+  return [snapshot?.checks ?? snapshot?.problems, snapshot?.pending]
+    .filter((entries) => entries && typeof entries === 'object')
+    .flatMap((entries) => Object.values(entries));
+}
+
 function hasExpiredActivationGrace(snapshot, now, { includeRollout = true, includeContent = true } = {}) {
-  const included = { rollout: includeRollout, content: includeContent };
-  const entries = snapshot?.checks ?? snapshot?.problems;
-  if (entries && typeof entries === 'object') {
-    for (const entry of Object.values(entries)) {
-      for (const spec of ENTRY_SOFTENING_DEADLINES) {
-        if (!included[spec.kind]) continue;
-        const raw = entryDeadlineRaw(entry, spec);
-        if (raw !== undefined && isExpiredDeadline(raw, now)) return true;
-      }
+  const included = { rollout: includeRollout, content: includeContent, source: true };
+  for (const entry of snapshotCheckEntries(snapshot)) {
+    for (const spec of ENTRY_SOFTENING_DEADLINES) {
+      if (!included[spec.kind]) continue;
+      const raw = entryDeadlineRaw(entry, spec);
+      if (raw !== undefined && isExpiredDeadline(raw, now)) return true;
     }
   }
   if (includeContent) {
@@ -3272,13 +3309,10 @@ function nearestActivationDeadlineMs(snapshot, now) {
     const deadline = Number.isFinite(parsed) ? parsed : now;
     if (deadline < nearest) nearest = deadline;
   };
-  const entries = snapshot?.checks ?? snapshot?.problems;
-  if (entries && typeof entries === 'object') {
-    for (const entry of Object.values(entries)) {
-      for (const spec of ENTRY_SOFTENING_DEADLINES) {
-        const raw = entryDeadlineRaw(entry, spec);
-        if (raw !== undefined) consider(raw);
-      }
+  for (const entry of snapshotCheckEntries(snapshot)) {
+    for (const spec of ENTRY_SOFTENING_DEADLINES) {
+      const raw = entryDeadlineRaw(entry, spec);
+      if (raw !== undefined) consider(raw);
     }
   }
   const summaryDeadlines = snapshot?.summary?.contentFreshnessPendingUntil;
@@ -3370,13 +3404,8 @@ function healthResponseBody(snapshot, compact) {
     return body;
   }
 
-  // Two shapes reach here. A freshly-swept verdict (and the full cached snapshot)
-  // carries `checks`, so derive `problems` from it. The compact snapshot key stores
-  // `problems` already computed — that is why a browser poll reads ~1 KB instead of
-  // the full 20 KB check map. Passing a compact snapshot back through here is a
-  // no-op, which is what makes buildCompactVerdictSnapshot() below safe.
-  const problems = snapshot.checks
-    ? Object.fromEntries(Object.entries(snapshot.checks).filter(
+  const entries = snapshot.checks
+    ? Object.entries(snapshot.checks).filter(
       ([name, check]) => name !== 'chinaDecisionSignals' && (
         isProblemStatus(check.status)
         || (
@@ -3385,12 +3414,14 @@ function healthResponseBody(snapshot, compact) {
           && check.chinaStatus !== 'healthy'
         )
       ),
-    ))
-    : { ...(snapshot.problems ?? {}) };
+    )
+    : Object.entries({ ...(snapshot.pending ?? {}), ...(snapshot.problems ?? {}) });
+  const evaluatedAt = Date.parse(snapshot.checkedAt);
+  const problems = Object.fromEntries(entries.filter(([, check]) => !isPendingHealthEntry(check, evaluatedAt)));
+  const pending = Object.fromEntries(entries.filter(([, check]) => isPendingHealthEntry(check, evaluatedAt)));
   // Older compact snapshots may predate the operator-only China health
   // projection. Strip it again at the response boundary so a cached value
   // cannot leak source freshness details to anonymous status readers.
-  delete problems.chinaDecisionSignals;
   // Same rule, applied per field rather than per check (#6060): a check's
   // STATUS is public, but its named entities are operator-only. `staleCountries`
   // and the decision-group breakdown identify WHICH source is degraded, which
@@ -3399,19 +3430,23 @@ function healthResponseBody(snapshot, compact) {
   // source is unusable, so it falls under the same rule. Runs on both shapes so
   // a cached compact snapshot written before this rule is scrubbed on the way
   // out too.
-  for (const [name, check] of Object.entries(problems)) {
-    if (check?.contentFreshness === undefined
-      && check?.decisionGroups === undefined
-      && check?.chinaRow === undefined) continue;
-    const {
-      contentFreshness: _detail,
-      decisionGroups: _groups,
-      chinaRow: _chinaRow,
-      ...publicFields
-    } = check;
-    problems[name] = publicFields;
+  for (const collection of [problems, pending]) {
+    delete collection.chinaDecisionSignals;
+    for (const [name, check] of Object.entries(collection)) {
+      if (check?.contentFreshness === undefined
+        && check?.decisionGroups === undefined
+        && check?.chinaRow === undefined) continue;
+      const {
+        contentFreshness: _detail,
+        decisionGroups: _groups,
+        chinaRow: _chinaRow,
+        ...publicFields
+      } = check;
+      collection[name] = publicFields;
+    }
   }
   if (Object.keys(problems).length > 0) body.problems = problems;
+  if (Object.keys(pending).length > 0) body.pending = pending;
   return body;
 }
 
@@ -3757,7 +3792,7 @@ export async function handleHealth(req, ctx, options = {}) {
   };
   const checks = {};
   const contentFreshnessPendingUntil = {};
-  const counts = { ok: 0, warn: 0, onDemandWarn: 0, staleContent: 0, rolloutPending: 0, crit: 0 };
+  const counts = { ok: 0, warn: 0, onDemandWarn: 0, staleContent: 0, rolloutPending: 0, pending: 0, crit: 0 };
   let totalChecks = 0;
 
   const sources = [
@@ -3814,6 +3849,7 @@ export async function handleHealth(req, ctx, options = {}) {
   for (const entry of Object.values(checks)) {
     const bucket = healthStatusBucket(entry, evaluationNow);
     counts[bucket]++;
+    if (isPendingHealthEntry(entry, evaluationNow)) counts.pending++;
     if (entry.status === 'EMPTY_ON_DEMAND') counts.onDemandWarn++;
     // STALE_CONTENT = "seeder is fresh but the upstream DATA stopped advancing"
     // (a frozen feed — see issue #3845). This sub-count stays a plain census of
@@ -3885,6 +3921,7 @@ export async function handleHealth(req, ctx, options = {}) {
       // entry inside its bounded `staleContentGraceUntil` window is counted
       // here while its severity bucket is `ok`, so this can exceed `warn`.
       staleContent: counts.staleContent,
+      ...(counts.pending > 0 ? { pending: counts.pending } : {}),
       // `rolloutPending` is a SUBSET of `warn` (#6059) — a newly deployed
       // schema whose producer has not reached its first scheduled run yet.
       // Bounded: each entry carries a `rolloutPendingUntil` deadline, after

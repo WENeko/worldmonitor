@@ -19,7 +19,7 @@ function organizationBlocks(html) {
 describe('World Monitor brand-identity page', () => {
   it('opens with the brand-named H1 and a NAP table crawlers can quote', () => {
     const body = read(BRAND_PAGE);
-    assert.ok(body.startsWith('# World Monitor\n'), 'world-monitor.md must open with "# World Monitor"');
+    assert.match(body, /^---\n[\s\S]*?\n---\n+# World Monitor\n/, 'world-monitor.md must retain its brand H1 after metadata');
     assert.match(body, /## Official identity \(NAP\)/);
     assert.match(body, /\|\s*Name\s*\|\s*World Monitor\s*\|/);
     assert.match(body, /https:\/\/www\.worldmonitor\.app/);

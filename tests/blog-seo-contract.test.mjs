@@ -24,6 +24,66 @@ function parsePost(file) {
 
 const posts = postFiles.map(parsePost);
 
+const RESTRICTED_VENDOR_PRICE_ALLOWLIST = new Map();
+const UNSUPPORTED_VENDOR_PRICE_SOURCE = String.raw`(?:\$\s*\d[\d,.]*(?:[KM])?\+?|\b\d[\d,.]*(?:[KM])\b\+?|multi[- ]?million|six[- ]?figures?)`;
+const UNSUPPORTED_VENDOR_PRICE_TERMS = new RegExp(UNSUPPORTED_VENDOR_PRICE_SOURCE, 'i');
+const DISALLOWED_COMPARISON_PRICE_TERMS = /\$1M\+|\$100K\+|multi[- ]?million|six[- ]?figures?/i;
+const RESTRICTED_VENDORS = ['Palantir', 'Dataminr', 'Recorded Future', 'Crisis24', 'Everbridge'];
+
+function markdownTableCells(line) {
+  if (!line.startsWith('|') || !line.endsWith('|')) return [];
+  return line.slice(1, -1).split('|').map((cell) => cell.trim());
+}
+
+function assertNoUnsupportedVendorPrice(post, vendor) {
+  const namedPriceSource = RESTRICTED_VENDOR_PRICE_ALLOWLIST.get(`${post.file}:${vendor}`);
+  if (namedPriceSource) {
+    assert.ok(post.source.includes(namedPriceSource), `${post.file}: ${vendor} allowlist entry must name its price source`);
+    return;
+  }
+
+  const vendorPattern = new RegExp(`\\b${vendor}\\b`, 'i');
+  const directPricePattern = new RegExp(
+    `(?:\\b${vendor}\\b[^\\n.]{0,120}${UNSUPPORTED_VENDOR_PRICE_SOURCE}|${UNSUPPORTED_VENDOR_PRICE_SOURCE}(?:\\s+[\\w/-]+){0,3}\\s+\\b${vendor}\\b)`,
+    'i',
+  );
+  assert.doesNotMatch(
+    post.source,
+    directPricePattern,
+    `${post.file}: ${vendor} pricing needs a named source before publication`,
+  );
+
+  for (const section of post.source.split(/(?=^#{1,6}\s)/m)) {
+    const heading = section.split('\n', 1)[0];
+    if (vendorPattern.test(heading)) {
+      assert.doesNotMatch(
+        section,
+        UNSUPPORTED_VENDOR_PRICE_TERMS,
+        `${post.file}: ${vendor} pricing needs a named source before publication`,
+      );
+    }
+  }
+
+  const lines = post.source.split('\n');
+  for (let lineIndex = 0; lineIndex < lines.length - 2; lineIndex += 1) {
+    const header = markdownTableCells(lines[lineIndex]);
+    const vendorColumn = header.findIndex((cell) => vendorPattern.test(cell));
+    if (vendorColumn === -1 || !/^\\|(?:\\s*:?-{3,}:?\\s*\\|)+\\s*$/.test(lines[lineIndex + 1])) continue;
+
+    for (let rowIndex = lineIndex + 2; rowIndex < lines.length; rowIndex += 1) {
+      const row = markdownTableCells(lines[rowIndex]);
+      if (!row.length) break;
+      if (/^price$/i.test(row[0])) {
+        assert.doesNotMatch(
+          row[vendorColumn] ?? '',
+          UNSUPPORTED_VENDOR_PRICE_TERMS,
+          `${post.file}: ${vendor} table price needs a named source before publication`,
+        );
+      }
+    }
+  }
+}
+
 describe('blog SEO and GEO corpus contract', () => {
   it('keeps every post complete, unique, current, and answer-first', () => {
     assert.ok(posts.length >= 53, 'expected the complete published blog corpus');
@@ -80,6 +140,40 @@ describe('blog SEO and GEO corpus contract', () => {
       corpus,
       /\b(?:58 map layers|28 languages|29 stock exchanges|14 central banks|63 (?:live )?(?:geopolitical intelligence )?tools)\b/i,
     );
+  });
+
+  it('does not publish unsupported prices for enterprise-negotiated vendors', () => {
+    for (const post of posts) {
+      for (const vendor of RESTRICTED_VENDORS) {
+        assertNoUnsupportedVendorPrice(post, vendor);
+      }
+    }
+
+    for (const source of [
+      '---\ntitle: Pricing fixture\n---\n\nThis preamble is not a vendor heading.\n\n### World Monitor vs. Dataminr\n\n- Price: free vs. six-figure annual licenses',
+      '| Product | Dataminr |\n| --- | --- |\n| Price | $50K |',
+      'A $100K+ Palantir license',
+      'A Palantir license costs 100K+ annually',
+    ]) {
+      assert.throws(
+        () => assertNoUnsupportedVendorPrice({ file: 'price-claim-fixture.md', source }, source.includes('Palantir') ? 'Palantir' : 'Dataminr'),
+        /pricing needs a named source|table price needs a named source/,
+      );
+    }
+
+    const comparison = posts.find((post) => post.file === 'worldmonitor-vs-traditional-intelligence-tools.md');
+    assert.ok(comparison, 'missing the traditional intelligence comparison post');
+    assert.match(
+      comparison.source,
+      /Quartz reported in 2022[^\n]*\$24,000 per year/,
+      'the Bloomberg figure must name its published source and year',
+    );
+    assert.match(
+      comparison.source,
+      /\| Price \| \$24K\/yr \(Quartz, 2022\) \| Undisclosed \(enterprise-negotiated\) \| Undisclosed \(enterprise-negotiated\) \| Undisclosed \(enterprise-negotiated\) \| Free \|/,
+      'the price row must not turn negotiated vendor prices into estimates',
+    );
+    assert.doesNotMatch(comparison.source, DISALLOWED_COMPARISON_PRICE_TERMS);
   });
 
   // The explainer's own contract lives in scripts/docs-stats.mjs — its numeric

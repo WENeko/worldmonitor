@@ -1,4 +1,5 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite';
+import { sentryVitePlugin } from '@sentry/vite-plugin';
 import { VitePWA } from 'vite-plugin-pwa';
 import type { OutputBundle } from 'rollup';
 import { resolve, dirname, extname } from 'path';
@@ -926,6 +927,12 @@ export default defineConfig(({ mode }) => {
   const activeMeta = VARIANT_META[activeVariant] || VARIANT_META.full;
   const emitPublicSourceMaps = process.env.WM_EMIT_SOURCEMAPS === '1'
     || process.env.VERCEL_ENV === 'preview';
+  // Sentry source-map upload. Gated on the token so a build without it (local,
+  // fork, CI) behaves exactly as before rather than failing. Matching is by
+  // debug ID — the plugin stamps the same id into the bundle and its map — so
+  // it does not depend on the browser SDK's static `worldmonitor@x.y.z`
+  // release name, which would otherwise collide across deploys.
+  const uploadSourceMapsToSentry = Boolean(process.env.SENTRY_AUTH_TOKEN);
 
   return {
     html: {
@@ -943,6 +950,23 @@ export default defineConfig(({ mode }) => {
       __BUILD_HASH__: JSON.stringify(process.env.VERCEL_GIT_COMMIT_SHA ?? 'dev'),
     },
     plugins: [
+      // Ship readable dashboard stack traces to Sentry. Without this every
+      // browser frame arrives minified (`Rs.loadNews`, `BO`, `v`), which is why
+      // triage has had to infer call sites from Vite chunk names.
+      ...(uploadSourceMapsToSentry
+        ? [sentryVitePlugin({
+            org: 'elie-habib',
+            project: 'worldmonitor',
+            authToken: process.env.SENTRY_AUTH_TOKEN,
+            telemetry: false,
+            sourcemaps: {
+              // Previews deliberately serve public maps (emitPublicSourceMaps);
+              // leave those in place and only sweep them when production built
+              // them solely to upload.
+              filesToDeleteAfterUpload: emitPublicSourceMaps ? [] : ['dist/**/*.map'],
+            },
+          })]
+        : []),
       // Emit dist/build-hash.txt with the deployed SHA so the running bundle
       // can fetch /build-hash.txt at tab-focus time and force-reload itself
       // if it's running an older bundle (see src/bootstrap/stale-bundle-check.ts).
@@ -1125,7 +1149,10 @@ export default defineConfig(({ mode }) => {
       format: 'es',
     },
     build: {
-      sourcemap: emitPublicSourceMaps,
+      // Uploading requires the maps to exist. When they are not also being
+      // published deliberately, the Sentry plugin deletes them after upload so
+      // production keeps shipping no public maps.
+      sourcemap: emitPublicSourceMaps || uploadSourceMapsToSentry,
       // Vite's global threshold accommodates the known lazy GlobeMap bundle.
       // wm-chunk-size-warning-policy keeps the 1200 kB default for every other
       // chunk so unrelated regressions between 1200 and 2000 kB remain visible.

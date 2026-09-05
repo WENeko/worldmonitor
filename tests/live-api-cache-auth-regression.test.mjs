@@ -157,10 +157,10 @@ async function assertRepeatedNeverCloudflareHit(url, { expectedStatus, label, in
  * coincides with an apply, but a manual re-run right after one would, and the
  * failure message says so.
  */
-async function waitForCloudflareHit(url, name) {
+async function waitForCloudflareHit(url, name, init = {}) {
   const seen = [];
   for (let attempt = 1; attempt <= 8; attempt += 1) {
-    const result = await fetchText(url);
+    const result = await fetchText(url, init);
     assert.equal(result.resp.status, 200, `${name}: corpus document must still be served`);
     const status = cfCacheStatus(result.resp).toUpperCase();
     seen.push(status || 'absent');
@@ -203,7 +203,8 @@ describe(`live API cache/auth regression sweep (${LIVE ? 'ENABLED' : 'SKIPPED - 
       'fake-auth responses are dynamic no-store and never cached 200s;',
       'anonymous public REST/RPC responses remain public-cacheable;',
       'MCP auth/protocol responses are no-store;',
-      'OAuth metadata remains discoverable and cacheable.',
+      'OAuth metadata remains discoverable and cacheable;',
+      'corpus, docs, blog and agent text files are Cloudflare-cached in their HTML representation only.',
     ].join(' '));
     assert.equal(LIVE, true);
     // Mutation guard: reverting assertNotCached200 to inspect only
@@ -552,6 +553,76 @@ describe(`live API cache/auth regression sweep (${LIVE ? 'ENABLED' : 'SKIPPED - 
       label: 'missing corpus document',
     });
     markProbeCompleted('corpus-edge-cache');
+  });
+
+  // #7747: the same rule re-admits the rest of the sitemap-declared surface. One
+  // document per origin type — the Mintlify proxy, Astro static output, a plain
+  // public/ text file — because each reaches Cloudflare through a different path
+  // and can regress alone (a vercel.json header rule, a rewrite reorder, a
+  // Mintlify header change). The negative controls are the boundary the rule was
+  // widened around: these URLs answer with an RSC flight or markdown when asked,
+  // Cloudflare keys only on the URL, so a negotiating request must stay
+  // ineligible — never a HIT, and still the negotiated body — or a browser could
+  // be handed a crawler's markdown for ten minutes.
+  it('serves the docs, blog and agent text files from the Cloudflare edge, HTML representation only', async () => {
+    for (const [url, name] of [
+      [`${WWW_BASE}/docs/documentation`, 'docs document'],
+      [`${WWW_BASE}/blog/`, 'blog index'],
+      [`${WWW_BASE}/llms.txt`, 'llms.txt'],
+    ]) {
+      const { resp } = await waitForCloudflareHit(url, name);
+      assert.equal(
+        resp.headers.get('cdn-cache-control'),
+        CORPUS_EDGE_CACHE_CONTROL,
+        `${name} must advertise the 600s shared TTL the cache rule honours`,
+      );
+    }
+
+    // Single-representation files are exempt from the representation guard, so an
+    // agent that advertises its media type still gets the edge cache. Positive
+    // control for the exemption; the markdown checks below are its negative.
+    const plainText = await waitForCloudflareHit(
+      `${WWW_BASE}/llms.txt`,
+      'llms.txt for an agent sending Accept: text/plain',
+      { headers: { Accept: 'text/plain' } },
+    );
+    assert.match(plainText.resp.headers.get('content-type') || '', /text\/plain/);
+
+    const flight = await fetchText(`${WWW_BASE}/docs/documentation`, { headers: { RSC: '1' } });
+    assert.equal(flight.resp.status, 200, 'docs RSC request must still be served');
+    assert.match(
+      flight.resp.headers.get('content-type') || '',
+      /text\/x-component/,
+      'an RSC request must receive the flight, not a cached HTML document',
+    );
+    assert.notEqual(cfCacheStatus(flight.resp).toUpperCase(), 'HIT', 'RSC flights must never come from the Cloudflare cache');
+
+    for (const url of [`${WWW_BASE}/blog/`, `${WWW_BASE}/docs/documentation`]) {
+      const markdown = await fetchText(url, { headers: { Accept: 'text/markdown' } });
+      assert.equal(markdown.resp.status, 200, `${url}: markdown request must still be served`);
+      assert.match(
+        markdown.resp.headers.get('content-type') || '',
+        /text\/markdown/,
+        `${url}: Accept: text/markdown must still negotiate markdown, not a cached HTML document`,
+      );
+      assert.notEqual(
+        cfCacheStatus(markdown.resp).toUpperCase(),
+        'HIT',
+        `${url}: the markdown representation must never come from the Cloudflare cache`,
+      );
+    }
+
+    // The docs MCP server shares the /docs prefix and is carved out by exact path.
+    // Its status for a bare GET is the handler's business; that it is no-store
+    // and never a Cloudflare HIT is this rule's. `Accept: application/json` keeps
+    // the handler on its JSON-RPC branch — a `text/event-stream` GET would open
+    // a stream that fetchText() could only end by timing out.
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const mcp = await fetchText(`${WWW_BASE}/docs/mcp`, { headers: { Accept: 'application/json' } });
+      assertNoStore(mcp.resp, `docs MCP endpoint attempt ${attempt}`);
+      assert.notEqual(cfCacheStatus(mcp.resp).toUpperCase(), 'HIT', `docs MCP endpoint attempt ${attempt}: must never be a Cloudflare HIT`);
+    }
+    markProbeCompleted('document-edge-cache');
   });
 
   // The #4497 incident class is a CACHED 200 of private/authenticated data — the

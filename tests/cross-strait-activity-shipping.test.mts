@@ -145,7 +145,7 @@ test('cross-Strait bootstrap is a bounded current projection, not the durable re
   );
 });
 
-test('cross-Strait source transport health degrades immediately without discarding last-good records', () => {
+test('legacy cross-Strait source errors stay actionable without discarding last-good records', () => {
   const { classifyKey, SEED_META, STANDALONE_KEYS } = __testing__;
   const now = Date.parse('2026-07-25T12:00:00.000Z');
   for (const name of ['crossStraitActivityTaiwanMnd', 'crossStraitActivityJapanMod']) {
@@ -167,6 +167,151 @@ test('cross-Strait source transport health degrades immediately without discardi
     assert.equal(entry.status, 'SEED_ERROR', name);
     assert.equal(entry.records, 91, name);
   }
+});
+
+test('MND metadata counts completed source attempts independently of canonical publication', async () => {
+  const { classifyKey, healthStatusBucket, SEED_META, STANDALONE_KEYS } = __testing__;
+  const name = 'crossStraitActivityTaiwanMnd';
+  const metaKey = SEED_META[name].key;
+  const dataKey = STANDALONE_KEYS[name];
+  const start = Date.parse('2026-09-05T12:00:00.000Z');
+  const minute = 60_000;
+  const stored = new Map<string, Record<string, unknown>>();
+  const reads: string[] = [];
+  const write = async (key: string, value: Record<string, unknown>) => { stored.set(key, value); };
+  const reader = async (key: string, options: { strict: boolean }) => {
+    reads.push(key);
+    assert.equal(options.strict, true);
+    return stored.get(key) ?? null;
+  };
+  const publish = async (attemptAt: number, errorCode: string | null, lastSuccessAt = start) => {
+    await writeSourceHealth({
+      generatedAt: new Date(attemptAt).toISOString(),
+      observations: [{ sourceId: 'taiwan-mnd' }],
+      sources: [{
+        id: 'taiwan-mnd',
+        transportStatus: errorCode ? 'error' : 'fresh',
+        errorCodes: errorCode ? [errorCode] : [],
+        lastSuccessAt: new Date(lastSuccessAt).toISOString(),
+      }],
+    }, write, reader);
+    const meta = stored.get(metaKey);
+    assert.ok(meta);
+    return meta;
+  };
+  const classify = (meta: Record<string, unknown>, now: number) => classifyKey(name, dataKey, { allowOnDemand: true }, {
+    keyStrens: new Map([[dataKey, 1024]]),
+    keyErrors: new Map(),
+    keyMetaValues: new Map([[metaKey, JSON.stringify(meta)]]),
+    keyMetaErrors: new Map(),
+    now,
+  });
+  const success = await publish(start, null);
+  assert.equal(success.sourceState, 'ok');
+  assert.equal(success.consecutiveSourceFailures, 0);
+  assert.equal(success.firstSourceFailureAt, null);
+
+  const first = await publish(start + minute, 'MND_HTTP_503');
+  assert.deepEqual(first, {
+    fetchedAt: start,
+    recordCount: 1,
+    sourceState: 'degraded',
+    stale: true,
+    errorCode: 'MND_HTTP_503',
+    lastSourceFailureCode: 'MND_HTTP_503',
+    consecutiveSourceFailures: 1,
+    lastSourceAttemptAt: start + minute,
+    firstSourceFailureAt: start + minute,
+  });
+  assert.deepEqual(await publish(start + minute, 'MND_HTTP_503'), first, 'duplicate source write is not another attempt');
+  const firstEntry = classify(first, start + minute);
+  assert.equal(firstEntry.status, 'SEED_ERROR', 'raw source failure remains visible');
+  assert.equal(healthStatusBucket(firstEntry, start + minute), 'ok');
+  assert.equal(Date.parse(firstEntry.sourceFailurePendingUntil), start + 211 * minute);
+  assert.equal(healthStatusBucket(classify(first, start + 211 * minute), start + 211 * minute), 'warn');
+
+  const second = await publish(start + 181 * minute, 'MND_HTTP_503');
+  assert.equal(second.consecutiveSourceFailures, 2);
+  assert.equal(second.firstSourceFailureAt, first.firstSourceFailureAt);
+  assert.equal(healthStatusBucket(classify(second, start + 181 * minute), start + 181 * minute), 'warn');
+  const changed = await publish(start + 182 * minute, 'MND_PUBLICATION_METADATA_MISSING');
+  assert.equal(changed.consecutiveSourceFailures, 1);
+  assert.equal(changed.firstSourceFailureAt, first.firstSourceFailureAt, 'cause churn keeps the episode deadline');
+
+  const recovered = await publish(start + 183 * minute, null, start + 183 * minute);
+  assert.equal(recovered.consecutiveSourceFailures, 0);
+  assert.equal(recovered.firstSourceFailureAt, null);
+  assert.equal(recovered.lastSourceFailureCode, null);
+  assert.equal(classify(recovered, start + 183 * minute).status, 'OK');
+  const afterCanonicalFailure = await publish(start + 184 * minute, 'MND_HTTP_503', start);
+  assert.equal(afterCanonicalFailure.fetchedAt, start, 'retained record freshness follows the served archive, not an unpublished successful fetch');
+  assert.equal(afterCanonicalFailure.firstSourceFailureAt, start + 184 * minute);
+  assert.ok(reads.every(key => key === metaKey), 'history reads use source metadata, not the canonical archive');
+});
+
+test('MND attempt metadata fails closed for unproved history and failed source writes', async () => {
+  const now = Date.parse('2026-09-05T12:00:00.000Z');
+  const metaKey = 'seed-meta:military:cross-strait-activity:taiwan-mnd';
+  const dataKey = 'military:cross-strait-activity:v1:source:taiwan-mnd';
+  const success = { fetchedAt: now - 60_000, recordCount: 1, sourceState: 'ok', stale: false };
+  const first = {
+    ...success, sourceState: 'degraded', stale: true, errorCode: 'MND_HTTP_503',
+    lastSourceFailureCode: 'MND_HTTP_503', consecutiveSourceFailures: 1,
+    firstSourceFailureAt: now, lastSourceAttemptAt: now,
+  };
+  const snapshot = {
+    generatedAt: new Date(now).toISOString(),
+    observations: [{ sourceId: 'taiwan-mnd' }],
+    sources: [{ id: 'taiwan-mnd', transportStatus: 'error', errorCodes: ['MND_HTTP_502'], lastSuccessAt: new Date(now - 60_000).toISOString() }],
+  };
+  for (const previous of [
+    null, [], 'bad-json', { ...success, sourceState: 'error' },
+    { ...success, lastSourceFailureCode: 'MND_HTTP_503' },
+    { ...success, lastSourceAttemptAt: now - 60_000, consecutiveSourceFailures: 0 },
+    { ...first, firstSourceFailureAt: null },
+    { ...first, lastSourceAttemptAt: now + 60_000 },
+    first,
+  ]) {
+    const writes = new Map<string, Record<string, unknown>>();
+    await writeSourceHealth(snapshot, async (key: string, value: Record<string, unknown>) => { writes.set(key, value); }, async () => previous);
+    const meta = writes.get(metaKey);
+    assert.ok(meta);
+    assert.equal(meta.sourceState, 'degraded');
+    assert.equal(meta.consecutiveSourceFailures, 2, 'unproved or contradictory attempts cannot get pending');
+    assert.equal(meta.firstSourceFailureAt, null);
+    assert.deepEqual([...writes.keys()], [metaKey, dataKey]);
+  }
+  const writes = new Map<string, Record<string, unknown>>();
+  await writeSourceHealth(snapshot, async (key: string, value: Record<string, unknown>) => { writes.set(key, value); }, async () => { throw new Error('read failed'); });
+  assert.equal(writes.get(metaKey)?.consecutiveSourceFailures, 2, 'read failure still publishes actionable diagnostics');
+  await assert.rejects(writeSourceHealth(snapshot, async (key: string, value: Record<string, unknown>) => {
+    writes.set(key, value);
+    if (key === dataKey) throw new Error('detail write failed');
+  }, async () => success), /detail write failed/);
+  const persisted = writes.get(metaKey);
+  assert.ok(persisted);
+  assert.equal(persisted.consecutiveSourceFailures, 1);
+  await writeSourceHealth(snapshot, async (key: string, value: Record<string, unknown>) => { writes.set(key, value); }, async () => persisted);
+  assert.deepEqual(writes.get(metaKey), persisted, 'retry after failed detail write keeps the same attempt');
+
+  for (const code of ['HTTP_503', 'MND_bad', 'MND_' + 'A'.repeat(61), '<secret>', ['MND_HTTP_503']]) {
+    await writeSourceHealth({ ...snapshot, sources: [{ ...snapshot.sources[0], errorCodes: [code] }] },
+      async (key: string, value: Record<string, unknown>) => { writes.set(key, value); }, async () => success);
+    assert.equal(writes.get(metaKey)?.errorCode, 'MND_SOURCE_ERROR');
+  }
+  for (const attemptedAt of [now - 1, now]) {
+    await writeSourceHealth({
+      ...snapshot,
+      generatedAt: new Date(attemptedAt).toISOString(),
+      sources: [{ ...snapshot.sources[0], transportStatus: 'fresh', errorCodes: [], lastSuccessAt: new Date(attemptedAt).toISOString() }],
+    }, async (key: string, value: Record<string, unknown>) => { writes.set(key, value); }, async () => first);
+    assert.equal(writes.get(metaKey)?.sourceState, 'degraded', 'an older or contradictory success cannot reset an episode');
+    assert.equal(writes.get(metaKey)?.firstSourceFailureAt, null);
+  }
+  await writeSourceHealth({ ...snapshot, generatedAt: new Date(now + 1).toISOString() },
+    async (key: string, value: Record<string, unknown>) => { writes.set(key, value); },
+    async () => ({ ...first, errorCode: 'MND_HTTP_502', lastSourceFailureCode: 'MND_HTTP_502', consecutiveSourceFailures: 100 }));
+  assert.equal(writes.get(metaKey)?.consecutiveSourceFailures, 100, 'attempt counter is bounded');
 });
 
 test('a freshly classified blocked source is explicit and does not pin fleet health', async () => {
@@ -607,7 +752,7 @@ test('degraded cross-Strait source health publishes the error metadata before it
     }],
   };
   const writes: string[] = [];
-  await writeSourceHealth(snapshot, async (key: string) => { writes.push(key); });
+  await writeSourceHealth(snapshot, async (key: string) => { writes.push(key); }, async () => null);
 
   assert.deepEqual(writes, [
     'seed-meta:military:cross-strait-activity:taiwan-mnd',
@@ -655,6 +800,7 @@ test('degraded cross-Strait source health bounds the error marker TTL', async ()
 
 test('healthy cross-Strait source health retains the archive TTL', async () => {
   const snapshot = {
+    generatedAt: '2026-07-25T08:00:00.000Z',
     observations: [{ sourceId: 'taiwan-mnd' }],
     sources: [{
       id: 'taiwan-mnd',
@@ -665,7 +811,7 @@ test('healthy cross-Strait source health retains the archive TTL', async () => {
   const writes: Array<{ key: string; ttl: number }> = [];
   await writeSourceHealth(snapshot, async (key: string, _value: object, ttl: number) => {
     writes.push({ key, ttl });
-  });
+  }, async () => null);
 
   assert.deepEqual(writes, [
     {
@@ -685,6 +831,7 @@ test('cross-Strait publish hooks ignore runSeed metadata instead of treating it 
   const originalRedisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
   const writes: string[] = [];
   const snapshot = {
+    generatedAt: '2026-07-25T08:00:00.000Z',
     observations: [{ sourceId: 'taiwan-mnd' }, { sourceId: 'japan-mod' }],
     sources: [
       { id: 'taiwan-mnd', transportStatus: 'fresh', lastSuccessAt: '2026-07-25T08:00:00.000Z' },
@@ -733,6 +880,7 @@ test('cross-Strait source-health failure settles every write before canonical pu
   let canonicalFetches = 0;
   const writes: string[] = [];
   const snapshot = {
+    generatedAt: '2026-07-25T08:00:00.000Z',
     observations: [{ sourceId: 'taiwan-mnd' }, { sourceId: 'japan-mod' }],
     sources: [
       { id: 'taiwan-mnd', transportStatus: 'fresh', lastSuccessAt: '2026-07-25T08:00:00.000Z' },
@@ -761,7 +909,7 @@ test('cross-Strait source-health failure settles every write before canonical pu
           if (key === 'seed-meta:military:cross-strait-activity:japan-mod') {
             throw new Error('injected source-health failure');
           }
-        }),
+        }, async () => null),
       },
     ).then(
       () => ({ error: null }),
@@ -793,6 +941,7 @@ test('runSeed forwards cross-Strait source health through the pre-publication bo
   const originalSigtermListeners = new Set(process.rawListeners('SIGTERM'));
   const redisCommands: unknown[][] = [];
   const snapshot = {
+    generatedAt: '2026-07-25T08:00:00.000Z',
     observations: [{ sourceId: 'taiwan-mnd' }],
     sources: [{
       id: 'taiwan-mnd',
@@ -824,7 +973,7 @@ test('runSeed forwards cross-Strait source health through the pre-publication bo
           maxStaleMin: 120,
           beforePublish: data => writeSourceHealth(data, async () => {
             throw new Error('injected source-health failure');
-          }),
+          }, async () => null),
         },
       ),
       /injected source-health failure/,

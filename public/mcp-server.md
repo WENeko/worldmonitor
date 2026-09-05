@@ -1,3 +1,9 @@
+---
+title: "World Monitor MCP server"
+description: "MCP transport, discovery methods, tools, and authentication."
+canonical: "https://www.worldmonitor.app/mcp-server.md"
+---
+
 # World Monitor MCP Server
 
 Last updated: August 19, 2026

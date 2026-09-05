@@ -49,6 +49,7 @@ import {
   discoverContentCorpusPages,
 } from '../scripts/discover-content-corpus-pages.mjs';
 import { guardBuiltOutput, shouldSkipBuiltOutput } from './_lib/built-output-guard.mjs';
+import { AGENT_TEXT_FILES } from '../scripts/cloudflare-cache-rule.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageJson = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));
@@ -851,6 +852,55 @@ describe('crawlable content corpus deployment contracts', () => {
           `${route} must carry the same service linkset as the homepage`,
         );
       }
+    }
+  });
+
+  it('advertises the edge cache on the blog, the proxied docs and the root agent text files (#7747)', () => {
+    // The vercel.json half of the pair. The Cloudflare half is
+    // scripts/cloudflare-cache-rule.mjs, and tests/cloudflare-cache-rule.test.mjs
+    // fails when the two halves cover different surfaces.
+    for (const route of ['/blog', '/blog/', '/blog/glossary/ais/', '/blog/rss.xml', '/blog/llms.txt', '/blog/sitemap-index.xml']) {
+      assert.equal(effectiveHeader(route, 'CDN-Cache-Control'), HTML_ENTRY_EDGE_CACHE, `${route} must advertise the 600s Cloudflare TTL`);
+      assert.equal(effectiveHeader(route, 'Vercel-CDN-Cache-Control'), HTML_ENTRY_EDGE_CACHE, `${route} must advertise the 600s Vercel TTL`);
+    }
+    // Blog assets keep their own policies: immutable hashed bundles, and the
+    // zone's month-long "Blog" rule for OG and post images. A shared 600s TTL
+    // would shorten Vercel's cache of the bundles and make the document rule the
+    // last writer of edge_ttl for the images.
+    for (const route of ['/blog/_astro/index.abc123.js', '/blog/og/post.png', '/blog/images/post.png']) {
+      assert.equal(effectiveHeader(route, 'CDN-Cache-Control'), null, `${route} must not inherit the document TTL`);
+      assert.equal(effectiveHeader(route, 'Vercel-CDN-Cache-Control'), null, `${route} must not inherit the document TTL`);
+    }
+    assert.equal(effectiveCacheControl('/blog/_astro/index.abc123.js'), 'public, max-age=31536000, immutable');
+
+    // /docs is a proxy to Mintlify, which negotiates markdown on Accept without
+    // a matching Vary and serves RSC flights at the document URL. Cloudflare gets
+    // the TTL and keys the negotiating requests out in the zone rule; Vercel's
+    // own cache must not store these at all, because it would key HTML and
+    // markdown under one URL. Vercel strips Vercel-CDN-Cache-Control before the
+    // response leaves, so the browser never sees the no-store.
+    for (const route of ['/docs/documentation', '/docs/mcp-overview', '/docs/zh/about/', '/docs/documentation.md', '/docs/sitemap.xml']) {
+      assert.equal(effectiveHeader(route, 'CDN-Cache-Control'), HTML_ENTRY_EDGE_CACHE, `${route} must advertise the 600s Cloudflare TTL`);
+      assert.equal(effectiveHeader(route, 'Vercel-CDN-Cache-Control'), 'no-store', `${route} must keep Vercel's cache out of the Mintlify proxy`);
+      assert.equal(effectiveHeader(route, 'X-Content-Type-Options'), 'nosniff', `${route} must still carry the docs security headers`);
+    }
+    for (const route of ['/docs/mcp', '/docs/mcp/', '/docs/mcp/session', '/docs/_next/static/chunks/a.js', '/docs/_mintlify/favicons/a.png']) {
+      assert.equal(effectiveHeader(route, 'CDN-Cache-Control'), null, `${route} is not a document and must not advertise the TTL`);
+      assert.equal(effectiveHeader(route, 'Vercel-CDN-Cache-Control'), null, `${route} is not a document and must not carry a Vercel cache policy`);
+    }
+
+    for (const file of AGENT_TEXT_FILES) {
+      const route = `/${file}`;
+      assert.equal(effectiveHeader(route, 'CDN-Cache-Control'), HTML_ENTRY_EDGE_CACHE, `${route} must advertise the 600s Cloudflare TTL`);
+      assert.equal(effectiveHeader(route, 'Vercel-CDN-Cache-Control'), HTML_ENTRY_EDGE_CACHE, `${route} must advertise the 600s Vercel TTL`);
+      assert.equal(effectiveCacheControl(route), 'public, max-age=3600', `${route} must keep its browser policy`);
+      assert.ok(existsSync(resolve(__dirname, '../public', file)), `${route} must be a static file in public/`);
+    }
+    // /index.md reaches the origin under its own name and is rewritten to
+    // /home.md there; robots.txt and the sitemaps are left to the zone bypass on
+    // purpose; the nested llms.txt twins are not root files.
+    for (const route of ['/index.md', '/robots.txt', '/sitemap.xml', '/sitemap-main.xml', '/schemamap.xml', '/api/download.md', '/developers/llms.txt']) {
+      assert.equal(effectiveHeader(route, 'CDN-Cache-Control'), null, `${route} must not advertise the document TTL`);
     }
   });
 
@@ -4778,7 +4828,8 @@ describe('agent readiness: named developer-resource pages (#4953)', () => {
   for (const page of DEV_PAGES) {
     it(`public/${page.file} opens with the brand-named H1 "${page.h1}"`, () => {
       const body = readFileSync(resolve(__dirname, `../public/${page.file}`), 'utf-8');
-      assert.ok(body.startsWith(`${page.h1}\n`), `public/${page.file} must open with "${page.h1}"`);
+      const content = body.replace(/^---\n[\s\S]*?\n---\n+/, '');
+      assert.ok(content.startsWith(`${page.h1}\n`), `public/${page.file} must open with "${page.h1}" after metadata`);
     });
 
     it(`${page.path} serves the static page, never the app shell`, () => {

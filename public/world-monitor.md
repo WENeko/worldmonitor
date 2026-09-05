@@ -1,3 +1,9 @@
+---
+title: "World Monitor identity"
+description: "Official product identity, canonical domain, contact details, and press references."
+canonical: "https://www.worldmonitor.app/world-monitor.md"
+---
+
 # World Monitor
 
 Last updated: September 1, 2026

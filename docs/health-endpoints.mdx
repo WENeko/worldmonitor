@@ -15,7 +15,7 @@ Primary health endpoint. Checks all Redis-backed data keys and seed freshness me
 
 | Parameter | Values | Description |
 |-----------|--------|-------------|
-| `compact` | `1` | Omit per-key details; only return keys with problems. Public — no key required. |
+| `compact` | `1` | Return actionable problems and bounded pending diagnostics. Public, no key required. |
 | `history` | `1` | Operator history view of past health snapshots. Requires an operator/enterprise API key. |
 
 ### Response Status Codes
@@ -57,9 +57,9 @@ Primary health endpoint. Checks all Redis-backed data keys and seed freshness me
 }
 ```
 
-`summary` fields: `total` is one entry per probed key, and grows as panels are added — read it from your own response rather than from this page. `warn` **excludes** on-demand-empty keys — those are surfaced separately as `onDemandWarn` so they don't drive the overall verdict to `WARNING`. `staleContent` counts all `STALE_CONTENT` diagnostics. It can be greater than `warn` while a source is inside its three-hour `staleContentGraceUntil` window. The source stays visible in `problems`, but it counts in `ok` until that deadline. `rolloutPending` is a **subset** of `warn` (a newly deployed schema still inside its bounded deploy-before-cron window). Only `crit` (`EMPTY`/`EMPTY_DATA`) drives `DEGRADED`/`UNHEALTHY`.
+`summary.total` counts probed keys. `warn` excludes on-demand empty keys, which appear in `onDemandWarn` and do not change the overall verdict. `staleContent` counts all `STALE_CONTENT` diagnostics, including entries inside their finite three-hour grace period. Active grace entries count in `ok` and the optional `pending` sub-count, not `warn`. `rolloutPending` is a subset of `warn`. Only `crit` drives `DEGRADED` or `UNHEALTHY`.
 
-With `?compact=1`, the `checks` object is replaced by `problems` containing only non-OK keys.
+With `?compact=1`, `problems` contains actionable failures and on-demand empty entries. `pending` contains diagnostics inside an active grace period. Empty maps are omitted. Full `checks` retain the same diagnosis and deadline. Cached verdicts expire at these deadlines, and the scheduled monitor rechecks them before suppressing an alert.
 
 ### Bundle tick heartbeats
 
@@ -101,7 +101,7 @@ Keys are grouped into three tiers that determine alert severity:
 | `SOURCE_BLOCKED` | Green | The Japan MOD adapter proved no transport path reaches the publisher while retaining fresh reviewed records — either an upstream HTTP 403 after a successful proxy CONNECT (`HTTP_403`), or a target-scoped proxy CONNECT refusal corroborated by a successful control tunnel (`PROXY_TARGET_FORBIDDEN`). Uncorroborated CONNECT refusals, stale, empty, or unreviewed states still fail closed |
 | `COVERAGE_MARGIN_LOW` | Green | Every configured pool clears its floor, but at least one is within `poolCountMargin` of it (`scorecardFiveFactor`, margin 10). Informational, and deliberately not a warning: this probe's health minimums equal the producer's publication floors, so a passing cohort sitting a few records above the line is the normal steady state. Per-pool headroom is on `poolCoverageMargin` for every status, in the full payload (`?compact=1` omits `checks`); an actual breach is still `COVERAGE_PARTIAL` |
 | `STALE_SEED` | Warn | Data present but `seed-meta` age exceeds `maxStaleMin` |
-| `STALE_CONTENT` | Warn after grace | Seeder is fresh but the upstream content stopped advancing or has no usable timestamp. It is counted in `summary.staleContent` and remains in `problems` during the three-hour grace. `staleContentGraceUntil` gives the deadline. At and after that time, it counts in `summary.warn` as usual. |
+| `STALE_CONTENT` | Warn after grace | Seeder is fresh but the upstream content stopped advancing or has no usable timestamp. During the three-hour grace, it appears in compact `pending` and counts in `summary.staleContent` and `summary.pending`. At `staleContentGraceUntil`, it moves to `problems` and counts in `summary.warn`. |
 | `COVERAGE_PARTIAL` | Warn | Aggregate records or a required subgroup is below the key's declared coverage floor (for example, 139/174 PortWatch countries or an empty prediction-market pool) |
 | `COVERAGE_DEGRADED` | Warn | The producer's own coverage diagnostics are missing, or its completion ratio is below the key's `minSuccessRate` (for example, a consumer-price market that completed 4 of 12 retailer pages) |
 | `ROLLOUT_PENDING` | Warn | A newly deployed schema whose producer has not reached its first scheduled run yet. **Bounded**: the health runtime persists a deployment-relative `rolloutPendingUntil` deadline in Redis, and the state becomes `EMPTY` (crit) once that passes or once the producer writes its durable activation marker. Counted in `summary.rolloutPending` |
@@ -111,7 +111,17 @@ Keys are grouped into three tiers that determine alert severity:
 | `EMPTY` | Crit | Bootstrap or seeded standalone key has no data. Outranks any concurrent producer fault, which would otherwise report the softer `SEED_ERROR` (see below) |
 | `EMPTY_DATA` | Crit | Key exists but contains zero records (and 0 is not a valid state for it) |
 
+### Optional IMD Configuration
+
+IMD is optional when `IMD_API_KEY` is absent, including after intentional removal. Its disabled snapshot reports `NOT_CONFIGURED`, not an all-clear. Invalid configuration after activation and failed requests with credentials remain actionable.
+
+The v2 activation marker requires a successful documented-product response. Valid quiet responses qualify. Total failures and carried-only snapshots do not. The older marker is ignored because failed product batches could write it.
+
 ### Producers That Serve Last-Known-Good
+
+Taiwan MND records failed source attempts in its source metadata. One failed attempt is pending only while positive last-good records remain fresh. The same error on the next distinct attempt warns. The pending deadline is 210 minutes after the first failure, or the last-good freshness deadline if earlier. A different error does not extend that deadline. Health reads do not advance the failure count.
+
+Unknown predecessor state stays actionable until a successful source run establishes a new baseline. Compact health retains the `SEED_ERROR` diagnosis under `pending` with `sourceFailurePendingUntil` until it becomes actionable. Dashboard freshness badges retain the diagnosis and data age from both compact maps. Pending does not mean newly published data.
 
 Some producers are expected to miss individual runs — an LLM synthesis stage
 whose provider times out, for example — while the payload they last published
@@ -510,6 +520,7 @@ Selected thresholds from `SEED_META`:
 | Market quotes, crypto, sectors, earthquakes, insights | 30 | High-frequency relay loops / critical event data |
 | Military flights | 30 | Near-real-time tracking |
 | Predictions, flight delays (FAA) | 90 | Polymarket / airport snapshots |
+| Toronto TPS live calls | 90 | 30-minute bundle member, 90-minute seed and content budgets, three-hour cache lifetime |
 | Unrest | 120 | 45min cron, 2h grace |
 | Cyber threats | 240 | APT data updated less frequently |
 | Wildfires | 360 | FIRMS NRT accumulates over hours |

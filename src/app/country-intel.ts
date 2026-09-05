@@ -62,7 +62,7 @@ import { toFlagEmoji } from '@/utils/country-flag';
 import { iso2ToIso3, iso2ToUnCode, iso2ToComtradeReporterCode } from '@/utils/country-codes';
 import { buildDependencyGraph } from '@/services/infrastructure-cascade';
 import { getActiveFrameworkForPanel, subscribeFrameworkChange } from '@/services/analysis-framework-store';
-import { fetchMultiSectorExposure, fetchCountryProducts, fetchMultiSectorCostShock, fetchCountryVulnerabilities } from '@/services/supply-chain';
+import { fetchMultiSectorExposure, fetchCountryProducts, fetchCountryVulnerabilities } from '@/services/supply-chain';
 import { getImfCountryBundle, buildImfEconomicIndicators, type ImfCountryBundle } from '@/services/imf-country-data';
 import { getChinaDecisionSignalsData } from '@/services/china-decision-signals';
 import { EconomicServiceClient, IntelligenceServiceClient, MarketServiceClient, MilitaryServiceClient, TradeServiceClient } from '@/services/generated-rpc-clients';
@@ -303,38 +303,6 @@ export class CountryIntelManager implements AppModule {
     const { CountryDeepDivePanel } = await import('@/components/CountryDeepDivePanel');
     if (this.ctx.isDestroyed || !this.ctx.map) return false;
     this.ctx.countryBriefPage = new CountryDeepDivePanel(this.ctx.map);
-    this.ctx.countryBriefPage.setShareStoryHandler((code, name) => {
-      this.ctx.countryBriefPage?.hide();
-      void this.openCountryStory(code, name).catch((err) => {
-        console.error('[CountryStory] Failed to open story:', err);
-        this.showToast('Country story failed to open. Please try again.');
-      });
-    });
-    this.ctx.countryBriefPage.setExportImageHandler(async (code, name) => {
-      try {
-        const aggregator = await getSignalAggregator();
-        const signals = await this.getCountrySignals(code, name);
-        const cluster = aggregator.getCountryClusters().find(c => c.country === code);
-        const regional = aggregator.getRegionalConvergence().filter(r => r.countries.includes(code));
-        const convergence = cluster ? {
-          score: cluster.convergenceScore,
-          signalTypes: [...cluster.signalTypes],
-          regionalDescriptions: regional.map(r => r.description),
-        } : null;
-        const posturePanel = this.ctx.panels['strategic-posture'] as StrategicPosturePanel | undefined;
-        const postures = posturePanel?.getPostures() || [];
-        const data = collectStoryData(code, name, this.ctx.latestClusters, postures, this.ctx.latestPredictions, signals, convergence);
-        const { renderStoryToCanvas } = await import('@/services/story-renderer');
-        const canvas = await renderStoryToCanvas(data);
-        const dataUrl = canvas.toDataURL('image/png');
-        const a = document.createElement('a');
-        a.href = dataUrl;
-        a.download = `country-brief-${code.toLowerCase()}-${Date.now()}.png`;
-        a.click();
-      } catch (err) {
-        console.error('[CountryBrief] Image export failed:', err);
-      }
-    });
 
     this.ctx.countryBriefPage.onClose(() => {
       this.briefRequestToken++;
@@ -574,7 +542,7 @@ export class CountryIntelManager implements AppModule {
         if (severityDelta !== 0) return severityDelta;
         return effectivePubDateMs(b) - effectivePubDateMs(a);
       });
-      page.updateNews(filteredNews.slice(0, 10));
+      page.updateNews(filteredNews);
       const countrySearchTerms = CountryIntelManager.getCountrySearchTerms(country, code);
       const hasCountryTerm = (headline: string): boolean => (
         CountryIntelManager.firstMentionPosition(headline, countrySearchTerms) !== Infinity
@@ -790,18 +758,6 @@ export class CountryIntelManager implements AppModule {
             fetchedAt: new Date().toISOString(),
           };
           this.ctx.countryBriefPage.updateTradeExposure?.(syntheticResponse, sectors);
-
-          // Trigger multi-sector cost shock calculator from the same primary chokepoint.
-          if (hasPremiumAccess(getAuthState()) && top.primaryChokepointId) {
-            fetchMultiSectorCostShock(code, top.primaryChokepointId, 30).then(multi => {
-              if (this.ctx.countryBriefPage?.getCode() !== code) return;
-              this.ctx.countryBriefPage.updateMultiSectorCostShock?.(multi);
-            }).catch(() => {
-              if (this.ctx.countryBriefPage?.getCode() === code) this.ctx.countryBriefPage.updateMultiSectorCostShock?.(null);
-            });
-          } else if (hasPremiumAccess(getAuthState())) {
-            this.ctx.countryBriefPage.updateMultiSectorCostShock?.(null);
-          }
         })
         .catch(() => {
           if (this.ctx.countryBriefPage?.getCode() !== code) return;
@@ -809,9 +765,7 @@ export class CountryIntelManager implements AppModule {
           if (hasPremiumAccess(getAuthState())) this.ctx.countryBriefPage.updateMultiSectorCostShock?.(null);
         });
 
-      if (hasPremiumAccess(getAuthState())) {
-        this.fetchProSections(code);
-      }
+      this.fetchProSections(code);
       this.fetchCommodityVulnerability(code);
 
       this.mountCountryTimeline(code, country);
@@ -1056,6 +1010,14 @@ export class CountryIntelManager implements AppModule {
     // preview doesn't spam the parent /pro console with expected failures.
     if (IS_EMBEDDED_PREVIEW) return;
 
+    this.fetchHousingCycle(code);
+    if (!hasPremiumAccess(getAuthState())) return;
+    const page = this.ctx.countryBriefPage;
+    const premiumToken = this.countryPremiumSectionsToken;
+    const signal = page?.signal;
+    const stillCurrent = () => this.ctx.countryBriefPage === page && page?.getCode() === code
+      && !signal?.aborted && premiumToken === this.countryPremiumSectionsToken && hasPremiumAccess(getAuthState());
+
     const rpcBase = getRpcBaseUrl();
     // Pro-section endpoints (national-debt, regional briefs, comtrade flows)
     // are premium-gated — premiumFetch injects the Clerk bearer / API key so
@@ -1066,26 +1028,26 @@ export class CountryIntelManager implements AppModule {
     const iso3 = iso2ToIso3(code);
 
     economicClient.getNationalDebt({}).then(resp => {
-      if (this.ctx.countryBriefPage?.getCode() !== code) return;
+      if (!stillCurrent()) return;
       const entry = iso3 ? resp.entries?.find(e => e.iso3 === iso3) : null;
-      this.ctx.countryBriefPage.updateNationalDebt?.(entry ? {
+      page?.updateNationalDebt?.(entry ? {
         debtToGdp: entry.debtToGdp,
         debtUsd: entry.debtUsd,
         annualGrowth: entry.annualGrowth,
         source: entry.source,
       } : null);
     }).catch(() => {
-      if (this.ctx.countryBriefPage?.getCode() === code) this.ctx.countryBriefPage.updateNationalDebt?.(null);
+      if (stillCurrent()) page?.updateNationalDebt?.(null);
     });
 
     intelClientPro.getCountryRisk({ countryCode: code.toUpperCase() }).then(resp => {
-      if (this.ctx.countryBriefPage?.getCode() !== code) return;
-      this.ctx.countryBriefPage.updateSanctionsPressure?.(resp.sanctionsCount > 0 ? {
+      if (!stillCurrent()) return;
+      page?.updateSanctionsPressure?.(resp.sanctionsCount > 0 ? {
         entryCount: resp.sanctionsCount,
         sanctionsActive: resp.sanctionsActive,
       } : null);
     }).catch(() => {
-      if (this.ctx.countryBriefPage?.getCode() === code) this.ctx.countryBriefPage.updateSanctionsPressure?.(null);
+      if (stillCurrent()) page?.updateSanctionsPressure?.(null);
     });
 
     const comtradeReporterCode = iso2ToComtradeReporterCode(code);
@@ -1097,27 +1059,28 @@ export class CountryIntelManager implements AppModule {
     const hasPremium = hasPremiumAccess(getAuthState());
     if (comtradeReporterCode && tariffCountryCode && hasPremium) {
       tradeClient.listComtradeFlows({ reporterCode: comtradeReporterCode, cmdCode: '', anomaliesOnly: false }).then(resp => {
-        if (this.ctx.countryBriefPage?.getCode() !== code) return;
+        if (!stillCurrent()) return;
         const topFlows = (resp.flows || [])
           .sort((a, b) => b.tradeValueUsd - a.tradeValueUsd)
           .slice(0, 5)
           .map(f => ({ partnerName: f.partnerName, cmdDesc: f.cmdDesc, tradeValueUsd: f.tradeValueUsd, yoyChange: f.yoyChange }));
-        this.ctx.countryBriefPage.updateComtradeFlows?.(topFlows.length > 0 ? topFlows : null);
+        page?.updateComtradeFlows?.(topFlows.length > 0 ? topFlows : null);
       }).catch(() => {
-        if (this.ctx.countryBriefPage?.getCode() === code) this.ctx.countryBriefPage.updateComtradeFlows?.(null);
+        if (stillCurrent()) page?.updateComtradeFlows?.(null);
       });
 
       tradeClient.getTariffTrends({ reportingCountry: tariffCountryCode, productSector: '', years: 10, partnerCountry: '' }).then(resp => {
-        if (this.ctx.countryBriefPage?.getCode() !== code) return;
+        if (!stillCurrent()) return;
         const pts = resp.datapoints || [];
         const latest = pts[pts.length - 1];
-        this.ctx.countryBriefPage.updateTariffTrends?.(latest ? {
+        page?.updateTariffTrends?.(latest ? {
           currentRate: resp.effectiveTariffRate?.tariffRate ?? latest.tariffRate,
-          trend: pts.length >= 2 && pts[pts.length - 1]!.tariffRate > pts[pts.length - 2]!.tariffRate ? 'rising' : 'falling',
+          trend: pts.length < 2 ? 'unknown' : latest.tariffRate > pts[pts.length - 2]!.tariffRate ? 'rising'
+            : latest.tariffRate < pts[pts.length - 2]!.tariffRate ? 'falling' : 'stable',
           datapoints: pts.map(p => ({ year: p.year, tariffRate: p.tariffRate })),
         } : null);
       }).catch(() => {
-        if (this.ctx.countryBriefPage?.getCode() === code) this.ctx.countryBriefPage.updateTariffTrends?.(null);
+        if (stillCurrent()) page?.updateTariffTrends?.(null);
       });
     } else {
       this.ctx.countryBriefPage?.updateComtradeFlows?.(null);
@@ -1125,18 +1088,13 @@ export class CountryIntelManager implements AppModule {
     }
 
     fetchCountryProducts(code).then(resp => {
-      if (this.ctx.countryBriefPage?.getCode() !== code) return;
-      this.ctx.countryBriefPage.updateProductImports?.(resp.products.length > 0 ? resp : null);
+      if (!stillCurrent()) return;
+      page?.updateProductImports?.(resp.products.length > 0 ? resp : null);
     }).catch(() => {
-      if (this.ctx.countryBriefPage?.getCode() === code) {
-        this.ctx.countryBriefPage.updateProductImports?.(null);
+      if (stillCurrent()) {
+        page?.updateProductImports?.(null);
       }
     });
-
-    // Housing cycle tile — BIS WS_SPP (residential), WS_CPP (commercial), WS_DSR.
-    // All three keys are seeded by the bis-extended cron and exposed via the
-    // public bootstrap endpoint, so one scoped bootstrap call covers the tile.
-    this.fetchHousingCycle(code);
   }
 
   private fetchHousingCycle(code: string): void {
@@ -1155,7 +1113,11 @@ export class CountryIntelManager implements AppModule {
         bisPropertyCommercial?: { entries?: Array<{ countryCode: string; indexValue: number; qoqChange: number | null; yoyChange: number | null; period: string }> };
       } }>;
     }).then(body => {
-      if (!body || this.ctx.countryBriefPage?.getCode() !== code) return;
+      if (this.ctx.countryBriefPage !== page || page.signal.aborted || page.getCode() !== code) return;
+      if (!body) {
+        page.updateHousingCycle?.(null);
+        return;
+      }
       const pick = <T extends { countryCode: string }>(arr: T[] | undefined, cc: string): T | null =>
         arr?.find(e => e?.countryCode === cc) ?? null;
       // Euro area (XM) fallback for EU countries that BIS only publishes as a bloc aggregate.

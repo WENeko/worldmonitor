@@ -378,9 +378,10 @@ test('health monitors TFS and TPS freshness with durable activation', () => {
   assert.equal(SEED_META.torontoTfs.key, 'seed-meta:safety:toronto-tfs');
   assert.equal(SEED_META.torontoTfs.maxStaleMin, 15);
   assert.equal(SEED_META.torontoTps.key, 'seed-meta:safety:toronto-tps');
-  assert.equal(SEED_META.torontoTps.maxStaleMin, 45);
+  assert.equal(SEED_META.torontoTps.maxStaleMin, 90);
   assert.equal(TFS_MAX_STALE_MIN, 15);
-  assert.equal(TPS_MAX_STALE_MIN, 45);
+  assert.equal(TPS_MAX_STALE_MIN, 90);
+  assert.equal(TPS_TTL_SECONDS, 3 * 60 * 60);
   assert.equal(STANDALONE_KEYS.torontoTfs, TFS_KEY);
   assert.equal(STANDALONE_KEYS.torontoTps, TPS_KEY);
   assert.equal(SEED_META.torontoTfs.cutover.mode, 'activation-marker');
@@ -394,8 +395,8 @@ test('health monitors TFS and TPS freshness with durable activation', () => {
 
   assert.equal(classifyCad('torontoTfs', { fetchedAgeMin: 14 }).status, 'OK');
   assert.equal(classifyCad('torontoTfs', { fetchedAgeMin: 16 }).status, 'STALE_SEED');
-  assert.equal(classifyCad('torontoTps', { fetchedAgeMin: 44 }).status, 'OK');
-  assert.equal(classifyCad('torontoTps', { fetchedAgeMin: 46 }).status, 'STALE_SEED');
+  assert.equal(classifyCad('torontoTps', { fetchedAgeMin: 90 }).status, 'OK');
+  assert.equal(classifyCad('torontoTps', { fetchedAgeMin: 91 }).status, 'STALE_SEED');
 
   assert.equal(classifyCad('torontoTfs', {
     fetchedAgeMin: 1,
@@ -409,12 +410,12 @@ test('health monitors TFS and TPS freshness with durable activation', () => {
   }).status, 'STALE_CONTENT');
   assert.equal(classifyCad('torontoTps', {
     fetchedAgeMin: 1,
-    contentAgeMin: 44,
+    contentAgeMin: 47,
     maxContentAgeMin: TPS_MAX_STALE_MIN,
   }).status, 'OK');
   assert.equal(classifyCad('torontoTps', {
     fetchedAgeMin: 1,
-    contentAgeMin: 46,
+    contentAgeMin: 91,
     maxContentAgeMin: TPS_MAX_STALE_MIN,
   }).status, 'STALE_CONTENT');
   for (const name of ['torontoTfs', 'torontoTps']) {

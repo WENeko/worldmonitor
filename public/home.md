@@ -1,3 +1,9 @@
+---
+title: "World Monitor"
+description: "Live global intelligence, API access, authentication, and agent capabilities."
+canonical: "https://www.worldmonitor.app/home.md"
+---
+
 # World Monitor — By the time it's news, you already knew.
 
 As of 2026-09-04.

@@ -22,6 +22,7 @@ import {
   imdAfterPublish,
   imdLiveFetchEnabled,
   imdProductUrl,
+  shouldActivateImdSnapshot,
   isAllowedImdHost,
   isNilText,
   marineBulletinsFromSnapshot,
@@ -649,6 +650,7 @@ test('fails a batch closed when IMD authentication fails and preserves bounded l
     assert.equal(snapshot.products[id].requestCount, 0);
   }
   assert.equal(snapshot.products.cycloneTrack.carried, true);
+  assert.equal(shouldActivateImdSnapshot(snapshot), false, 'carried last-good data does not prove a new IMD success');
   assert.doesNotMatch(JSON.stringify(snapshot), /operator@example\.com|railway-secret/);
 });
 
@@ -678,7 +680,7 @@ test('rejects malformed IMD authentication responses before product requests', a
   }
 });
 
-test('marks a missing IMD key as an error after the source has activated', () => {
+test('keeps an intentionally disabled IMD source not configured after activation', () => {
   const { ACTIVATION_MARKERS, SEED_META, STANDALONE_KEYS, STATUS_COUNTS, classifyKey } = healthTesting;
   const name = 'imdCycloneMarine';
   const dataKey = STANDALONE_KEYS[name];
@@ -699,11 +701,75 @@ test('marks a missing IMD key as an error after the source has activated', () =>
     now,
   });
 
-  assert.equal(ACTIVATION_MARKERS[name], 'seed-activated:weather:imd-cyclone-marine');
+  assert.equal(ACTIVATION_MARKERS[name], 'seed-activated:weather:imd-cyclone-marine:v2');
   assert.equal(classifyKey(name, dataKey, { allowOnDemand: true }, ctx(false)).status, 'NOT_CONFIGURED');
   const afterActivation = classifyKey(name, dataKey, { allowOnDemand: true }, ctx(true));
-  assert.equal(afterActivation.status, 'SEED_ERROR');
-  assert.equal(STATUS_COUNTS[afterActivation.status], 'warn');
+  assert.equal(afterActivation.status, 'NOT_CONFIGURED');
+  assert.equal(STATUS_COUNTS[afterActivation.status], 'ok');
+
+  const invalidCredentials = classifyKey(name, dataKey, { allowOnDemand: true }, {
+    ...ctx(true),
+    keyMetaValues: new Map([[metaKey, JSON.stringify({
+      fetchedAt: now,
+      recordCount: 0,
+      sourceState: 'degraded',
+      errorCode: 'IMD_PRODUCTS_UNAVAILABLE',
+      coverageState: 'unavailable',
+    })]]),
+  });
+  assert.equal(invalidCredentials.status, 'SEED_ERROR');
+  assert.equal(STATUS_COUNTS[invalidCredentials.status], 'warn');
+});
+
+test('activates IMD only after a real documented product succeeds', () => {
+  const snapshot = (productResults) => assembleImdSnapshot({ productResults, now: NOW });
+  const quietSuccess = snapshot({
+    cycloneTrack: { status: 'ok', records: [] },
+    cycloneWind: { status: 'ok', records: [] },
+    cycloneCou: { status: 'ok', records: [] },
+    portWarning: { status: 'ok', records: [] },
+    seaBulletin: { status: 'ok', records: [] },
+    coastalBulletin: { status: 'ok', records: [] },
+  });
+  assert.equal(quietSuccess.coverageState, 'ok');
+  assert.equal(shouldActivateImdSnapshot(quietSuccess), true, 'valid NIL/empty products prove IMD replied');
+
+  const partialSuccess = snapshot({
+    cycloneTrack: { status: 'ok', records: [] },
+    cycloneWind: { status: 'failed', reason: 'IMD_FETCH_FAILED', records: [] },
+    cycloneCou: { status: 'failed', reason: 'IMD_FETCH_FAILED', records: [] },
+    portWarning: { status: 'failed', reason: 'IMD_FETCH_FAILED', records: [] },
+    seaBulletin: { status: 'failed', reason: 'IMD_FETCH_FAILED', records: [] },
+    coastalBulletin: { status: 'failed', reason: 'IMD_FETCH_FAILED', records: [] },
+  });
+  assert.equal(partialSuccess.coverageState, 'degraded');
+  assert.equal(shouldActivateImdSnapshot(partialSuccess), true, 'one direct product success is enough');
+
+  const totalFailure = snapshot({
+    cycloneTrack: { status: 'failed', reason: 'IMD_AUTH_FAILED', records: [] },
+    cycloneWind: { status: 'failed', reason: 'IMD_AUTH_FAILED', records: [] },
+    cycloneCou: { status: 'failed', reason: 'IMD_AUTH_FAILED', records: [] },
+    portWarning: { status: 'failed', reason: 'IMD_AUTH_FAILED', records: [] },
+    seaBulletin: { status: 'failed', reason: 'IMD_AUTH_FAILED', records: [] },
+    coastalBulletin: { status: 'failed', reason: 'IMD_AUTH_FAILED', records: [] },
+  });
+  assert.equal(totalFailure.coverageState, 'unavailable');
+  assert.equal(shouldActivateImdSnapshot(totalFailure), false);
+
+  const carriedOnly = assembleImdSnapshot({
+    previous: quietSuccess,
+    now: NOW,
+    productResults: {
+      cycloneTrack: { status: 'failed', reason: 'IMD_AUTH_FAILED', records: [] },
+      cycloneWind: { status: 'failed', reason: 'IMD_AUTH_FAILED', records: [] },
+      cycloneCou: { status: 'failed', reason: 'IMD_AUTH_FAILED', records: [] },
+      portWarning: { status: 'failed', reason: 'IMD_AUTH_FAILED', records: [] },
+      seaBulletin: { status: 'failed', reason: 'IMD_AUTH_FAILED', records: [] },
+      coastalBulletin: { status: 'failed', reason: 'IMD_AUTH_FAILED', records: [] },
+    },
+  });
+  assert.equal(carriedOnly.coverageState, 'unavailable');
+  assert.equal(shouldActivateImdSnapshot(carriedOnly), false, 'carried records do not prove this attempt reached IMD');
 });
 
 test('never fetches fishermen warning even when live fetch is enabled', async () => {
@@ -734,6 +800,7 @@ test('never fetches fishermen warning even when live fetch is enabled', async ()
   assert.equal(requested.some((url) => String(url).includes('fishermen')), false);
   assert.equal(snapshot.products.fishermenWarning.status, 'disabled');
   assert.equal(snapshot.coverageState, 'ok');
+  assert.equal(shouldActivateImdSnapshot(snapshot), true);
   assert.ok(snapshot.cyclones.length > 0);
 });
 
@@ -758,7 +825,8 @@ test('seeder stays off weather:alerts:v1 and uses the dedicated canonical key', 
   assert.doesNotMatch(seeder, /runSeed\('weather', 'alerts'/);
   assert.equal(IMD_CANONICAL_KEY, 'weather:imd-cyclone-marine:v1');
   assert.match(seeder, /#7005/);
-  assert.match(seeder, /seed-activated:weather:imd-cyclone-marine/);
+  assert.match(seeder, /seed-activated:weather:imd-cyclone-marine:v2/);
+  assert.match(seeder, /shouldActivateImdSnapshot\(data\)/);
   assert.match(seeder, /createImdProxyFetch\(process\.env\.PROXY_URL\)/);
   const lib = readFileSync(join(root, 'scripts/lib/imd-cyclone-marine.mjs'), 'utf8');
   assert.doesNotMatch(lib, /\/api\/v1\/districtnowcast/);

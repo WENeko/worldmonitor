@@ -5,6 +5,7 @@
   "license": "AGPL-3.0-only",
   "allowScripts": {
     "@bufbuild/buf": true,
+    "@sentry/cli": true,
     "@vaadin/vaadin-usage-statistics": false,
     "browser-tabs-lock": false,
     "bufferutil": false,
@@ -210,6 +211,7 @@
     "@bufbuild/buf": "^1.66.0",
     "@edge-runtime/vm": "^5.0.0",
     "@playwright/test": "^1.52.0",
+    "@sentry/vite-plugin": "^5.4.0",
     "@tauri-apps/cli": "^2.10.0",
     "@types/canvas-confetti": "^1.9.0",
     "@types/d3": "^7.4.3",

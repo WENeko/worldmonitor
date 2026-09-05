@@ -227,7 +227,13 @@ async function loadCountryDeepDivePanel(options = {}) {
       export function fetchBypassOptions() { return Promise.resolve({ corridors: [] }); }
       export function getCountryChokepointIndex() { return null; }
       export function fetchChokepointStatus() { return Promise.resolve({ chokepoints: [], fetchedAt: '', upstreamUnavailable: false }); }
-      export function fetchMultiSectorCostShock() { return Promise.resolve({ iso2: '', chokepointId: '', closureDays: 30, warRiskTier: 'WAR_RISK_TIER_UNSPECIFIED', sectors: [], totalAddedCost: 0, fetchedAt: '', unavailableReason: '' }); }
+      export function fetchMultiSectorCostShock(code, chokepoint, days, options) {
+        const state = globalThis.__wmCountryDeepDiveTestState;
+        return new Promise(resolve => {
+          state.costShockRequests.push({ code, chokepoint, days, signal: options?.signal, resolve });
+          if (!state.deferCostShock) resolve({ iso2: code, chokepointId: chokepoint, closureDays: days, warRiskTier: 'WAR_RISK_TIER_UNSPECIFIED', sectors: [], totalAddedCost: 0, fetchedAt: '', unavailableReason: '' });
+        });
+      }
       export const HS2_SHORT_LABELS = { '27': 'Energy', '84': 'Machinery', '85': 'Electronics', '87': 'Vehicles', '30': 'Pharma', '72': 'Iron & Steel', '39': 'Plastics', '29': 'Chemicals', '10': 'Cereals', '62': 'Apparel' };
     `],
     ['runtime-stub', `
@@ -391,6 +397,7 @@ async function loadCountryDeepDivePanel(options = {}) {
     platform: 'browser',
     target: 'es2020',
     write: false,
+    loader: { '.css': 'text' },
     plugins: [plugin],
   });
 
@@ -427,6 +434,8 @@ export async function createCountryDeepDivePanelHarness(options = {}) {
     demographicsCalls: [],
     scorecardCalls: [],
     scorecardPending: [],
+    costShockRequests: [],
+    deferCostShock: options.deferCostShock === true,
     premiumAccess: options.premiumAccess === true,
     authListeners: new Set(),
     entitlementListeners: new Set(),
@@ -510,6 +519,9 @@ export async function createCountryDeepDivePanelHarness(options = {}) {
     },
     getScorecardCalls() {
       return state.scorecardCalls;
+    },
+    getCostShockRequests() {
+      return state.costShockRequests;
     },
     resolveScorecard(index, response) {
       state.scorecardPending[index]?.resolve(response);

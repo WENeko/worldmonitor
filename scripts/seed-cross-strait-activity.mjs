@@ -134,13 +134,107 @@ function sourceRecordCount(snapshot, sourceId) {
   return (snapshot?.observations ?? []).filter((row) => row?.sourceId === sourceId).length;
 }
 
-export async function writeSourceHealth(snapshot, writer = writeExtraKey) {
+const MND_SOURCE_FAILURE_CODE = /^MND_[A-Z0-9_]{1,60}$/;
+
+function positiveTimestamp(value) {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
+function sourceAttemptMeta(previous, source, attemptedAt) {
+  const errorCode = typeof source?.errorCodes?.[0] === 'string'
+    && MND_SOURCE_FAILURE_CODE.test(source.errorCodes[0])
+    ? source.errorCodes[0]
+    : 'MND_SOURCE_ERROR';
+  const priorAttemptAt = previous?.lastSourceAttemptAt ?? previous?.fetchedAt;
+  const ordered = positiveTimestamp(attemptedAt)
+    && positiveTimestamp(priorAttemptAt)
+    && attemptedAt > priorAttemptAt;
+  const reset = {
+    firstSourceFailureAt: null,
+    lastSourceAttemptAt: positiveTimestamp(attemptedAt) ? attemptedAt : 0,
+    lastSourceFailureCode: null,
+    consecutiveSourceFailures: 0,
+  };
+  const currentSuccess = source?.transportStatus === 'fresh'
+    && positiveTimestamp(attemptedAt)
+    && Date.parse(source.lastSuccessAt ?? '') === attemptedAt;
+  if (currentSuccess && (
+    !positiveTimestamp(priorAttemptAt)
+    || ordered
+    || (attemptedAt === priorAttemptAt && previous?.sourceState === 'ok')
+  )) return reset;
+
+  const actionable = {
+    errorCode,
+    ...reset,
+    lastSourceAttemptAt: Math.max(reset.lastSourceAttemptAt, positiveTimestamp(priorAttemptAt) ? priorAttemptAt : 0),
+    lastSourceFailureCode: errorCode,
+    consecutiveSourceFailures: 2,
+  };
+  if (source?.transportStatus === 'fresh') return actionable;
+  const priorSuccess = previous?.sourceState === 'ok'
+    && previous?.stale === false
+    && positiveTimestamp(previous?.fetchedAt)
+    && previous.fetchedAt <= priorAttemptAt
+    && Number.isInteger(previous?.recordCount) && previous.recordCount > 0
+    && (Object.keys(reset).every((field) => !Object.hasOwn(previous, field)) || (
+      previous.consecutiveSourceFailures === 0
+      && previous.firstSourceFailureAt === null
+      && previous.lastSourceFailureCode === null
+      && previous.lastSourceAttemptAt === previous.fetchedAt
+    ));
+  if (ordered && priorSuccess) {
+    return { ...actionable, consecutiveSourceFailures: 1, firstSourceFailureAt: attemptedAt };
+  }
+  const priorFailure = previous?.sourceState === 'degraded'
+    && previous?.stale === true
+    && positiveTimestamp(previous?.firstSourceFailureAt)
+    && positiveTimestamp(previous?.lastSourceAttemptAt)
+    && previous.firstSourceFailureAt <= priorAttemptAt
+    && positiveTimestamp(previous?.fetchedAt)
+    && previous.fetchedAt <= previous.firstSourceFailureAt
+    && Number.isInteger(previous?.recordCount) && previous.recordCount > 0
+    && MND_SOURCE_FAILURE_CODE.test(previous?.errorCode ?? '')
+    && previous.errorCode === previous.lastSourceFailureCode
+    && Number.isInteger(previous.consecutiveSourceFailures)
+    && previous.consecutiveSourceFailures >= 1 && previous.consecutiveSourceFailures <= 100;
+  if (!priorFailure) return actionable;
+  const sameCode = previous.lastSourceFailureCode === errorCode;
+  if (attemptedAt === priorAttemptAt && sameCode) {
+    return {
+      ...actionable,
+      consecutiveSourceFailures: previous.consecutiveSourceFailures,
+      firstSourceFailureAt: previous.firstSourceFailureAt,
+    };
+  }
+  if (!ordered) return actionable;
+  return {
+    ...actionable,
+    consecutiveSourceFailures: sameCode ? Math.min(previous.consecutiveSourceFailures + 1, 100) : 1,
+    firstSourceFailureAt: previous.firstSourceFailureAt,
+  };
+}
+
+export async function writeSourceHealth(snapshot, writer = writeExtraKey, reader = readSeedSnapshot) {
   const outcomes = await Promise.allSettled((snapshot?.sources ?? []).map(async (source) => {
-    const healthy = source?.transportStatus === 'fresh';
-    const blocked = CROSS_STRAIT_BLOCKED_SOURCE_REASONS.includes(source?.blockedReason);
+    let healthy = source?.transportStatus === 'fresh';
+    const blocked = source.id !== 'taiwan-mnd'
+      && CROSS_STRAIT_BLOCKED_SOURCE_REASONS.includes(source?.blockedReason);
     const fetchedAt = Date.parse(
       blocked ? snapshot?.generatedAt ?? '' : source?.lastSuccessAt ?? '',
     );
+    let attemptMeta = {};
+    if (source.id === 'taiwan-mnd') {
+      let previous = null;
+      try {
+        previous = await reader(sourceHealthMetaKey(source.id), { strict: true });
+      } catch {
+        previous = null;
+      }
+      const attemptedAt = Date.parse(snapshot?.generatedAt ?? '');
+      attemptMeta = sourceAttemptMeta(previous, source, attemptedAt);
+      healthy = healthy && attemptMeta.consecutiveSourceFailures === 0;
+    }
     const metaTtlSeconds = healthy || blocked
       ? CROSS_STRAIT_ACTIVITY_TTL_SECONDS
       : CROSS_STRAIT_ACTIVITY_SOURCE_FAILURE_TTL_SECONDS;
@@ -152,8 +246,9 @@ export async function writeSourceHealth(snapshot, writer = writeExtraKey) {
     const writeMeta = () => writer(sourceHealthMetaKey(source.id), {
       fetchedAt: Number.isFinite(fetchedAt) ? fetchedAt : 0,
       recordCount: sourceRecordCount(snapshot, source.id),
-      sourceState: healthy ? 'ok' : (blocked ? 'blocked' : 'error'),
+      sourceState: healthy ? 'ok' : (source.id === 'taiwan-mnd' ? 'degraded' : (blocked ? 'blocked' : 'error')),
       stale: !healthy && !blocked,
+      ...attemptMeta,
     }, metaTtlSeconds);
 
     // Never leave health claiming success when an error detail write fails.

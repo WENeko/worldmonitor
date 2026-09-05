@@ -4377,6 +4377,8 @@ describe('crawlable corpus generator', () => {
         assert.match(compareHub, new RegExp('href="' + page.path.replaceAll('/', '/') + '"'));
       }
       assert.match(compareHub, /href="\/blog\/posts\/worldmonitor-vs-traditional-intelligence-tools\/"/);
+      assert.match(compareHub, /distinguishes published prices from enterprise-negotiated licensing/);
+      assert.doesNotMatch(compareHub, /full price matrix/);
       for (const page of COMPARISON_PAGES) {
         const html = read(outDir, 'compare/' + page.slug + '/index.html');
         const ld = jsonLdObjects(html);
@@ -4549,6 +4551,24 @@ describe('crawlable corpus generator', () => {
       // Unnamed third-party enterprise price claims must never be published.
       const dataminrPage = read(outDir, 'compare/worldmonitor-vs-dataminr/index.html');
       const recordedFuturePage = read(outDir, 'compare/worldmonitor-vs-recorded-future/index.html');
+      const enterpriseVendors = ['Dataminr', 'Recorded Future', 'Crisis24', 'Everbridge'];
+      const undisclosedEnterprisePrices = new Set([
+        'Enterprise-negotiated (undisclosed)',
+        'Undisclosed (enterprise-negotiated)',
+      ]);
+      const comparisonHtml = [
+        compareHub,
+        ...COMPARISON_PAGES.map((page) => read(outDir, 'compare/' + page.slug + '/index.html')),
+      ];
+      for (const vendor of enterpriseVendors) {
+        const priceCells = comparisonHtml.flatMap((html) => [
+          ...html.matchAll(new RegExp(`<tr><td>${vendor}(?=\\s|\\(|<)[^<]*</td><td>([^<]*)</td>`, 'g')),
+        ].map((match) => match[1]));
+        assert.ok(priceCells.length > 0, `${vendor} must appear in a generated comparison matrix`);
+        for (const price of priceCells) {
+          assert.ok(undisclosedEnterprisePrices.has(price), `${vendor} must not publish an unsupported price`);
+        }
+      }
       for (const [label, html] of [['dataminr', dataminrPage], ['recorded-future', recordedFuturePage]]) {
         assert.doesNotMatch(html, /six figures|\$100K|\$300K/i, label + ' must omit enterprise figures without a named source');
         assert.match(html, /does not publish list pricing/);

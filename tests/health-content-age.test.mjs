@@ -416,7 +416,18 @@ test('just-over-budget content stays diagnostically stale without making health 
     checkedAt: new Date(NOW).toISOString(),
     checks: { diseaseOutbreaks: entry },
   });
-  assert.deepEqual(compact.problems, { diseaseOutbreaks: entry }, 'grace must not hide the diagnostic');
+  assert.deepEqual(compact.pending, { diseaseOutbreaks: entry }, 'grace retains the diagnostic outside problems');
+  assert.equal(compact.problems, undefined);
+  assert.deepEqual(buildCompactVerdictSnapshot(compact), compact, 'compact projection is idempotent');
+  for (const deadline of [new Date(NOW).toISOString(), 'not-a-date', undefined]) {
+    const warning = { ...entry, staleContentGraceUntil: deadline };
+    const expired = buildCompactVerdictSnapshot({
+      ...compact,
+      checks: { diseaseOutbreaks: warning },
+    });
+    assert.deepEqual(expired.problems, { diseaseOutbreaks: warning });
+    assert.equal(expired.pending, undefined, 'unproved grace remains actionable');
+  }
 });
 
 test('null newestItemAt keeps the first Redis deadline when fresh seeder metadata arrives again', () => {

@@ -1,3 +1,9 @@
+---
+title: "World Monitor support and contact"
+description: "Support contacts, service status, and issue reporting."
+canonical: "https://www.worldmonitor.app/support.md"
+---
+
 # Support & Contact - World Monitor
 
 Last updated: July 5, 2026

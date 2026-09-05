@@ -1,3 +1,9 @@
+---
+title: "World Monitor SDKs"
+description: "Official client libraries, installation commands, and supported protocols."
+canonical: "https://www.worldmonitor.app/sdks.md"
+---
+
 # World Monitor SDKs
 
 Last updated: July 7, 2026
