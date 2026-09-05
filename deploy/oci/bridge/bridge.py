@@ -124,6 +124,31 @@ def qualify_us_symbol(symbol: str) -> str:
     return s
 
 
+_BROKER_NATIVE_SUFFIXED_RE = re.compile(r"^([A-Z0-9&]+)\.([A-Z]{2})$")
+
+
+def broker_tool_symbol(canonical: str) -> str:
+    """Broker-native symbol for connector tool arguments.
+
+    Two symbol dialects exist upstream (vibe-trading-ai v0.1.14). The run
+    identity ledger authorizes venue-qualified canonical symbols
+    (``AAPL.US``), while the trading connector tools documented in
+    agent/src/tools/trading_connector_tool.py take broker-native symbols
+    (``AAPL``, ``BTC-USDT``, ``700.HK``) and forward them verbatim to the
+    broker SDK. The Alpaca SDK does not strip the venue suffix, so passing
+    ``AAPL.US`` to ``trading_place_order`` reaches Alpaca unchanged and is
+    rejected: ``42210000 asset "AAPL.US" not found``. The identity gate
+    accepts the bare ticker because it uniquely matches the locked canonical
+    identity (grounding ``_match_authorized_symbol``). Strip a trailing
+    two-letter venue suffix; every other shape passes through untouched.
+    """
+    s = str(canonical or "").strip().upper()
+    match = _BROKER_NATIVE_SUFFIXED_RE.fullmatch(s)
+    if match and match.group(1):
+        return match.group(1)
+    return s
+
+
 def canonical_identity(data: dict) -> str:
     """Canonical instrument identity for a directive (execution first)."""
     execution = data.get("execution_request")
@@ -512,15 +537,26 @@ def build_prompt(cfg: BridgeConfig, data: dict) -> str:
             f"(gross exposure well under $5k of the $100k paper account)."
         )
     )
+    broker_symbol = broker_tool_symbol(instrument) if instrument else ""
     identity_note = (
         f"\nRUN INSTRUMENT IDENTITY: {instrument}\n"
-        "This venue-qualified instrument is the run's locked, pre-authorized "
-        "identity — it was canonicalized by the operator before the run "
-        "started. Use this exact venue-qualified symbol/venue verbatim in "
-        "every market-data and order tool call. Do NOT re-resolve it with "
-        "search_symbol: it is already canonical."
-        if instrument
-        else ""
+        f"This venue-qualified instrument is the run's locked, pre-authorized "
+        f"identity — canonicalized by the operator before the run started. Do "
+        f"NOT re-resolve it with search_symbol: it is already canonical. Two "
+        f"symbol dialects apply: connector tools (trading_place_order, "
+        f"trading_quote, trading_positions, trading_history, ...) take the "
+        f"broker-native symbol '{broker_symbol}' — never '{instrument}', which "
+        f"the broker rejects (Alpaca error 42210000 asset not found); the "
+        f"identity gate authorizes the bare ticker because it uniquely matches "
+        f"the locked identity."
+        if instrument and broker_symbol
+        else (
+            f"\nRUN INSTRUMENT IDENTITY: {instrument}\n"
+            "This instrument is the run's locked, pre-authorized identity. Do "
+            "NOT re-resolve it with search_symbol: it is already canonical."
+            if instrument
+            else ""
+        )
     )
     return f"""You are executing a Macro Director directive delivered by the
 operator's automation bridge (Hermès ⇄ Vibe-Trading). Execute it, then report.
@@ -533,14 +569,17 @@ EXECUTION RULES (operator contract, non-negotiable):
    Never select, configure, or reference any live/trading profile.
 2. {order_rule}
 3. Run-scoped identity is locked on "{instrument}" from the start (rule:
-   RUN INSTRUMENT IDENTITY above). Never call search_symbol for that
-   instrument, and never issue an order or market-data call for any other
-   symbol or venue. If a market/order tool still returns an identity gate
-   error (identity_required / identity_conflict / identity_mismatch),
-   that means you batched a resolver with a consumer call: do NOT end the
-   run. Call search_symbol("{instrument}") ALONE in your next turn, wait
-   for its result, then retry the exact mandated order in a following
-   turn. search_symbol must never share a turn with any other tool call.
+   RUN INSTRUMENT IDENTITY above). Connector tool calls (orders, quotes,
+   positions) must pass the broker-native symbol "{broker_symbol}", never
+   "{instrument}" — the identity gate authorizes "{broker_symbol}"
+   because it uniquely matches the locked identity. Never call
+   search_symbol for this instrument, and never trade any other symbol or
+   venue. If a connector tool still returns an identity gate error
+   (identity_required / identity_conflict / identity_mismatch), that
+   means you batched a resolver with a consumer call: do NOT end the run.
+   Call search_symbol("{instrument}") ALONE in your next turn, wait for
+   its result, then retry the exact mandated order in a following turn.
+   search_symbol must never share a turn with any other tool call.
 4. Respect Vibe-Trading's own mandate and fail-closed pre-trade checks
    (universe, size caps, exposure, daily cap). If a check blocks the
    order, report the block verbatim — do not work around it.

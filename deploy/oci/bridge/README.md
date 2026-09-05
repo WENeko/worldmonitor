@@ -272,12 +272,27 @@ The bridge is intentionally the *cheapest* container in the stack:
   and states it as `RUN INSTRUMENT IDENTITY` in the prompt: the ledger
   seeds that exact symbol locked at run start, so the mandated order is
   authorized before the first batch (verified against the upstream ledger
-  locally). The prompt also forbids batching `search_symbol` with other
-  calls and forbids reporting success for an un-landed order. Diagnose a
-  fresh run with:
+  locally). Two symbol dialects are now spelled out in the prompt: the
+  canonical identity (`AAPL.US`) authorizes, while connector tool calls
+  pass the broker-native ticker (`AAPL`) — see the `42210000` entry below.
+  The prompt also forbids batching `search_symbol` with other calls and
+  forbids reporting success for an un-landed order. Diagnose a fresh run
+  with:
   `docker exec bridge python3 -c "import json;d=json.load(open('/home/vibe/.vibe-trading/runs/<run_id>/artifacts/grounding_evidence.json'));print(json.dumps({'identity':d.get('identity'),'tool_failures':d.get('tool_failures')},indent=1))"`
   — expect identity `locked` from the start (`source: user_message`) and an
   empty `tool_failures`.
+- **Run artifact `tool_failures` shows `{"code":42210000,"message":"asset
+  \"AAPL.US\" not found"}` from `trading_place_order`**: the identity gate
+  passed (identity `locked`) but the *symbol dialect* was wrong. Upstream
+  (vibe-trading-ai v0.1.14) authorizes venue-qualified canonical symbols
+  (`AAPL.US`) yet forwards order/quote arguments verbatim to the broker
+  SDK, and Alpaca only knows bare `AAPL` — `trading_place_order`'s own
+  schema documents the broker-native shape (`AAPL, BTC-USDT, 700.HK`). The
+  bridge prompt now names both: connector tools receive the broker-native
+  symbol (the identity gate accepts it via unique-base matching), never the
+  venue-suffixed identity. A fresh drop during US market hours should show
+  a clean fill; outside hours it will still fail closed on
+  `order_not_filled`, which is correct.
 - **Receipt `FAILED` with `order_not_filled` / `fill_verification_unavailable`
   after the agent returned exit 0**: the fill guard doing its job. The
   bridge now compares connector positions before and after a mandated
