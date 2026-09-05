@@ -1222,6 +1222,66 @@ http.route({
   }),
 });
 
+// Service-to-service: validate a partner-embed key by its SHA-256 hash.
+// Separate from /api/internal-validate-api-key on purpose — the two credential
+// surfaces must never resolve through one another's table.
+http.route({
+  path: "/api/internal-validate-embed-key",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const providedSecret = request.headers.get("x-convex-shared-secret") ?? "";
+    const expectedSecret = process.env.CONVEX_SERVER_SHARED_SECRET ?? "";
+    if (!expectedSecret || !(await timingSafeEqualStrings(providedSecret, expectedSecret))) {
+      return new Response(JSON.stringify({ error: "UNAUTHORIZED" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const body = await parseJsonObjectBody<{ keyHash?: unknown }>(request);
+    if (!body) {
+      return new Response(JSON.stringify({ error: "INVALID_JSON" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (typeof body.keyHash !== "string" || !/^[a-f0-9]{64}$/.test(body.keyHash)) {
+      return new Response(JSON.stringify({ error: "INVALID_KEY_HASH" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const result = await ctx.runQuery(
+      (internal as any).embedKeys.validateKeyByHash,
+      { keyHash: body.keyHash },
+    );
+
+    if (result && touchIsDue(result.lastUsedAt)) {
+      try {
+        await ctx.scheduler.runAfter(0, (internal as any).embedKeys.touchKeyLastUsed, { keyId: result.id });
+      } catch (err) {
+        // sentry-coverage-ok: re-throwing here would 500 the edge validator, which
+        // coerces to null and stamps a negative-cache sentinel for a valid key.
+        // lastUsedAt is best-effort telemetry.
+        console.warn("[validate-embed-key] touchKeyLastUsed schedule failed:", err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    // Strip the gate's input from the response for the same reason the API-key
+    // route does: the edge caches this blob and its shape is load-bearing.
+    const publicResult = result
+      ? (({ lastUsedAt: _lastUsedAt, ...rest }) => rest)(result)
+      : null;
+
+    return new Response(JSON.stringify(publicResult), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
 // ---------------------------------------------------------------------------
 // Pro MCP token routes (service-to-service, x-convex-shared-secret auth).
 // Called by the Vercel edge (api/oauth/authorize-pro, api/mcp.ts, settings).

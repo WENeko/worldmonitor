@@ -228,6 +228,12 @@ A published count of a population that grows independently of the prose quoting 
 
 The rule is about *provenance*, not about numerals, and collapsing the two is the failure that follows it around. Deleting the numbers satisfies a scanner and destroys the surface's purpose when that surface exists to be quoted — an audience that cannot lift a figure cites someone else's stale one instead, so the claim survives in a worse form somewhere the project does not control. The resolution is generation: a figure derived from the authoritative registry at build time is not hand-authored, so it is exempt on the merits rather than by concession, provided a drift check actually proves the published block still matches its source. Two further obligations travel with a generated figure. It must carry the definition that produced it, because the same noun frequently names two different populations — hosts that publish feeds versus feed definitions those hosts back — and a figure quoted without its definition will be reconciled against a different surface's number and read as a contradiction. And where two surfaces legitimately publish different counts under the same word, the surface written for quoting is the one that must state both and say which is which. See also: Unreached Guard, Closed-World Gate, Ratchet Inventory.
 
+### Isolation Control vs Golden Baseline
+
+Two different proof contracts over the same output, and neither substitutes for the other. An **isolation control** computes the same output before and after a change — both sides through the same live implementation — so it proves the change did not perturb the output, while a defect inside the shared implementation moves both sides together and stays invisible. A **golden baseline** compares the live output against committed bytes captured from an accepted earlier state, so it catches any implementation change, but says nothing about which side is correct — its bytes are only as trustworthy as the review of the commit and harness that produced them.
+
+A claim that output "stayed byte-identical" must name which contract it leans on; citing the isolation control for a non-regression claim is the standard overreach, because the exact defect class that worries the reader is the one the isolation control is blind to. Regenerating a baseline is itself a methodology event, never a way to make a failing test pass. See also: Vacuous Guard, Mutation Proof.
+
 ## News Story Tracking & Trend Detection
 
 ### Feed Digest
@@ -666,7 +672,10 @@ instead of publishing, and lost nothing.
 It must not crash the bundle: one rate-limited source firing a deploy-crash
 alert is the alert fatigue that makes the alarm worthless. Real staleness is
 caught by freshness monitoring on the published data, never by the tick's exit
-status.
+status. A seeder running as its own cron handles the same failure the same way
+but exits non-zero on purpose, so the platform's crash badge is what surfaces a
+source that has stopped answering; a bundle member's tick absorbs that exit,
+which is the difference between the two.
 
 ### Starved Tick
 

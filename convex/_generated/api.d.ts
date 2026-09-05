@@ -37,6 +37,7 @@ import type * as constants from "../constants.js";
 import type * as contactMessages from "../contactMessages.js";
 import type * as crons from "../crons.js";
 import type * as emailSuppressions from "../emailSuppressions.js";
+import type * as embedKeys from "../embedKeys.js";
 import type * as entitlements from "../entitlements.js";
 import type * as followedCountries from "../followedCountries.js";
 import type * as http from "../http.js";
@@ -108,6 +109,7 @@ declare const fullApi: ApiFromModules<{
   contactMessages: typeof contactMessages;
   crons: typeof crons;
   emailSuppressions: typeof emailSuppressions;
+  embedKeys: typeof embedKeys;
   entitlements: typeof entitlements;
   followedCountries: typeof followedCountries;
   http: typeof http;

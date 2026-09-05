@@ -71,6 +71,9 @@ vi.mock('@/services/entitlements', () => ({
   hasFeature: (feature: string) => Boolean(
     (entitlementMocks.state?.features as Record<string, unknown> | undefined)?.[feature],
   ),
+  hasEmbedAccessForAccount: (role: 'free' | 'pro' | undefined) => (
+    role === 'pro' || Boolean(entitlementMocks.state?.features.embedAccess)
+  ),
   isEntitled: (planKey?: string) => (
     entitlementMocks.state !== null
     && (planKey === undefined || entitlementMocks.state.planKey === planKey)

@@ -168,7 +168,7 @@
       "type": "skill-md",
       "description": "Retrieve seeded protest, riot, strike, and civil unrest events. Use when the user asks whether social unrest is occurring in a country or over a recent time window.",
       "url": "https://worldmonitor.app/.well-known/agent-skills/track-unrest-events/SKILL.md",
-      "digest": "sha256:d78dbd456df947c51727f79f6d6d3b1933303d208d1f8b1cb36f374b846bfa40"
+      "digest": "sha256:aa297db6c5ec4707cc3e0a5a0a969106567cee6fe06e5babf942cc6fd6050a81"
     },
     {
       "name": "track-vessel-traffic",

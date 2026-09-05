@@ -2622,7 +2622,7 @@ describe('quantified cross-Strait activity (#5575)', () => {
 
     assert.equal(mnd?.transportStatus, 'error');
     assert.ok(mnd?.errorCodes.includes('MND_LIST_ROWS_MISSING'));
-    assert.ok(mnd?.errorCodes.includes('MND_PUBLICATION_METADATA_MISSING'));
+    assert.ok(mnd?.refreshErrorCodes.includes('MND_PUBLICATION_METADATA_MISSING'));
     assert.match(mndRequests[0] ?? '', /plaactlist/i);
     assert.equal(mndRequests.length, 1 + MND_REFRESH_DETAIL_REQUESTS_PER_RUN * 2);
     assert.equal(mnd?.requestCount, mndRequests.length);
@@ -3104,9 +3104,97 @@ describe('quantified cross-Strait activity (#5575)', () => {
     assert.equal(correctionRefreshes.filter((url) => url === firstCorrectionUrl).length, 1);
     assert.ok(detailCalls.length <= MND_MAX_DETAIL_REQUESTS_PER_RUN);
     assert.ok(clock <= MND_OUTBOUND_BUDGET_MS);
+    assert.equal(mnd?.transportStatus, 'fresh');
+    assert.deepEqual(mnd?.errorCodes, ['OUTBOUND_BUDGET_EXHAUSTED']);
+    assert.ok(mnd?.refreshErrorCodes.includes('MND_PUBLICATION_METADATA_MISSING'));
+    assert.ok(mnd?.refreshErrorCodes.includes('OUTBOUND_BUDGET_EXHAUSTED'));
+  });
+
+  it('keeps current MND health fresh when an optional correction stays malformed after retry', async () => {
+    const previousSnapshot = buildCrossStraitActivitySnapshot({
+      generatedAt: retrievedAt,
+      previousSnapshot: null,
+      mndOutcome: {
+        ok: true,
+        requestCount: 0,
+        observations: Array.from(
+          { length: MND_REQUIRED_REPORTING_DAYS },
+          (_, index) => mndObservationForDay(index + 1),
+        ),
+      },
+      japanOutcome: { ok: true, requestCount: 0, availableDocumentUrls: [] },
+    });
+    const firstCorrectionAttempts = [];
+    let firstCorrectionUrl = '';
+    const fetchFn = async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('mod.go.jp')) return new Response(fixture('jmod-homepage.html'));
+      if (url.includes('plaactlist')) return new Response(mndListWithCount(1));
+      if (/\/PLAAct\/860\d{2}$/.test(url)) {
+        if (!firstCorrectionUrl) firstCorrectionUrl = url;
+        if (url === firstCorrectionUrl) firstCorrectionAttempts.push(url);
+        return new Response(mndDetailWithoutPublicationMetadata());
+      }
+      return new Response(fixture('mnd-detail.html'));
+    };
+
+    const snapshot = await fetchCrossStraitActivitySnapshot({
+      fetchFn,
+      now: Date.parse(retrievedAt),
+      previousSnapshot,
+      sleepFn: async () => {},
+    });
+    const mnd = snapshot.sources.find((source: { id: string }) => source.id === 'taiwan-mnd');
+
+    assert.equal(firstCorrectionAttempts.length, 2);
+    assert.equal(mnd?.transportStatus, 'fresh');
+    assert.deepEqual(mnd?.errorCodes, []);
+    assert.deepEqual(mnd?.refreshErrorCodes, ['MND_PUBLICATION_METADATA_MISSING']);
+  });
+
+  it('keeps a required current MND page hard when both metadata attempts are malformed', async () => {
+    const previousSnapshot = buildCrossStraitActivitySnapshot({
+      generatedAt: retrievedAt,
+      previousSnapshot: null,
+      mndOutcome: {
+        ok: true,
+        requestCount: 0,
+        observations: Array.from(
+          { length: MND_REQUIRED_REPORTING_DAYS },
+          (_, index) => mndObservationForDay(index + 1),
+        ),
+      },
+      japanOutcome: { ok: true, requestCount: 0, availableDocumentUrls: [] },
+    });
+    const previousMnd = previousSnapshot.sources.find(
+      (source: { id: string }) => source.id === 'taiwan-mnd',
+    );
+    const currentUrl = 'https://www.mnd.gov.tw/en/News/PLAAct/90000';
+    const mndRequests: string[] = [];
+    const fetchFn = async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('mod.go.jp')) return new Response(fixture('jmod-homepage.html'));
+      mndRequests.push(url);
+      if (url.includes('plaactlist')) return new Response(mndListWithCount(1));
+      if (url === currentUrl || /\/PLAAct\/860\d{2}$/.test(url)) {
+        return new Response(mndDetailWithoutPublicationMetadata());
+      }
+      return new Response(fixture('mnd-detail.html'));
+    };
+
+    const snapshot = await fetchCrossStraitActivitySnapshot({
+      fetchFn,
+      now: Date.parse(retrievedAt),
+      previousSnapshot,
+      sleepFn: async () => {},
+    });
+    const mnd = snapshot.sources.find((source: { id: string }) => source.id === 'taiwan-mnd');
+
+    assert.equal(mndRequests.filter((url) => url === currentUrl).length, 2);
+    assert.equal(mnd?.requestCount, mndRequests.length);
     assert.equal(mnd?.transportStatus, 'error');
-    assert.ok(mnd?.errorCodes.includes('MND_PUBLICATION_METADATA_MISSING'));
-    assert.ok(mnd?.errorCodes.includes('OUTBOUND_BUDGET_EXHAUSTED'));
+    assert.deepEqual(mnd?.errorCodes, ['MND_PUBLICATION_METADATA_MISSING']);
+    assert.equal(mnd?.lastSuccessAt, previousMnd?.lastSuccessAt);
   });
 
   it('keeps missing metadata hard when the detail request cap blocks its retry', async () => {

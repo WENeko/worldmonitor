@@ -75,6 +75,15 @@ export interface CachedEntitlements {
      */
     dataExport?: boolean;
     /**
+     * Partner-embed key issuance (`wme_…`). Mirrors the catalog field so the
+     * edge can read what the Convex read-time merge already puts on the wire;
+     * without it a caller cannot reach the value without a type error, and
+     * `shared/embed-access.ts` would silently see `undefined`. Like
+     * `mcpAccess` and unlike `dataExport`, `undefined` is **fail-CLOSED** —
+     * embedding is a publishable credential, so a stale row must not mint one.
+     */
+    embedAccess?: boolean;
+    /**
      * Catalog plan limits, mirrored verbatim from `PlanFeatures.planLimits`
      * (convex/config/productCatalog.ts). Optional because legacy rows predate
      * it and because the Convex read path only merges what the catalog holds.
@@ -538,10 +547,13 @@ async function _getEntitlementsImpl(userId: string): Promise<CachedEntitlements 
 
     if (cached && typeof cached === 'object') {
       const ent = cached as CachedEntitlements;
+      const hasCurrentEmbedAccessShape = typeof ent.features?.embedAccess === 'boolean';
       // Verification markers have their own short Redis TTL. Serve them even
       // though validUntil is expired so cooldown requests stop at Redis instead
-      // of repeating the Convex action/claim chain.
-      if (entitlementMarkerTtlSeconds(ent) !== null) return ent;
+      // of repeating the Convex action/claim chain. The cache-shape check must
+      // run first: a pre-embedAccess marker is still an authorization row, and
+      // serving it would bypass the canonical Convex merge below.
+      if (hasCurrentEmbedAccessShape && entitlementMarkerTtlSeconds(ent) !== null) return ent;
       // Only use cached data if it hasn't expired AND has the post-U10 shape.
       //
       // Legacy cache entries written before plan 2026-05-10-001 U10 lack the
@@ -576,6 +588,7 @@ async function _getEntitlementsImpl(userId: string): Promise<CachedEntitlements 
       if (
         ent.validUntil >= Date.now() &&
         typeof (ent.features as { mcpAccess?: boolean }).mcpAccess === 'boolean' &&
+        hasCurrentEmbedAccessShape &&
         ent.features.planLimits?.dashboardAiCallsPerDay !== undefined &&
         !legacySharedBudgetShape
       ) {

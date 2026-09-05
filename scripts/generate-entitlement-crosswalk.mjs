@@ -30,7 +30,7 @@ const add = (source, id, detail) => rules.push({ rule: `${source}:${id}`, source
 // 1. productCatalog — every (plan × gating field) pair
 {
   const s = R('convex/config/productCatalog.ts');
-  const FIELDS = ['tier','maxDashboards','apiRateLimit','prioritySupport','mcpAccess','dataExport','apiAccess','apiRequestsPerDay','apiBurstRequestsPerMinute','mcpCallsPerDay','mcpBurstRequestsPerMinute','apiDailyAllowance','exportFormats'];
+  const FIELDS = ['tier','maxDashboards','apiRateLimit','prioritySupport','mcpAccess','dataExport','apiAccess','embedAccess','apiRequestsPerDay','apiBurstRequestsPerMinute','mcpCallsPerDay','mcpBurstRequestsPerMinute','apiDailyAllowance','exportFormats'];
   for (const m of s.matchAll(/const (FREE|PRO|PRO_BUSINESS|API_STARTER|API_BUSINESS|ENTERPRISE)_FEATURES[^=]*=\s*\{([\s\S]*?)\n\};/g)) {
     const [, plan, body] = m;
     for (const f of FIELDS) {
@@ -72,7 +72,7 @@ for (const f of ['src/config/panels.ts','convex/constants.ts','src/services/gate
 
 
 // ------------------------------------------------------- code-site gates
-const PAT = "features\\.tier\\s*[<>=]|tier\\s*[<>]=?\\s*1|!hasPremiumAccess\\(\\)|features\\.apiAccess|features\\.mcpAccess|features\\.dataExport|requiresPremium|isCallerPremium\\(|resolvePremiumCallerIdentity\\(|!isProUser\\(\\)";
+const PAT = "features\\.tier\\s*[<>=]|tier\\s*[<>]=?\\s*1|!hasPremiumAccess\\(\\)|features\\.apiAccess|features\\.mcpAccess|features\\.dataExport|requiresPremium|isCallerPremium\\(|has(Account)?EmbedAccess\\(|resolvePremiumCallerIdentity\\(|!isProUser\\(\\)";
 const out = execSync(`grep -rnE "${PAT}" --include="*.ts" --include="*.js" src api convex server 2>/dev/null || true`, { encoding: 'utf8', maxBuffer: 1 << 26 });
 const sites = [];
 for (const ln of out.split('\n')) {
@@ -90,6 +90,7 @@ for (const ln of out.split('\n')) {
       /features\.apiAccess/.test(t)  ? 'apiAccess'
     : /features\.mcpAccess/.test(t)  ? 'mcpAccess'
     : /features\.dataExport/.test(t) ? 'dataExport'
+    : /has(?:Account)?EmbedAccess\(/.test(t) ? 'embedAccess'
     : /requiresPremium/.test(t)      ? 'requiresPremium'
     : /isCallerPremium\(/.test(t)    ? 'isCallerPremium'
     : /resolvePremiumCallerIdentity\(/.test(t) ? 'resolvePremiumCallerIdentity'
@@ -108,6 +109,7 @@ const MAP = [
   [/^catalog:\w+\.exportFormats$/,           { cap: 'export.data', note: 'format allowlist' }],
   [/^catalog:\w+\.dataExport$/,              { cap: 'export.data' }],
   [/^catalog:\w+\.apiAccess$/,               { cap: 'api.keys' }],
+  [/^catalog:\w+\.embedAccess$/,             { cap: 'embed.panels', note: 'wme_ key issuance' }],
   [/^catalog:\w+\.apiRequestsPerDay$/,       { cap: 'api.rest' }],
   [/^catalog:\w+\.apiRateLimit$/,            { cap: 'api.rest', note: 'rate ceiling' }],
   [/^catalog:\w+\.apiBurstRequestsPerMinute$/,{ cap: 'api.rest', note: 'burst ceiling' }],
@@ -201,7 +203,12 @@ const SITE_MAP = [
   // --- capabilities the hand-built ledger never found ---
   [/convex\/companyMonitoring\//,             { cap: 'monitoring.company', note: 'requires planKey!==free && tier>0' , preds: ['tier'] }],
   [/_shared\/direct-llm-quota\.ts/,           { cap: 'llm.direct_quota', note: 'entitlement-derived daily LLM ceiling' , preds: ['tier'] }],
-  [/_shared\/embed-entitlement\.ts/,          { cap: 'embed.panels', note: 'apiAccess-gated embeddable panels' , preds: ['apiAccess'] }],
+  [/_shared\/embed-entitlement\.ts/,          { cap: 'embed.panels', note: 'entitlement answer for paid-only panels — moved off apiAccess onto embedAccess, so any paid tier carrying the catalog flag may embed' , preds: ['embedAccess'] }],
+  [/_shared\/embed-session\.ts/,              { cap: 'embed.panels', note: 'wme_ key -> wmg_ grant exchange — the enforcement point for a keyed embed, since the map frame then polls with the grant instead of the key' , preds: ['embedAccess'] }],
+  // Listed BEFORE the broad gateway.ts exclusion below, which covers every
+  // other predicate in that file. This one is a real paywall rule: a wme_ key
+  // authenticates the two paid embed panels' own RPC paths, and nothing else.
+  [/server\/gateway\.ts/,                     { cap: 'embed.panels', note: 'wme_ key accepted on the RPC paths a paid embed panel declares (EMBED_KEY_RPC_PATHS) — the data read behind the entitlement answer' , preds: ['embedAccess'] }],
   // --- false positive: data LOD tier, not an entitlement tier ---
   [/list-military-bases\.ts/,                 { exclude: 'meta.tier is a base-importance LOD tier for zoom filtering, NOT an entitlement tier' , preds: ['tier'] }],
   // --- server route enforcement points of already-mapped API paths ---
@@ -218,6 +225,8 @@ const SITE_MAP = [
   [/summarize-article\.ts/,                   { cap: 'news.summarization' , preds: ['requiresPremium','resolvePremiumCallerIdentity'] }],
   [/gates\/playback/,                         { cap: 'playback.historical' }], // NOTE: matches no current gate
   [/convex\/apiKeys\.ts/,                     { cap: 'api.keys' , preds: ['apiAccess'] }],
+  [/convex\/embedKeys\.ts/,                   { cap: 'embed.panels', note: 'wme_ key issuance — tier>=1 + embedAccess, deliberately not apiAccess' , preds: ['embedAccess'] }],
+  [/src\/services\/entitlements\.ts/,        { cap: 'embed.panels', note: 'browser account-level embed access predicate' , preds: ['embedAccess'] }],
   [/pro-mcp-gate\.ts|api\/mcp-proxy\.ts|api\/mcp\//, { cap: 'mcp.access' , preds: ['isCallerPremium','resolvePremiumCallerIdentity','mcpAccess','tier'] }],
   [/gates\/export/,                           { cap: 'export.data' , preds: ['dataExport'] }],
   [/analysis-framework-store\.ts/,            { cap: 'analysis.frameworks' , preds: ['hasPremiumAccess'] }],
@@ -304,6 +313,7 @@ const SITE_BASELINE = {
   "convex/apiPlanLimitUsage.ts::tier": 2,
   "convex/companyMonitoring/_shared.ts::tier": 1,
   "convex/companyMonitoring/accounts.ts::tier": 1,
+  "convex/embedKeys.ts::embedAccess": 1,
   "convex/followedCountries.ts::tier": 2,
   "convex/http.ts::apiAccess": 1,
   "convex/http.ts::mcpAccess": 1,
@@ -312,7 +322,8 @@ const SITE_BASELINE = {
   "convex/notificationChannels.ts::tier": 1,
   "convex/payments/billing.ts::tier": 1,
   "server/_shared/direct-llm-quota.ts::tier": 1,
-  "server/_shared/embed-entitlement.ts::apiAccess": 1,
+  "server/_shared/embed-entitlement.ts::embedAccess": 2,
+  "server/_shared/embed-session.ts::embedAccess": 2,
   "server/_shared/entitlement-check.ts::apiAccess": 1,
   "server/_shared/entitlement-check.ts::tier": 1,
   "server/_shared/premium-check.ts::apiAccess": 1,
@@ -323,6 +334,8 @@ const SITE_BASELINE = {
   "server/_shared/pro-mcp-gate.ts::mcpAccess": 2,
   "server/_shared/pro-mcp-gate.ts::tier": 1,
   "server/gateway.ts::apiAccess": 3,
+  "server/gateway.ts::embedAccess": 1,
+  "src/services/entitlements.ts::embedAccess": 1,
   "server/gateway.ts::tier": 5,
   "server/worldmonitor/economic/v1/get-national-debt.ts::isCallerPremium": 1,
   "server/worldmonitor/intelligence/v1/deduct-situation.ts::isCallerPremium": 1,

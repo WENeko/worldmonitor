@@ -37,7 +37,7 @@ function createHandler(options: { handlerCdnCacheHeader?: string; publicRouteBod
     },
     {
       method: 'GET',
-      path: '/api/conflict/v1/list-acled-events',
+      path: '/api/intelligence/v1/get-china-decision-signals',
       handler: async () => new Response(JSON.stringify(options.publicRouteBody ?? { ok: true }), { status: 200 }),
     },
     {
@@ -129,7 +129,7 @@ describe('gateway CDN origin policy', () => {
   it('preserves CDN caching for explicit anonymous public no-auth GETs', async () => {
     const origin = 'https://worldmonitor.app';
     const handler = createHandler();
-    const res = await handler(new Request('https://worldmonitor.app/api/conflict/v1/list-acled-events', {
+    const res = await handler(new Request('https://worldmonitor.app/api/intelligence/v1/get-china-decision-signals', {
       headers: { Origin: origin },
     }));
     assert.equal(res.status, 200);
@@ -219,7 +219,7 @@ describe('gateway CDN origin policy', () => {
     const handler = createHandler({
       publicRouteBody: { events: [], fetchedAt: 0, dataAvailable: false },
     });
-    const res = await handler(new Request('https://worldmonitor.app/api/conflict/v1/list-acled-events?_debug=1', {
+    const res = await handler(new Request('https://worldmonitor.app/api/intelligence/v1/get-china-decision-signals?_debug=1', {
       headers: { Origin: origin },
     }));
     const body = await res.json();

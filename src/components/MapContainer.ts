@@ -987,11 +987,11 @@ export class MapContainer {
     return this.svgMap?.getTimeRange() ?? this.initialState.timeRange;
   }
 
-  public setLayers(layers: MapLayers): void {
+  public setLayers(layers: MapLayers, options: { bypassEntitlementSanitization?: boolean } = {}): void {
     // Strip resilience on non-DeckGL, then locked premium layers for settled free users (#6045).
     // Wait for isProTierResolved so Pro users don't lose resilienceScore during Clerk/Convex boot.
     let sanitized = !this.useDeckGL && layers.resilienceScore ? { ...layers, resilienceScore: false } : layers;
-    if (shouldSanitizeLockedLayers(
+    if (!options.bypassEntitlementSanitization && shouldSanitizeLockedLayers(
       hasPremiumAccess(getAuthState()),
       isProTierResolved(),
       this.isFreeTierFallbackActive?.() === true,

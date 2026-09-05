@@ -73,6 +73,10 @@ describe('UnifiedSettings account handoff', () => {
     instance.apiKeysLoading = false;
     instance.apiKeysError = 'A error';
     instance.newlyCreatedKey = 'wm_a_plaintext';
+    instance.embedKeys = [{ id: 'embed-key-a' }];
+    instance.embedKeysLoading = true;
+    instance.embedKeysError = 'A embed error';
+    instance.newlyCreatedEmbedKey = 'wme_a_plaintext';
     instance.planLimitNotices = [{ _id: 'notice-a' }];
     instance.planLimitNoticesLoading = true;
     instance.mcpClients = [{ id: 'client-a' }];
@@ -105,6 +109,10 @@ describe('UnifiedSettings account handoff', () => {
     assert.equal(instance.apiKeysLoading, false);
     assert.equal(instance.apiKeysError, '');
     assert.equal(instance.newlyCreatedKey, null);
+    assert.deepEqual(instance.embedKeys, []);
+    assert.equal(instance.embedKeysLoading, false);
+    assert.equal(instance.embedKeysError, '');
+    assert.equal(instance.newlyCreatedEmbedKey, null, 'a wme_ plaintext must never survive an account handoff');
     assert.deepEqual(instance.planLimitNotices, []);
     assert.equal(instance.planLimitNoticesLoading, false);
     assert.deepEqual(instance.mcpClients, []);
@@ -124,6 +132,9 @@ describe('UnifiedSettings account handoff', () => {
       'loadApiKeys',
       'handleCreateApiKey',
       'handleRevokeApiKey',
+      'loadEmbedKeys',
+      'handleCreateEmbedKey',
+      'handleRevokeEmbedKey',
       'loadMcpClients',
       'refreshMcpQuota',
       'handleRevokeMcpClient',

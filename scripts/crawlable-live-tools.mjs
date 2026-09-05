@@ -1454,6 +1454,7 @@ export async function loadHazards(tool) {
       async (signal) => {
         const payload = await requestLiveJson('/api/natural/v1/list-natural-events', {
           signal,
+          preflightSession: true,
         });
         return hazardPulseViewModel(payload, { bounds });
       },

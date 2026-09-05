@@ -42,10 +42,12 @@ type AuthSessionResult = {
 delete process.env.CLERK_JWT_ISSUER_DOMAIN;
 
 let validateBearerTokenNoEnv: (token: string) => Promise<AuthSessionResult>;
+let lookupClerkPlanNoEnv: (userId: string) => Promise<'free' | 'pro' | 'unavailable'>;
 
 before(async () => {
   const mod = await import('../server/auth-session.ts');
   validateBearerTokenNoEnv = mod.validateBearerToken;
+  lookupClerkPlanNoEnv = mod.lookupClerkPlan;
 });
 
 describe('validateBearerToken (no CLERK_JWT_ISSUER_DOMAIN)', () => {
@@ -67,6 +69,47 @@ describe('validateBearerToken (no CLERK_JWT_ISSUER_DOMAIN)', () => {
     if (!result.valid) {
       assert.equal(result.userId, undefined);
       assert.equal(result.role, undefined);
+    }
+  });
+
+  it('reports an unavailable plan lookup when Clerk server credentials are absent', async () => {
+    assert.equal(await lookupClerkPlanNoEnv('user_missing_config'), 'unavailable');
+  });
+});
+
+describe('lookupClerkPlan', () => {
+  it('distinguishes verified roles, missing users, and backend outages', async () => {
+    const originalSecret = process.env.CLERK_SECRET_KEY;
+    const originalFetch = globalThis.fetch;
+    const originalWarn = console.warn;
+    process.env.CLERK_SECRET_KEY = 'sk_test_embed_lookup';
+    console.warn = () => {};
+
+    try {
+      const mod = await import(`../server/auth-session.ts?plan-lookup=${Date.now()}`);
+      let response = new Response(JSON.stringify({ public_metadata: { plan: 'pro' } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+      globalThis.fetch = async () => response;
+      assert.equal(await mod.lookupClerkPlan('user_role_pro'), 'pro');
+
+      response = new Response(JSON.stringify({ public_metadata: { plan: 'free' } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+      assert.equal(await mod.lookupClerkPlan('user_role_free'), 'free');
+
+      response = new Response('', { status: 404 });
+      assert.equal(await mod.lookupClerkPlan('user_missing'), 'free');
+
+      response = new Response('', { status: 503 });
+      assert.equal(await mod.lookupClerkPlan('user_backend_down'), 'unavailable');
+    } finally {
+      globalThis.fetch = originalFetch;
+      console.warn = originalWarn;
+      if (originalSecret === undefined) delete process.env.CLERK_SECRET_KEY;
+      else process.env.CLERK_SECRET_KEY = originalSecret;
     }
   });
 });

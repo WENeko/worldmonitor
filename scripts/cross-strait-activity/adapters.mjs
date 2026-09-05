@@ -2104,6 +2104,7 @@ export function buildCrossStraitActivitySnapshot({
       transportStatus: mndOutcome?.ok ? 'fresh' : 'error',
       requestCount: mndOutcome?.requestCount ?? 0,
       errorCodes: mndOutcome?.errorCodes ?? [],
+      refreshErrorCodes: mndOutcome?.refreshErrorCodes ?? [],
       // WHEN this verdict was produced. lastSuccessAt is retained across failing
       // runs by design, so on its own an errored record cannot say whether the
       // seeder just ran or stopped running days ago — see the japan-mod note.
@@ -2575,6 +2576,7 @@ export async function fetchCrossStraitActivitySnapshot({
   const latestCandidates = new Map();
   const unseenBackfillCandidates = new Map();
   const mndErrors = [];
+  const mndRefreshErrors = [];
   const mndContract = CROSS_STRAIT_SOURCE_CONTRACTS.taiwanMnd;
   const resolvedJapanProxyFetchFn = proxyUrl
     ? (input, init) => fetchJapanModViaConfiguredProxy(input, init, {
@@ -2683,6 +2685,7 @@ export async function fetchCrossStraitActivitySnapshot({
   let primaryBudgetExhausted = false;
   candidateLoop:
   for (const { candidate, isRefresh, reservedRefreshAttempts } of candidateSchedule) {
+    const candidateErrors = isRefresh ? mndRefreshErrors : mndErrors;
     if (primaryBudgetExhausted && !isRefresh) continue;
     const detailAttemptLimit = MND_MAX_DETAIL_REQUESTS_PER_RUN - reservedRefreshAttempts;
     let retryingMissingMetadata = false;
@@ -2693,8 +2696,8 @@ export async function fetchCrossStraitActivitySnapshot({
         cadenceMs: REQUEST_CADENCE_MS,
         reservedRequestCount: isRefresh && !retryingMissingMetadata ? 0 : reservedRefreshAttempts,
       })) {
-        if (retryingMissingMetadata) mndErrors.push('MND_PUBLICATION_METADATA_MISSING');
-        mndErrors.push('OUTBOUND_BUDGET_EXHAUSTED');
+        if (retryingMissingMetadata) candidateErrors.push('MND_PUBLICATION_METADATA_MISSING');
+        candidateErrors.push('OUTBOUND_BUDGET_EXHAUSTED');
         if (isRefresh && !retryingMissingMetadata) break candidateLoop;
         if (!isRefresh) primaryBudgetExhausted = true;
         break;
@@ -2722,7 +2725,7 @@ export async function fetchCrossStraitActivitySnapshot({
           retryingMissingMetadata = true;
           continue;
         }
-        mndErrors.push(code);
+        candidateErrors.push(code);
         break;
       }
     }
@@ -2739,6 +2742,7 @@ export async function fetchCrossStraitActivitySnapshot({
     requestCount,
     observations: parsedMnd,
     errorCodes: [...new Set(mndErrors)],
+    refreshErrorCodes: [...new Set(mndRefreshErrors)],
   };
   return buildCrossStraitActivitySnapshot({
     generatedAt,

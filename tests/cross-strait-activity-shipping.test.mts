@@ -14,7 +14,9 @@ import {
   CROSS_STRAIT_ACTIVITY_COMPLETION_META_KEY,
   CROSS_STRAIT_ACTIVITY_FETCH_PHASE_TIMEOUT_MS,
   CROSS_STRAIT_ACTIVITY_LOCK_TTL_MS,
+  CROSS_STRAIT_ACTIVITY_ONE_OFF_LOCK_TTL_MS,
   CROSS_STRAIT_ACTIVITY_PUBLISH_CLEANUP_HEADROOM_MS,
+  CROSS_STRAIT_HISTORY_MAX_RECORDS,
   CROSS_STRAIT_ACTIVITY_SOURCE_FAILURE_TTL_SECONDS,
   CROSS_STRAIT_ACTIVITY_TTL_SECONDS,
   crossStraitActivityAfterPublish,
@@ -586,6 +588,13 @@ test('cross-Strait shipping budgets preserve Railway cleanup headroom', () => {
     new RegExp(`seedMetaKey:\\s*'${CROSS_STRAIT_ACTIVITY_COMPLETION_META_KEY.replace('seed-meta:', '')}'`),
   );
   assert.ok(CROSS_STRAIT_ACTIVITY_LOCK_TTL_MS > 310_000);
+  assert.ok(
+    CROSS_STRAIT_ACTIVITY_ONE_OFF_LOCK_TTL_MS > (
+      CROSS_STRAIT_ACTIVITY_FETCH_PHASE_TIMEOUT_MS
+      + CROSS_STRAIT_ACTIVITY_PUBLISH_CLEANUP_HEADROOM_MS
+      + Math.ceil(CROSS_STRAIT_HISTORY_MAX_RECORDS / 150) * 30_000
+    ),
+  );
 });
 
 test('degraded cross-Strait source health publishes the error metadata before its detail record', async () => {

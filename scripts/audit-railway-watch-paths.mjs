@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 
@@ -530,6 +530,7 @@ export async function waitForRailwayServiceConfigConvergence(
     attempts = 5,
     delayMs = 1_000,
     sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    evaluateRequiredEnv = true,
   } = {},
 ) {
   let remaining = [];
@@ -538,6 +539,7 @@ export async function waitForRailwayServiceConfigConvergence(
       await readConfig(),
       serviceIdsByName,
       registry,
+      { evaluateRequiredEnv },
     );
     if (remaining.length === 0 || attempt === attempts) return remaining;
     await sleep(delayMs);
@@ -657,20 +659,42 @@ async function main() {
         deadlineAt: deploymentDeadlineAt,
       })
     : () => readEnvironmentConfig(environment);
+  const config = await readConfig();
   const drift = auditRailwayServiceConfig(
-    await readConfig(),
+    config,
     serviceIdsByName,
     registry,
     {
-      evaluateRequiredEnv: !deploymentOnly,
+      evaluateRequiredEnv: !apply && !deploymentOnly,
       requireMainTrigger: deploymentOnly,
     },
   );
+  const runtimePrerequisites = apply
+    ? auditRailwayServiceConfig(config, serviceIdsByName, registry)
+      .filter((entry) => entry.missingRequiredEnv?.length > 0)
+      .map(({ service, missingRequiredEnv }) => ({ service, missingRequiredEnv }))
+    : [];
   // Always name the target. --apply mutates live infrastructure and the
   // environment is resolved from argv, so it must never be implicit.
   console.log(`Railway operational-config audit: environment=${environment} mode=${deploymentOnly ? 'deployment-only' : apply ? 'apply' : 'audit'}`);
   if (deploymentOnly) {
     console.log('Required environment variables were not evaluated: the Viewer projection cannot request their values.');
+  }
+  if (runtimePrerequisites.length > 0) {
+    const lines = [
+      '### Unavailable runtime prerequisites',
+      '',
+      'Registry sync verifies deployment configuration, not source health. Missing runtime credentials do not block configuration repairs. Source health remains visible in the ingestion monitor.',
+      '',
+      ...runtimePrerequisites.map(({ service, missingRequiredEnv }) => (
+        `- ${service}: missing ${missingRequiredEnv.join(', ')}`
+      )),
+      '',
+    ];
+    console.log(lines.join('\n'));
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`);
+    }
   }
   if (asJson) {
     console.log(JSON.stringify({
@@ -679,6 +703,7 @@ async function main() {
       deploymentOnly,
       requiredEnvironmentEvaluated: !deploymentOnly,
       drift,
+      ...(apply ? { runtimePrerequisites } : {}),
     }, null, 2));
   }
   else printAudit(drift);
@@ -700,6 +725,7 @@ async function main() {
     readConfig,
     serviceIdsByName,
     registry,
+    { evaluateRequiredEnv: false },
   );
   if (remaining.length > 0) {
     printAudit(remaining);

@@ -1174,7 +1174,10 @@ canvas,
   width: min(720px, 100%);
   max-height: calc(100vh - 48px);
   display: grid;
-  grid-template-rows: auto minmax(180px, 320px) auto minmax(96px, auto) auto;
+  /* header, preview, then one row holding every snippet tier. Tiers are a
+     single grid child so adding the keyed one cannot shift the preview's
+     sizing row. */
+  grid-template-rows: auto minmax(180px, 320px) auto;
   gap: 14px;
   overflow: auto;
   border: 1px solid var(--border);
@@ -1256,9 +1259,55 @@ canvas,
   outline: none;
 }
 
+.embed-modal-tiers {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+}
+
+.embed-modal-tier {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.embed-modal-tier + .embed-modal-tier {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.embed-tier-detail {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: calc(12px * var(--wm-panel-effective-scale, 1));
+  line-height: 1.5;
+}
+
 .embed-modal-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+}
+
+.embed-manage-keys-btn {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: calc(12px * var(--wm-panel-effective-scale, 1));
+  font-weight: 600;
+}
+
+.embed-manage-keys-btn:hover,
+.embed-manage-keys-btn:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+  outline: none;
 }
 
 .embed-copy-btn {
@@ -1288,7 +1337,7 @@ canvas,
 
   .embed-modal {
     max-height: calc(100vh - 24px);
-    grid-template-rows: auto minmax(160px, 260px) auto minmax(112px, auto) auto;
+    grid-template-rows: auto minmax(160px, 260px) auto;
     padding: 14px;
   }
 }
@@ -26512,26 +26561,33 @@ body.map-width-resizing {
 
 .manage-billing-btn:hover { color: var(--text); }
 
-/* ---- API Keys Settings Tab ---- */
+/* ---- API Keys + Embeds Settings Tabs ---- */
+/* Two tabs, two credential classes, one layout. The selectors are aliased
+   rather than duplicated so a spacing fix cannot land on one list and miss
+   the other; only .embed-keys-note below is specific to embed keys. */
 
-.api-keys-section {
+.api-keys-section,
+.embed-keys-section {
   padding: 16px 0;
 }
 
-.api-keys-desc {
+.api-keys-desc,
+.embed-keys-desc {
   font-size: calc(12px * var(--wm-panel-effective-scale, 1));
   color: var(--text-dim);
   margin: 0 0 16px;
   line-height: 1.5;
 }
 
-.api-keys-create-form {
+.api-keys-create-form,
+.embed-keys-create-form {
   display: flex;
   gap: 8px;
   margin-bottom: 12px;
 }
 
-.api-keys-name-input {
+.api-keys-name-input,
+.embed-keys-name-input {
   flex: 1;
   padding: 8px 12px;
   background: var(--surface);
@@ -26542,15 +26598,18 @@ body.map-width-resizing {
   outline: none;
 }
 
-.api-keys-name-input:focus {
+.api-keys-name-input:focus,
+.embed-keys-name-input:focus {
   border-color: var(--accent);
 }
 
-.api-keys-name-input::placeholder {
+.api-keys-name-input::placeholder,
+.embed-keys-name-input::placeholder {
   color: var(--text-dim);
 }
 
-.api-keys-created-banner {
+.api-keys-created-banner,
+.embed-keys-created-banner {
   padding: 12px;
   background: color-mix(in srgb, #22c55e 8%, transparent);
   border: 1px solid color-mix(in srgb, #22c55e 25%, transparent);
@@ -26558,20 +26617,23 @@ body.map-width-resizing {
   margin-bottom: 12px;
 }
 
-.api-keys-banner-title {
+.api-keys-banner-title,
+.embed-keys-banner-title {
   font-size: calc(12px * var(--wm-panel-effective-scale, 1));
   font-weight: 600;
   color: #22c55e;
   margin-bottom: 8px;
 }
 
-.api-keys-banner-key {
+.api-keys-banner-key,
+.embed-keys-banner-key {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.api-keys-key-value {
+.api-keys-key-value,
+.embed-keys-key-value {
   flex: 1;
   font-family: 'SF Mono', 'Monaco', 'Cascadia Code', monospace;
   font-size: calc(12px * var(--wm-panel-effective-scale, 1));
@@ -26583,21 +26645,25 @@ body.map-width-resizing {
   user-select: all;
 }
 
-.api-keys-error {
+.api-keys-error,
+.embed-keys-error {
   font-size: calc(12px * var(--wm-panel-effective-scale, 1));
   color: var(--semantic-critical);
   margin-bottom: 8px;
 }
 
 .api-keys-loading,
-.api-keys-empty {
+.embed-keys-loading,
+.api-keys-empty,
+.embed-keys-empty {
   font-size: calc(12px * var(--wm-panel-effective-scale, 1));
   color: var(--text-dim);
   padding: 16px 0;
   text-align: center;
 }
 
-.api-keys-item {
+.api-keys-item,
+.embed-keys-item {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -26607,11 +26673,13 @@ body.map-width-resizing {
   margin-bottom: 6px;
 }
 
-.api-keys-item.revoked {
+.api-keys-item.revoked,
+.embed-keys-item.revoked {
   opacity: 0.5;
 }
 
-.api-keys-item-main {
+.api-keys-item-main,
+.embed-keys-item-main {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -26619,7 +26687,8 @@ body.map-width-resizing {
   min-width: 0;
 }
 
-.api-keys-item-name {
+.api-keys-item-name,
+.embed-keys-item-name {
   font-size: calc(13px * var(--wm-panel-effective-scale, 1));
   font-weight: 600;
   color: var(--text);
@@ -26628,13 +26697,15 @@ body.map-width-resizing {
   text-overflow: ellipsis;
 }
 
-.api-keys-item-prefix {
+.api-keys-item-prefix,
+.embed-keys-item-prefix {
   font-family: 'SF Mono', 'Monaco', 'Cascadia Code', monospace;
   font-size: calc(11px * var(--wm-panel-effective-scale, 1));
   color: var(--text-dim);
 }
 
-.api-keys-item-meta {
+.api-keys-item-meta,
+.embed-keys-item-meta {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -26644,33 +26715,64 @@ body.map-width-resizing {
   white-space: nowrap;
 }
 
-.api-keys-item-revoked-badge {
+.api-keys-item-revoked-badge,
+.embed-keys-item-revoked-badge {
   color: var(--semantic-critical);
   font-weight: 600;
 }
 
-.api-keys-revoke-btn {
+.api-keys-revoke-btn,
+.embed-keys-revoke-btn {
   font-size: calc(12px * var(--wm-panel-effective-scale, 1));
   padding: 4px 10px;
   color: var(--semantic-critical);
   flex-shrink: 0;
 }
 
-.api-keys-revoke-btn:hover {
+.api-keys-revoke-btn:hover,
+.embed-keys-revoke-btn:hover {
   background: color-mix(in srgb, var(--semantic-critical) 10%, transparent);
 }
 
-.api-keys-revoked-section {
+.api-keys-revoked-section,
+.embed-keys-revoked-section {
   margin-top: 16px;
 }
 
-.api-keys-revoked-label {
+.api-keys-revoked-label,
+.embed-keys-revoked-label {
   font-size: calc(11px * var(--wm-panel-effective-scale, 1));
   font-weight: 600;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-bottom: 6px;
+}
+
+.embed-keys-docs-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.embed-keys-docs-link:hover,
+.embed-keys-docs-link:focus-visible {
+  text-decoration: underline;
+}
+
+.embed-keys-note {
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  font-size: calc(12px * var(--wm-panel-effective-scale, 1));
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.embed-keys-note strong {
+  color: var(--text);
 }
 
 .api-plan-limit-notices {

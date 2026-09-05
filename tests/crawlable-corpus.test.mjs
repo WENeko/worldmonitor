@@ -4636,6 +4636,31 @@ describe('crawlable corpus generator', () => {
       assert.doesNotMatch(liveToolsScript, /list-natural-events\?days=/);
       assert.doesNotMatch(liveToolsScript, /generation:/);
 
+      // Every live tool now reads a session-gated RPC. Without the preflight a
+      // page load spends a guaranteed 401 before the retry mints a session, and
+      // Hazard Pulse — which was the last call site missing it — is exactly the
+      // shape that regresses silently, because the retry still renders.
+      const liveToolsSource = readFileSync(join(repoRoot, 'scripts/crawlable-live-tools.mjs'), 'utf8');
+      const callSites = [...liveToolsSource.matchAll(/(?<!function\s)\brequestLiveJson\(/g)]
+        .map((match) => {
+          let depth = 0;
+          for (let i = match.index + match[0].length - 1; i < liveToolsSource.length; i += 1) {
+            if (liveToolsSource[i] === '(') depth += 1;
+            else if (liveToolsSource[i] === ')' && (depth -= 1) === 0) {
+              return liveToolsSource.slice(match.index, i + 1);
+            }
+          }
+          throw new Error('unbalanced requestLiveJson call');
+        });
+      assert.ok(callSites.length >= 6, 'expected to find the live-tool RPC call sites');
+      for (const call of callSites) {
+        assert.match(
+          call,
+          /preflightSession:\s*true/,
+          `every requestLiveJson call must preflight an anonymous session: ${call.slice(0, 80)}`,
+        );
+      }
+
       const changelogIndex = read(outDir, 'reference/changelog/index.html');
       const changelogPage2 = read(outDir, 'reference/changelog/page/2/index.html');
       assert.match(changelogIndex, /<link rel="next" href="https:\/\/www\.worldmonitor\.app\/reference\/changelog\/page\/2\/">/);

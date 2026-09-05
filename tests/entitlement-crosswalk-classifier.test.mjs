@@ -82,7 +82,7 @@ describe('entitlement crosswalk classifier', () => {
   it('a preds allow-list never contains an unknown predicate kind', () => {
     const KNOWN = new Set([
       'tier', 'hasPremiumAccess', 'isProUser', 'apiAccess',
-      'mcpAccess', 'dataExport', 'isCallerPremium', 'resolvePremiumCallerIdentity',
+      'mcpAccess', 'dataExport', 'embedAccess', 'isCallerPremium', 'resolvePremiumCallerIdentity',
       'requiresPremium', 'other',
     ]);
     for (const [re, v] of SITE_MAP) {

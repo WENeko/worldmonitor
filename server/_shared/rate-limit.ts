@@ -514,6 +514,14 @@ export const ENDPOINT_RATE_POLICIES: Record<string, EndpointRatePolicy> = {
   // Partner embed entitlement (#6599): keyed panels look up wm_ keys in Convex.
   // Cap per-IP so a stolen snippet cannot amplify validation traffic.
   '/api/embed/entitlement': { limit: 60, window: '60 s' },
+  // Grant exchange: validates a wme_ key in Convex, so it amplifies the same
+  // way the entitlement lookup does. A frame mints once per 30-minute grant,
+  // which leaves this budget almost entirely as headroom for shared egress IPs.
+  '/api/embed/session': { limit: 60, window: '60 s' },
+  // Partner map frame. Public traffic uses the client IP; a verified grant uses
+  // its account owner so every display for one partner shares the same budget.
+  // The CDN absorbs most canonical public requests before this policy runs.
+  '/api/embed/map-frame': { limit: 120, window: '60 s' },
 };
 
 interface RateLimitPolicyDecision {
@@ -622,6 +630,12 @@ export const FAIL_CLOSED_ENDPOINT_RATE_POLICY_REQUIRED: Record<string, RateLimit
   },
   '/api/embed/entitlement': {
     reason: 'Keyed-panel entitlement lookups amplify into Convex user-key validation; fail closed so a Redis outage cannot lift the per-IP budget.',
+  },
+  '/api/embed/session': {
+    reason: 'Grant minting amplifies into Convex embed-key validation and hands back a bearer credential; fail closed so a Redis outage cannot lift the per-IP budget on a credential-issuing path.',
+  },
+  '/api/embed/map-frame': {
+    reason: 'The keyless map frame is fully anonymous and fans out across four seed reads. Fail closed rather than inherit the availability-first global fallback: those reads come from the same Redis that would be degraded, so a fail-open origin would serve empty layers at unbounded volume while the CDN copy keeps real data on screen for the stale-while-revalidate window.',
   },
 };
 

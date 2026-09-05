@@ -52,7 +52,9 @@ function mapConfidence(c: string): 'high' | 'medium' | 'low' {
 
 // ---- Core Adapter: proto UnrestEvent -> legacy SocialUnrestEvent ----
 
-function toSocialUnrestEvent(e: UnrestEvent): SocialUnrestEvent {
+/** Exported for the embed loader, which receives this wire shape from the
+ *  composed map-frame endpoint rather than from this module's own fetch. */
+export function toSocialUnrestEvent(e: UnrestEvent): SocialUnrestEvent {
   return {
     id: e.id,
     title: e.title,

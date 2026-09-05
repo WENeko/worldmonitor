@@ -102,7 +102,7 @@ import { AuthHeaderWidget } from '@/components/AuthHeaderWidget';
 import { t } from '@/services/i18n';
 import { TvModeController } from '@/services/tv-mode';
 import { getAuthState, subscribeAuthState } from '@/services/auth-state';
-import { onEntitlementChange } from '@/services/entitlements';
+import { hasEmbedAccessForAccount, onEntitlementChange } from '@/services/entitlements';
 import { evaluateAvailableExportFormats, evaluateExportGate, exportLockToGateReason } from '@/services/gates/export';
 import { primeExportGateActivation } from '@/services/gates/export-resolver';
 import type { DataExportFormat } from '@/services/gates/export-resolver';
@@ -117,7 +117,14 @@ import {
   suppressNextAgentPanelView,
 } from '@/services/agent-analytics-privacy';
 import { escapeHtml } from '@/utils/sanitize';
-import { buildEmbedIframeSnippet, buildEmbedMapUrl, type EmbedVariant } from '@/embed/embed-url';
+import {
+  buildEmbedIframeSnippet,
+  buildEmbedLoaderSnippet,
+  buildEmbedMapUrl,
+  embedLayerIdsFromMapLayers,
+  EMBED_KEY_PLACEHOLDER,
+  type EmbedVariant,
+} from '@/embed/embed-url';
 import { createSettingsButton } from '@/components/settings-button';
 import { overlayHistory, type OverlayId } from '@/utils/overlay-history';
 import { MobilePrimaryNav } from '@/app/mobile-primary-nav';
@@ -1575,26 +1582,43 @@ export class EventHandlerManager implements AppModule {
     preview.referrerPolicy = 'strict-origin-when-cross-origin';
     preview.src = embedUrl;
 
-    const label = document.createElement('label');
-    label.className = 'embed-snippet-label';
-    label.htmlFor = 'embedSnippetTextarea';
-    label.textContent = 'Iframe snippet';
+    const tiers = document.createElement('div');
+    tiers.className = 'embed-modal-tiers';
 
-    const textarea = document.createElement('textarea');
-    textarea.className = 'embed-snippet-textarea';
-    textarea.id = 'embedSnippetTextarea';
-    textarea.readOnly = true;
-    textarea.value = snippet;
+    // The free tier stays available to everyone, signed out included: it is a
+    // supported product surface, not a trial, so it is never gated here.
+    tiers.appendChild(this.buildEmbedTier({
+      id: 'embedSnippetTextarea',
+      title: 'Free — no key needed',
+      detail: 'Conflicts, earthquakes and weather, refreshed hourly. Anyone can publish this, '
+        + 'signed in or not.',
+      snippet,
+    }));
 
-    const actions = document.createElement('div');
-    actions.className = 'embed-modal-actions';
-    const copyButton = document.createElement('button');
-    copyButton.className = 'embed-copy-btn';
-    copyButton.type = 'button';
-    copyButton.textContent = 'Copy snippet';
-    actions.append(copyButton);
+    // The keyed tier is offered only to an account that can actually mint a
+    // key. Showing it to everyone else would be an upsell wearing a snippet.
+    if (hasEmbedAccessForAccount(getAuthState().user?.role)) {
+      const state = this.ctx.map?.getState();
+      tiers.appendChild(this.buildEmbedTier({
+        id: 'embedKeyedSnippetTextarea',
+        title: 'With your embed key',
+        detail: 'All fourteen layers at this exact view, refreshed every 10 minutes instead of '
+          + `hourly. Replace ${EMBED_KEY_PLACEHOLDER} with a key from Settings → Embeds; it is `
+          + 'meant to sit in your page HTML, unlike an API key.',
+        snippet: buildEmbedLoaderSnippet({
+          src: `${window.location.origin}/embed.js`,
+          panel: 'map',
+          layerIds: state ? embedLayerIdsFromMapLayers(state.layers) : undefined,
+          center: this.ctx.map?.getCenter(),
+          zoom: state?.zoom,
+          theme: getCurrentTheme(),
+          variant: SITE_VARIANT as EmbedVariant,
+        }),
+        manageKeysLabel: 'Manage embed keys',
+      }));
+    }
 
-    dialog.append(header, preview, label, textarea, actions);
+    dialog.append(header, preview, tiers);
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
 
@@ -1602,21 +1626,83 @@ export class EventHandlerManager implements AppModule {
     overlay.addEventListener('click', (event) => {
       if (event.target === overlay) this.closeEmbedDialog();
     });
+    this.boundEmbedModalKeydownHandler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') this.closeEmbedDialog();
+    };
+    document.addEventListener('keydown', this.boundEmbedModalKeydownHandler);
+    const firstSnippet = dialog.querySelector<HTMLTextAreaElement>('.embed-snippet-textarea');
+    firstSnippet?.focus();
+    firstSnippet?.select();
+  }
+
+  /**
+   * One snippet block: label, one-line explanation of what this tier gives,
+   * the textarea, and its own copy button.
+   *
+   * Built per tier rather than once because the two forms are not variants of
+   * each other — a keyless iframe and a keyed script loader differ in what
+   * they render, how often, and whether they carry a credential. Presenting
+   * them side by side with their differences spelled out is the point.
+   */
+  private buildEmbedTier(options: {
+    id: string;
+    title: string;
+    detail: string;
+    snippet: string;
+    manageKeysLabel?: string;
+  }): HTMLElement {
+    const section = document.createElement('section');
+    section.className = 'embed-modal-tier';
+
+    const label = document.createElement('label');
+    label.className = 'embed-snippet-label';
+    label.htmlFor = options.id;
+    label.textContent = options.title;
+
+    const detail = document.createElement('p');
+    detail.className = 'embed-tier-detail';
+    detail.textContent = options.detail;
+
+    const textarea = document.createElement('textarea');
+    textarea.className = 'embed-snippet-textarea';
+    textarea.id = options.id;
+    textarea.readOnly = true;
+    textarea.value = options.snippet;
+
+    const actions = document.createElement('div');
+    actions.className = 'embed-modal-actions';
+
+    if (options.manageKeysLabel) {
+      const manageButton = document.createElement('button');
+      manageButton.className = 'embed-manage-keys-btn';
+      manageButton.type = 'button';
+      manageButton.textContent = options.manageKeysLabel;
+      manageButton.addEventListener('click', () => {
+        // Closing first keeps two overlays off the screen at once, and the
+        // settings modal owns its own history entry on mobile.
+        this.closeEmbedDialog();
+        void this.ctx.unifiedSettings?.open('embeds');
+      });
+      actions.appendChild(manageButton);
+    }
+
+    const copyButton = document.createElement('button');
+    copyButton.className = 'embed-copy-btn';
+    copyButton.type = 'button';
+    copyButton.textContent = 'Copy snippet';
     copyButton.addEventListener('click', async () => {
       try {
-        await this.copyToClipboard(snippet);
+        await this.copyToClipboard(options.snippet);
         copyButton.textContent = 'Copied!';
       } catch (error) {
         console.warn('Failed to copy embed snippet:', error);
         copyButton.textContent = 'Copy failed';
       }
     });
-    this.boundEmbedModalKeydownHandler = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') this.closeEmbedDialog();
-    };
-    document.addEventListener('keydown', this.boundEmbedModalKeydownHandler);
-    textarea.focus();
-    textarea.select();
+    actions.appendChild(copyButton);
+
+    section.append(label, detail, textarea, actions);
+    return section;
   }
 
   private closeEmbedDialog(): void {

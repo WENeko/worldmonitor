@@ -334,9 +334,16 @@ describe(`live API cache/auth regression sweep (${LIVE ? 'ENABLED' : 'SKIPPED - 
     assertNotCached200(fake.resp, 'generated RPC fake auth');
     assertNoSentinelLeak(fake.bodyText, 'generated RPC fake auth');
 
-    const publicRpc = await fetchText(`${API_BASE}/api/conflict/v1/list-acled-events`);
+    const publicRpc = await fetchText(`${API_BASE}/api/intelligence/v1/get-china-decision-signals`);
     assertPublicCacheable(publicRpc.resp, 'public no-auth RPC');
-    assert.match(publicRpc.bodyText, /"events"\s*:/, 'public no-auth RPC: expected events payload');
+    assert.match(publicRpc.bodyText, /"payloadJson"\s*:/, 'public no-auth RPC: expected signal payload');
+
+    // The four map RPCs left the anonymous surface once the embed moved to
+    // /api/embed/map-frame. Anonymous callers now get the ordinary 401, and it
+    // must be no-store so no shared entry can answer one.
+    const closedRpc = await fetchText(`${API_BASE}/api/conflict/v1/list-acled-events`);
+    assert.equal(closedRpc.resp.status, 401, 'the former anonymous map RPC must require a credential');
+    assertNoStore(closedRpc.resp, 'former anonymous map RPC');
     markProbeCompleted('generated-rpc');
   });
 
