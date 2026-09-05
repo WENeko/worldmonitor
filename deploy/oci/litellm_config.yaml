@@ -9,20 +9,24 @@ model_list:
   #
   # Quota model (2026-09): Groq's free tier caps ~6k tokens/min per ORG, so
   # one 30k-token agent prompt can exhaust it for ~200 s. The Gemini free
-  # tier (gemini-2.5-flash: 15 RPM, 1M context) carries that load comfortably
-  # and has an INDEPENDENT quota, so each group pairs Gemini (primary) with
-  # two Groq keys as fallback. The second Groq key must belong to a different
-  # Groq org to add independent capacity — two keys from one console share
-  # the same ceiling and cool down together.
+  # tier (gemini-3.5-flash) carries that load comfortably and has an
+  # INDEPENDENT quota, so each group pairs Gemini (primary) with two Groq
+  # keys as fallback. The second Groq key must belong to a different Groq org
+  # to add independent capacity — two keys from one console share the same
+  # ceiling and cool down together.
   #
   # Model ids (2026-09): Groq decommissioned the llama-3.3/3.1 line on
   # 2026-08-16 (upstream `model_not_found`); replacements per Groq's
   # deprecation page are openai/gpt-oss-120b (critical) and
   # openai/gpt-oss-20b (utility), passed through the LiteLLM `groq/` prefix.
-  # The old OpenRouter free alias was retired upstream (HTTP 404).
+  # The old OpenRouter free alias was retired upstream (HTTP 404). Gemini:
+  # the legacy gemini-2.5-flash ids are still LISTED by models.list but
+  # return HTTP 404 on generateContent for the new AQ.-prefixed keys;
+  # gemini-3.5-flash and gemini-3.5-flash-lite were verified live (HTTP 200)
+  # on 2026-09-05 and are used below.
   - model_name: vibe-trading-critical
     litellm_params:
-      model: gemini/gemini-2.5-flash
+      model: gemini/gemini-3.5-flash
       api_key: os.environ/GEMINI_API_KEY
 
   - model_name: vibe-trading-critical
@@ -37,7 +41,7 @@ model_list:
 
   - model_name: vibe-trading-utility
     litellm_params:
-      model: gemini/gemini-2.5-flash-lite
+      model: gemini/gemini-3.5-flash-lite
       api_key: os.environ/GEMINI_API_KEY
 
   - model_name: vibe-trading-utility
