@@ -19,14 +19,22 @@ model_list:
   # with credits, work the same way. The old OpenRouter free alias was
   # retired upstream with HTTP 404 "unavailable for free" — paid OpenRouter
   # models are fine.)
+  #
+  # Model ids are Groq's current catalog (2026-09): the previous llama
+  # entries (llama-3.3-70b-versatile, llama-3.1-8b-instant) were
+  # decommissioned by Groq on 2026-08-16 and return upstream `model_not_found`
+  # (surfaced as HTTP 404). Per Groq's deprecation page the replacements are
+  # openai/gpt-oss-120b (critical) and openai/gpt-oss-20b (utility); the
+  # LiteLLM string keeps the groq/ prefix and passes the namespaced id
+  # through untouched.
   - model_name: vibe-trading-critical
     litellm_params:
-      model: groq/llama-3.3-70b-versatile
+      model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
 
   - model_name: vibe-trading-utility
     litellm_params:
-      model: groq/llama-3.1-8b-instant
+      model: groq/openai/gpt-oss-20b
       api_key: os.environ/GROQ_API_KEY
 
 router_settings:

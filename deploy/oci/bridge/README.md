@@ -209,6 +209,17 @@ The bridge is intentionally the *cheapest* container in the stack:
   so one real `GROQ_API_KEY` in `.env` serves both model aliases. Fix the
   value, `docker compose up -d litellm` (it reads config + env at startup;
   bridge and vibe-trading are unaffected), then re-run the probe.
+- **`probe: HTTP 404` with a body mentioning `model_not_found`**: the model
+  id in `litellm_config.yaml` no longer exists on Groq (Groq decommissioned
+  the llama 3.3/3.1 line on 2026-08-16; both config ids were updated to the
+  official replacements `openai/gpt-oss-120b` and `openai/gpt-oss-20b`).
+  Check the live catalog with `curl -sS https://api.groq.com/openai/v1/models
+  -H "Authorization: Bearer $GROQ_API_KEY"` before changing ids again.
+- **`probe: HTTP 429` with `No deployments available… cooldown_list`**: the
+  router marked the failing deployment down for `cooldown_time` (60 s) after
+  upstream errors. Recreating litellm resets the cooldown; a persistent 429
+  after a config fix means the fix never reached the container (did you
+  `docker compose up -d litellm` after editing the config?).
 - **`docker exec bridge --check` → `executable file not found`**: `docker
   exec` ignores the image ENTRYPOINT; call the interpreter explicitly:
   `docker exec bridge python /app/bridge.py --check`.
