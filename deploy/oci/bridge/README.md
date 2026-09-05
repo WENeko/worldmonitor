@@ -259,16 +259,34 @@ The bridge is intentionally the *cheapest* container in the stack:
   with `docker cp` (daemon-side copy, as in the runbook above), never
   `docker exec … tee`. Hermès writes there through its own container as uid
   1000.
+- **Run artifact shows `tool_failures` with `error_code: identity_required`
+  (agent still exits 0)**: the upstream Vibe-Trading identity gate
+  (`vibe-trading-ai@v0.1.14`, `agent/src/agent/grounding.py`) blocks any
+  symbol-bearing order/market-data tool call until a venue-qualified
+  identity is *locked*. A directive naming a bare ticker (`AAPL`) seeds no
+  identity, so the model's first `trading_place_order` attempt is blocked
+  (`identity_required`) unless `search_symbol` completed in an **earlier**
+  turn — a resolver and a consumer in the same response never works, and
+  the model sometimes finalizes instead of retrying. The bridge fix
+  (`build_prompt`) canonicalizes the directive instrument to `SYMBOL.US`
+  and states it as `RUN INSTRUMENT IDENTITY` in the prompt: the ledger
+  seeds that exact symbol locked at run start, so the mandated order is
+  authorized before the first batch (verified against the upstream ledger
+  locally). The prompt also forbids batching `search_symbol` with other
+  calls and forbids reporting success for an un-landed order. Diagnose a
+  fresh run with:
+  `docker exec bridge python3 -c "import json;d=json.load(open('/home/vibe/.vibe-trading/runs/<run_id>/artifacts/grounding_evidence.json'));print(json.dumps({'identity':d.get('identity'),'tool_failures':d.get('tool_failures')},indent=1))"`
+  — expect identity `locked` from the start (`source: user_message`) and an
+  empty `tool_failures`.
 - **Receipt `FAILED` with `order_not_filled` / `fill_verification_unavailable`
   after the agent returned exit 0**: the fill guard doing its job. The
   bridge now compares connector positions before and after a mandated
   `execution_request` run and fails the receipt when the order did not
   land. Common causes: the US market is closed (a market order cannot fill
   outside 13:30–20:00 UTC on weekdays), or an agent-side execution failure
-  that still exits 0 (seen in the field: an internal `identity_required`
-  error — the run's `grounding_evidence.json` shows the `trading_place_order`
-  attempt, the `tool_failures` entry, and no fill). The agent run id is in
-  `agent_result.run_id` and its artifacts at
+  that still exits 0 (an identity-gate block — see the previous entry —
+  or a broker rejection the model failed to report). The agent run id is
+  in `agent_result.run_id` and its artifacts at
   `/home/vibe/.vibe-trading/runs/<run_id>/`. Re-drop under a **fresh
   `directive_id`** after fixing the cause. Re-runs outside US market hours
   will legitimately fail closed — that is the intended behavior. Opt out

@@ -56,6 +56,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -96,6 +97,39 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace(
         "+00:00", "Z"
     )
+
+
+# Symbols are matched with a word-boundary lookahead, so a dot in "AAPL.US"
+# is fine; the qualification below only appends ".US" to a bare plain-US
+# ticker (letters/digits/& only). Anything else (600519.SS, BTC/USDT, GC=F,
+# BRK-B) passes through untouched.
+_QUALIFYABLE_TICKER_RE = re.compile(r"^[A-Z][A-Z0-9&]{0,19}$")
+
+
+def qualify_us_symbol(symbol: str) -> str:
+    """Return the venue-qualified canonical form of a directive symbol.
+
+    Vibe-Trading's run-scoped identity ledger locks venue-qualified symbols
+    (``AAPL.US``) that appear verbatim in the agent's user message, but a bare
+    ticker (``AAPL``) seeds no identity at all — every pre-batch order or
+    market-data call is then blocked with ``identity_required`` until the
+    model resolves the symbol with ``search_symbol`` in an earlier turn (see
+    upstream agent/src/agent/grounding.py, ``_seed_symbols``). The bridge
+    therefore presents the canonical ``SYMBOL.US`` identity in the prompt so
+    the mandated instrument is locked before the agent's first tool batch.
+    """
+    s = str(symbol or "").strip().upper()
+    if _QUALIFYABLE_TICKER_RE.fullmatch(s):
+        return f"{s}.US"
+    return s
+
+
+def canonical_identity(data: dict) -> str:
+    """Canonical instrument identity for a directive (execution first)."""
+    execution = data.get("execution_request")
+    if isinstance(execution, dict) and execution.get("symbol"):
+        return qualify_us_symbol(execution["symbol"])
+    return qualify_us_symbol(data.get("target_asset", ""))
 
 
 def env_setting(name: str, default: str) -> str:
@@ -463,6 +497,7 @@ def _json_block(text: str) -> dict | None:
 def build_prompt(cfg: BridgeConfig, data: dict) -> str:
     directive = json.dumps(data, indent=2, ensure_ascii=False)
     execution = data.get("execution_request")
+    instrument = canonical_identity(data)
     order_rule = (
         (
             'If "execution_request" is present, execute EXACTLY that order '
@@ -477,23 +512,45 @@ def build_prompt(cfg: BridgeConfig, data: dict) -> str:
             f"(gross exposure well under $5k of the $100k paper account)."
         )
     )
+    identity_note = (
+        f"\nRUN INSTRUMENT IDENTITY: {instrument}\n"
+        "This venue-qualified instrument is the run's locked, pre-authorized "
+        "identity — it was canonicalized by the operator before the run "
+        "started. Use this exact venue-qualified symbol/venue verbatim in "
+        "every market-data and order tool call. Do NOT re-resolve it with "
+        "search_symbol: it is already canonical."
+        if instrument
+        else ""
+    )
     return f"""You are executing a Macro Director directive delivered by the
 operator's automation bridge (Hermès ⇄ Vibe-Trading). Execute it, then report.
 
 DIRECTIVE:
-{directive}
+{directive}{identity_note}
 
 EXECUTION RULES (operator contract, non-negotiable):
 1. This is a PAPER environment. Use connector "{cfg.connector}".
    Never select, configure, or reference any live/trading profile.
 2. {order_rule}
-3. Respect Vibe-Trading's own mandate and fail-closed pre-trade checks
+3. Run-scoped identity is locked on "{instrument}" from the start (rule:
+   RUN INSTRUMENT IDENTITY above). Never call search_symbol for that
+   instrument, and never issue an order or market-data call for any other
+   symbol or venue. If a market/order tool still returns an identity gate
+   error (identity_required / identity_conflict / identity_mismatch),
+   that means you batched a resolver with a consumer call: do NOT end the
+   run. Call search_symbol("{instrument}") ALONE in your next turn, wait
+   for its result, then retry the exact mandated order in a following
+   turn. search_symbol must never share a turn with any other tool call.
+4. Respect Vibe-Trading's own mandate and fail-closed pre-trade checks
    (universe, size caps, exposure, daily cap). If a check blocks the
    order, report the block verbatim — do not work around it.
-4. No leverage, no margin, no options, no fractional size.
-5. After any order attempt, read connector account and positions and
-   include the resulting state in your final summary.
-6. Report as concise JSON: run id, what you did, order result, and the
+5. No leverage, no margin, no options, no fractional size.
+6. After any order attempt, read connector account and positions and
+   include the resulting state in your final summary. If the mandated
+   order was rejected, cancelled, or did not fill for any reason (market
+   closed, venue rejection, timeout), report FAILED with the reason —
+   never report success for an order that did not land.
+7. Report as concise JSON: run id, what you did, order result, and the
    resulting account/position state."""
 
 
