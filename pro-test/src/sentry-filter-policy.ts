@@ -26,6 +26,14 @@
  * than re-deriving them from source text — same reason as `./sentry-allow-urls.ts`.
  */
 
+/**
+ * Mirror of `@sentry/core`'s `Primitive`, restated rather than imported to keep
+ * this module dependency-free. It must stay a superset of what the SDK puts in
+ * `tags`, or `ErrorEvent` stops satisfying `PolicyEvent` and every
+ * `marketingBeforeSend` call site fails to compile.
+ */
+type PolicyPrimitive = number | string | boolean | bigint | symbol | null | undefined;
+
 /** Minimal structural view of the Sentry event fields this policy reads. */
 interface PolicyFrame {
   filename?: string;
@@ -37,7 +45,7 @@ interface PolicyException {
 }
 export interface PolicyEvent {
   exception?: { values?: PolicyException[] };
-  tags?: Record<string, string | number | boolean | undefined>;
+  tags?: { [key: string]: PolicyPrimitive };
   /**
    * Where Sentry parks the rejected value when a promise rejects with a
    * non-Error: `eventFromUnknownInput` synthesises the exception and copies the
@@ -483,6 +491,25 @@ export function marketingBeforeSend<T extends PolicyEvent>(event: T): T | null {
   // covered by the standing `(?:AbortError: )?The user aborted a request` entry
   // in `src/bootstrap/sentry-init.ts`.
   if (!hasFirstParty && LEAKED_ABORT.test(msg)) return null;
+
+  // No deadline sibling here, deliberately. `TimeoutError: signal timed out`
+  // (WORLDMONITOR-11Y) looks like an obvious companion to the abort rule above,
+  // and it is not: the `!hasFirstParty` gate cannot carry it.
+  //
+  // `AbortSignal.timeout` builds its DOMException at the timer boundary, so the
+  // reason's stack holds only engine-internal frames and never the caller's.
+  // A marketing fetch that loses its own catch therefore reaches
+  // `unhandledrejection` with the SAME zero-frame shape as third-party noise;
+  // ownership adds no `/pro/assets/*.js` frame to distinguish them. Six call
+  // sites here carry a timeout signal, including `checkout.ts` and
+  // `checkout-transport.ts`, so suppressing the shape would blind a revenue
+  // path to silence one event. Same keep-visible reasoning as the zero-frame
+  // stack overflow in WORLDMONITOR-WK.
+  //
+  // The dashboard's gate in `src/bootstrap/sentry-init.ts` (WORLDMONITOR-66/-62)
+  // is not a precedent to copy: that bundle mints its own `signal timed out`
+  // DOMException in first-party code, which does carry caller frames.
+  // `tests/pro-sentry-filter-policy.test.mts` locks this absence in.
 
   // Safari-masked injected script. The observed event (WORLDMONITOR-110,
   // `TypeError: Attempting to change value of a readonly property.` on iOS

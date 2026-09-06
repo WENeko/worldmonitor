@@ -1050,3 +1050,45 @@ describe('marketingBeforeSend — leaked fetch abort (WORLDMONITOR-11M)', () => 
     assert.equal(marketingBeforeSend(kept), kept);
   });
 });
+
+/**
+ * The deadline shape stays visible on purpose (WORLDMONITOR-11Y).
+ *
+ * It reads as an obvious sibling of the leaked-abort rule above, and a
+ * suppression was written and reverted before this test existed. The reason it
+ * cannot ship: `AbortSignal.timeout` constructs its DOMException at the timer
+ * boundary, so the reason's stack carries only engine-internal frames.
+ * Confirmed directly, the reason's own stack reads
+ * `at new DOMException (node:internal/per_context/domexception)` then
+ * `at Timeout._onTimeout (node:internal/abort_controller)`, with no caller.
+ *
+ * So a marketing fetch that loses its catch arrives frameless, exactly like
+ * third-party noise, and `!hasFirstParty` cannot separate them. Six call sites
+ * on this surface carry a timeout signal, `checkout.ts` and
+ * `checkout-transport.ts` among them.
+ *
+ * Same disposition as the zero-frame stack overflow in WORLDMONITOR-WK: an
+ * ambiguous frameless error at low volume stays reportable. If this shape ever
+ * earns suppression it needs positive third-party provenance, not a frame gate.
+ */
+describe('marketingBeforeSend — leaked fetch deadline stays visible (WORLDMONITOR-11Y)', () => {
+  const TIMED_OUT = 'TimeoutError: signal timed out';
+
+  it('keeps the zero-frame deadline rejection', () => {
+    const kept = event(TIMED_OUT);
+    assert.equal(marketingBeforeSend(kept), kept,
+      'a frameless deadline is indistinguishable from a first-party leak — see the block comment');
+    const bare = event('signal timed out');
+    assert.equal(marketingBeforeSend(bare), bare);
+  });
+
+  it('keeps it when a marketing-bundle frame is present', () => {
+    const kept = event(TIMED_OUT, ['/pro/assets/main-Ab12Cd.js']);
+    assert.equal(marketingBeforeSend(kept), kept);
+  });
+
+  it('keeps an unrelated timeout-flavoured message', () => {
+    const kept = event('Entitlement poll signal timed out after 8s');
+    assert.equal(marketingBeforeSend(kept), kept);
+  });
+});
