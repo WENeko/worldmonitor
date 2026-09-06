@@ -14,7 +14,7 @@ The September 5, 2026 orank result was 96/100. Live checks confirmed that `/?mod
 The remaining request paths cross two deployment systems.
 
 - Vercel middleware routes the declared AI User-Agents to `public/home.md`. It preserves JSON agent mode, browser HTML, variant hosts, and dashboard links. The response disables caching and declares `Vary: User-Agent`.
-- Cloudflare can serve cached homepage HTML before Vercel middleware runs. Cloudflare does not use `Vary: User-Agent` as a cache key. An additional cache bypass must run after the existing homepage cache rule.
+- Cloudflare can serve cached homepage HTML before Vercel middleware runs. Cloudflare does not use `Vary: User-Agent` as a cache key. Since #7804 the one managed document rule in `scripts/cloudflare-cache-rule.mjs` carves the declared agents out of its `/` claim, so their requests fall through to the zone's bypass and reach middleware. The separate UA-keyed bypass this script used to append after the homepage cache rule is retired there; `cloudflare-agent-readiness.mjs` now manages the firewall block responses only.
 - The Cloudflare rules `Block API Bots` and `Block Scriptlike UAs` return HTML before API handlers run. Both need custom JSON block responses. The change preserves their expressions, actions, order, and existing authentication exceptions.
 
 The shared User-Agent list and denial body live in `shared/agent-request-policy.json`. Public Markdown files carry title, description, and canonical metadata. Generated Markdown documents carry title and canonical metadata. Metadata dates are omitted because a request date does not establish when source content changed.
@@ -34,9 +34,10 @@ node scripts/cloudflare-agent-readiness.mjs --check
 
 ## Deploy and verify
 
-After approval, apply the Cloudflare change before deploying the origin change. This order prevents cached HTML from hiding the new Markdown response. Applying the cache bypass early only reduces caching for the declared crawler homepage requests.
+After approval, apply the Cloudflare changes before deploying the origin change. This order prevents cached HTML from hiding the new Markdown response. The homepage carve-out for the declared agents is part of the document cache rule, so it is applied with that script; carving the agents out early only reduces caching for their homepage requests.
 
 ```sh
+node scripts/cloudflare-cache-rule.mjs --apply
 node scripts/cloudflare-agent-readiness.mjs --apply
 node scripts/cloudflare-agent-readiness.mjs --check
 ```
