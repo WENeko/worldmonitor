@@ -212,7 +212,11 @@ describe('cloudflare corpus cache rule', () => {
     );
     assert.deepEqual([...NEGOTIATED_MEDIA_TYPES], ['text/markdown', 'text/plain', 'text/x-component']);
     const guards = [
-      ...RSC_REQUEST_HEADERS.map((name) => `not any(http.request.headers.names[*] == "${name}")`),
+      // Presence via the lowercase-keyed headers map, never `headers.names[*] ==`:
+      // that array keeps the sender's casing and an HTTP/1.1 `RSC: 1` (Node's
+      // fetch sends it verbatim) slipped past the guard, read the cached HTML and,
+      // on a MISS, stored the flight under the HTML URL (2026-09-06).
+      ...RSC_REQUEST_HEADERS.map((name) => `not any(http.request.headers["${name}"][*] != "")`),
       // Every Accept value, lowercased: Accept may arrive as several header lines
       // and the origins honour the combined list (measured: a second line
       // `Accept: text/markdown` still yields markdown), and both origins match
@@ -224,6 +228,10 @@ describe('cloudflare corpus cache rule', () => {
       assert.ok(rule.expression.includes(guard), `missing guard: ${guard}`);
     }
     assert.ok(!rule.expression.includes('["accept"][0]'), 'only the first Accept line was inspected');
+    assert.ok(
+      !rule.expression.includes('http.request.headers.names'),
+      'header-name equality is case-sensitive at Cloudflare: an uppercase RSC: 1 would be admitted and poison the HTML entry',
+    );
 
     // Structure: one guard block, gating every HTML document family, disjoined
     // with the single-representation exemption, and closed before the path
@@ -242,7 +250,7 @@ describe('cloudflare corpus cache rule', () => {
       assert.ok(at > exemption && at < guardClose, `${guard} must sit inside the guard block`);
     }
     assert.ok(
-      !lines.slice(blockClose + 1).some((line) => line.includes('headers.names') || line.includes('["accept"]')),
+      !lines.slice(blockClose + 1).some((line) => line.includes('http.request.headers[')),
       'no per-family guard: the block applies to every family once',
     );
   });

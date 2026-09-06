@@ -266,6 +266,28 @@ A term — an ordinary word, a vulnerability identifier, or a threat-group desig
 
 The stretch of time a derived statistic was *actually* computed over, as distinct from the retention horizon of the store it drew from. The two diverge whenever a bounded read — a row cap, a page size, a top-N — returns fewer rows than the horizon contains, and the divergence is silent: the read succeeds, the arithmetic runs, and only the result is wrong. Any rate, baseline, or per-unit-time figure must be divided by the span its rows demonstrably cover, and a consumer-facing statistic should report that measured span rather than the horizon constant, since a caller has no other way to tell the two apart. Truncation is also biased rather than random — a newest-first read starves the historical side of a recent-versus-baseline comparison, an oldest-first read starves the recent side. See also: Story Accumulator, Keyword Spike.
 
+## Crawlable Country Pages & Brief Grounding
+
+### Recent Developments
+
+The per-country section of a prerendered country page that carries dated, sourced, country-specific items: matched headlines, a generated country brief with the sources it cites, and timeline events, all taken from one weekly frozen capture rather than fetched live. A page with no such item renders no section at all rather than a placeholder, so the section's absence is itself the record of the enrichment gap. See also: Country Mention, Brief Grounding, Enrichment Tail, Feed Digest.
+
+### Country Mention
+
+The rule that decides whether a news item is about a country: its display name or a curated alias on a word boundary in normalized text, or a demonym matched as written (case-sensitive), after phrases that belong to a neighbouring country have been scrubbed. A bare ISO alpha-2 code token never counts, save a tiny allowlist, because every two-letter code is an English word or somebody else's acronym. One definition serves every surface that grounds a brief — the prerendered pages, the dashboard and the agent tool — so the three cannot drift apart again. See also: Brief Grounding, Recent Developments.
+
+### Brief Grounding
+
+The set of digest headlines a country brief is generated from and may cite; a brief's citations index that set and nothing else. Grounding is *thin* when its headlines come from fewer distinct Publisher Families than the publish floor requires, in which case no brief is requested or published and the page keeps only the dated headlines — a multi-horizon outlook synthesised from one outlet is not published on an indexed page. The dashboard's anonymous brief instead falls back to global stories when nothing names the country; the prerendered corpus refuses that fallback. See also: Publisher Family, Country Mention, Feed Digest.
+
+### Publisher Family
+
+The newsroom behind one or more feed labels — several editions or regional feeds of one outlet are a single family, and an unmapped label is its own family so no feed can silently claim to corroborate another. Every rule that speaks of "N independent sources" counts families, never labels. See also: Brief Grounding.
+
+### Enrichment Tail
+
+The indexed country pages that carry no dated development in a given weekly capture. Its size is a property of the grounding pool — how many countries the week's digest actually names — not of whether the enrichment ran, and it is recorded as a count in the capture's coverage rather than gated to zero, because no news pool names every country every week. See also: Recent Developments, Brief Grounding.
+
 ## Prediction Markets
 
 ### Market Pool
@@ -681,7 +703,10 @@ caught by freshness monitoring on the published data, never by the tick's exit
 status. A seeder running as its own cron handles the same failure the same way
 but exits non-zero on purpose, so the platform's crash badge is what surfaces a
 source that has stopped answering; a bundle member's tick absorbs that exit,
-which is the difference between the two.
+which is the difference between the two. That badge is only a signal while the
+platform will run the seeder again: a standalone seeder whose newest build has
+failed is ticking its previous Active Deployment, and there the same non-zero
+exit ends its schedule outright.
 
 ### Starved Tick
 
@@ -710,6 +735,25 @@ sides — above the sweep's own duration, or the head expires before the tail
 lands and the marker is never written; below the refresh interval, or every row
 still reads current when the member next comes due and the sweep completes
 having fetched nothing. See also: Section Deferral, Bundle Wall Budget.
+
+## Seeder Deployment Lifecycle
+
+### Active Deployment
+
+The build a Railway cron seeder actually starts on every scheduled tick, as
+distinct from the newest deployment record, which may be a build that failed or
+a push the watch paths declined. Ticks re-run the active build and leave no
+deployment record of their own, so a seeder with narrow watch paths can run the
+same active build for days while its record list fills with declined pushes.
+
+A failed build never becomes active; the seeder keeps ticking the previous
+active build. Once that build's tick exits non-zero it is a crashed deployment,
+and behind a failed build nothing is left to schedule: no further tick runs
+until a new successful build exists, which only a push that touches the watch
+paths or an explicit rebuild from source produces. A crashed deployment that is
+itself the newest is re-run on every tick, so the same non-zero exit is noisy
+but recoverable in one state and silent and permanent in the other. See also:
+Graceful Skip, Seed-Owned Key.
 
 ## Market Data Claims
 
@@ -792,3 +836,4 @@ The comparison needs enough accumulated history to be meaningful and is suppress
 - *"Pool"* had been used for both a labelled market category and the complete set of markets — these are distinct. A pool is always a labelled subset; the complete set has no pool and must be requested as an explicit union.
 - *"Variant"* resolves differently per surface — a served host on the web, a locally stored selection on desktop. Only the web sense is addressable by URL; a desktop artifact is never variant-specific, so a variant accompanying a desktop artifact request is an identity label rather than a selector.
 - *"wingbits"* as a publication source means different things across the two Theater Posture producers — the military-flights seeder's keyed regional supplement after adsb.lol, but the relay loop's last-resort fallback. The recorded producer disambiguates which reading applies; never compare the token across producers.
+- *"Crashed"* had been used for both a build that failed and a run that exited non-zero — these are distinct. A failed build never started a container and leaves the previous Active Deployment serving; a crash is a started run that exited non-zero. Only the second is a seeder outcome; the first is a platform outcome that decides whether the seeder will ever run again.

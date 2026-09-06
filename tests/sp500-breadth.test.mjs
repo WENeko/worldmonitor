@@ -13,9 +13,9 @@ import {
   requireCompleteReadings,
 } from '../scripts/_sp500-breadth.mjs';
 
-// Scanner row shape: d = [name, close, SMA20, SMA50, SMA200].
-function row(name, close, sma20, sma50, sma200) {
-  return { s: `NYSE:${name}`, d: [name, close, sma20, sma50, sma200] };
+// Scanner row shape: d = [name, close, SMA20, SMA50, SMA200, time].
+function row(name, close, sma20, sma50, sma200, time = Date.parse('2026-09-04T13:30:00Z') / 1000) {
+  return { s: `NYSE:${name}`, d: [name, close, sma20, sma50, sma200, time] };
 }
 
 function universe(size, build) {
@@ -93,6 +93,10 @@ describe('requireCompleteReadings', () => {
 });
 
 describe('mergeBreadthHistory', () => {
+  it('rejects an older session instead of appending a duplicate and regressing current', () => {
+    const prior = ['2026-09-03', '2026-09-04'].map((date) => ({ date, ...completeReadings() }));
+    assert.throws(() => mergeBreadthHistory(prior, completeReadings(), '2026-09-03'), /older/);
+  });
   it('appends a new day and sets current from the last history row', () => {
     const prior = [{ date: '2026-09-01', ...completeReadings() }];
     const nextReadings = { pctAbove20d: 30, pctAbove50d: 40, pctAbove200d: 70 };
@@ -166,16 +170,53 @@ describe('fetchSp500Breadth', () => {
       const rows = universe(503, (i) => row(`T${i}`, 100, 90, 90, 90));
       return new Response(JSON.stringify({ totalCount: rows.length, data: rows }), { status: 200 });
     };
-    const { readings, constituents } = await fetchSp500Breadth({ fetchImpl });
+    const { readings, constituents, sessionDate } = await fetchSp500Breadth({ fetchImpl, now: Date.parse('2026-09-06T02:00:00Z') });
     assert.equal(captured.url, 'https://scanner.tradingview.com/america/scan');
     assert.equal(captured.init.method, 'POST');
     assert.equal(captured.init.headers['User-Agent'], CHROME_UA);
     const body = JSON.parse(captured.init.body);
     assert.deepEqual(body.symbols, { symbolset: ['SYML:SP;SPX'] });
-    assert.deepEqual(body.columns, ['name', 'close', 'SMA20', 'SMA50', 'SMA200']);
+    assert.deepEqual(body.columns, ['name', 'close', 'SMA20', 'SMA50', 'SMA200', 'time']);
     assert.deepEqual(body.range, [0, 1000]);
     assert.equal(constituents, 503);
+    assert.equal(sessionDate, '2026-09-04');
     assert.deepEqual(readings, { pctAbove20d: 100, pctAbove50d: 100, pctAbove200d: 100 });
+  });
+
+  for (const now of ['2026-09-05T02:00:00Z', '2026-09-06T08:00:00Z', '2026-09-07T08:00:00Z', '2026-09-08T08:00:00Z']) {
+    it(`keeps Friday's source session on weekend/holiday recovery at ${now}`, async () => {
+      const data = universe(503, (i) => row(`T${i}`, 100, 90, 90, 90));
+      const result = await fetchSp500Breadth({ now: Date.parse(now), fetchImpl: async () => Response.json({ totalCount: 503, data }) });
+      assert.equal(result.sessionDate, '2026-09-04');
+      assert.equal(result.sourceSessionAt, Date.parse('2026-09-04T13:30:00Z'));
+    });
+  }
+
+  for (const [label, time, now] of [
+    ['missing time', null, '2026-09-06T02:00:00Z'],
+    ['weekend session', '2026-09-05T13:30:00Z', '2026-09-06T02:00:00Z'],
+    ['future session', '2026-09-08T13:30:00Z', '2026-09-06T02:00:00Z'],
+    ['unfinished session', '2026-09-04T13:30:00Z', '2026-09-04T19:59:59Z'],
+    ['old source', '2026-09-01T13:30:00Z', '2026-09-07T02:00:00Z'],
+  ]) {
+    it(`rejects ${label}`, async () => {
+      const seconds = time == null ? null : Date.parse(time) / 1000;
+      const data = universe(503, (i) => row(`T${i}`, 100, 90, 90, 90, seconds));
+      await assert.rejects(fetchSp500Breadth({ now: Date.parse(now), fetchImpl: async () => Response.json({ totalCount: 503, data }) }), /session/i);
+    });
+  }
+
+  it('rejects mixed source sessions even with 503 valid prices', async () => {
+    const data = universe(503, (i) => row(`T${i}`, 100, 90, 90, 90));
+    data[0].d[5] -= 86400;
+    await assert.rejects(fetchSp500Breadth({ now: Date.parse('2026-09-06T02:00:00Z'), fetchImpl: async () => Response.json({ totalCount: 503, data }) }), /session/i);
+  });
+
+  it('uses New York close across the winter UTC date boundary', async () => {
+    const data = universe(503, (i) => row(`T${i}`, 100, 90, 90, 90, Date.parse('2026-01-09T14:30:00Z') / 1000));
+    const fetchImpl = async () => Response.json({ totalCount: 503, data });
+    await assert.rejects(fetchSp500Breadth({ now: Date.parse('2026-01-09T20:59:59Z'), fetchImpl }), /session/i);
+    assert.equal((await fetchSp500Breadth({ now: Date.parse('2026-01-10T02:00:00Z'), fetchImpl })).sessionDate, '2026-01-09');
   });
 
   async function rejected(run) {

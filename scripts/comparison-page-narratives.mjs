@@ -15,22 +15,24 @@ const CHOKEPOINT_COUNT = CHOKEPOINT_REGISTRY.length;
 // count (#6038 / #7744).
 const PROVIDER_COUNT = computeStats().sourceAttribution.providerCount.toLocaleString('en-US');
 
-function methodology(focus) {
+function methodology(
+  focus,
+  recheck = 'Vendors change SKUs, so re-check the linked vendor page before you buy.',
+) {
   return [
     `Prices and capability cells on this page were checked on ${CHECKED_ON} from each named vendor's public pricing, product, or API documentation and from World Monitor's published catalog at /pricing, /mcp, and /compare/. ${focus} Where a vendor publishes a list price or quota, the matrix uses that figure. Where a vendor does not publish list pricing, the cell is "Undisclosed (enterprise-negotiated)". This family never substitutes a third-party estimate for a missing list price.`,
-    'World Monitor prices on every row are the public catalog: $0 for the dashboard with no signup, Pro from $39.99/month including MCP access, and API Starter from $99.99/month for 1,000 requests/day. Third-party MCP status is Yes only when a public server or community implementation is documented; otherwise it is Unverified. Signup walls, archive depth, and domain coverage were read from product or docs pages. This page is committed copy with a dated lastmod. Vendors change SKUs, so re-check the linked vendor page before you buy.',
+    `World Monitor prices on every row are the public catalog: $0 for the dashboard with no signup, Pro from $39.99/month including MCP access, and API Starter from $99.99/month for 1,000 requests/day. Third-party MCP status is Yes only when a public server or community implementation is documented; otherwise it is Unverified. Signup walls, archive depth, and domain coverage were read from product or docs pages. This page is committed copy with a dated lastmod. ${recheck}`,
   ];
 }
 
 export const COMPARE_HUB_NARRATIVE = {
-  lede: 'This hub is the index for World Monitor comparison pages: one shared matrix, named concessions, and the questions engines lift verbatim. Use it to pick a head-to-head, not as a substitute for the child pages.',
+  lede: 'Compare tools for conflict monitoring, country risk, shipping disruption, and live geopolitical data. Review their prices, data coverage, update frequency, API access, and limitations, then open a detailed comparison for your use case.',
   howToRead: {
-    heading: 'How to read this comparison family',
+    heading: 'How to choose a comparison',
     paragraphs: [
-      'Every child page uses the same columns: Price, Update latency, Domains covered, Signup required, REST API, MCP server, Open source, Source count and licensing, Historical archive, and Best for. That is deliberate. A comparison that changes axes per vendor is a brochure. A comparison that keeps the axes fixed lets you see who actually publishes a number, who hides behind an enterprise desk, and who wins a cell we would rather not concede.',
-      'Read the Direct answer first. It is the extractable one-sentence claim for the page. Then read the competitor prose — what the named product is, who runs it, what it genuinely does better, and who should still buy it. The matrix is evidence, not the argument. The concession list is the argument we are willing to lose in public. If a page cannot name what the other product wins, it is not a comparison.',
-      'Head-to-head pages (the vs-* URLs) are for a single named incumbent. Multi-product pages are for category queries: Liveuamap alternatives, best dashboards, MCP servers, chokepoint tools, free dashboards, and travel-risk intelligence versus assistance. The hub matrix is the union of the major platforms that appear anywhere in the family, so a row here may be thicker than the row on a child page that only needs two products.',
-      'Do not treat this hub as a price list for enterprise vendors. Palantir, Dataminr, Recorded Future, Crisis24, International SOS, and Everbridge do not publish list pricing on the pages we can cite. Their cells stay undisclosed. World Monitor, Liveuamap, OrreryX, IMF PortWatch, GDELT Cloud, and ACLED are the vendors that give the public something to quote, and those are the numbers we quote.',
+      'Start with the task you need to complete. Compare tools with the same criteria, then consult the named vendor\'s current documentation for the capabilities that matter to you.',
+      'For global multi-domain monitoring, open Best Real-Time Geopolitical Risk Dashboards. For structured historical conflict research, open World Monitor vs ACLED. For Ukraine frontline detail, open World Monitor vs Deep State Map.',
+      'For programmatic API or MCP access, open MCP Servers for Geopolitical Data. For monitoring versus travel assistance, open Travel Risk Intelligence vs Assistance. Check the detailed comparison\'s dated methodology, then confirm the current price or capability with the vendor because both can change.',
     ],
   },
   concessions: {
@@ -44,6 +46,7 @@ export const COMPARE_HUB_NARRATIVE = {
     heading: 'How these figures were checked',
     paragraphs: methodology(
       'The hub row-set is the union of platforms compared on the child pages, checked on the same date against the same public sources.',
+      'Vendors change SKUs, so use the check date above and confirm the current price or capability in the named vendor\'s documentation before you buy.',
     ),
   },
   editorial: [

@@ -11,6 +11,7 @@ import handler, {
   liftProtocolErrorFromToolResult,
   normalizeToolCallResponseBody,
 } from '../api/docs-mcp.ts';
+import { CACHE_POLICY_HEADER_NAME, CDN_CACHE_HEADERS } from './helpers/shared-cache-policy.mjs';
 
 const originalFetch = globalThis.fetch;
 const originalEnv = { ...process.env };
@@ -299,6 +300,34 @@ describe('docs-mcp handler', () => {
     const res = await handler(post('{"jsonrpc":"2.0","id":3,"method":"tools/list"}'));
     assert.equal(res.status, 200);
     assert.equal(await res.text(), sse);
+  });
+
+  it('forces no-store on proxied responses, including the cacheable 405 Mintlify returns for a bare GET', async () => {
+    clearUpstashEnv();
+    // Every header that can carry a shared-cache policy, from the shared list:
+    // a CDN-specific one left in place outranks the handler's no-store.
+    const upstreamHeaders = {
+      'content-type': 'application/json',
+      'cache-control': 'public, max-age=0, must-revalidate',
+      ...Object.fromEntries(CDN_CACHE_HEADERS.map((name) => [name.toLowerCase(), 'public, s-maxage=600, stale-while-revalidate=60'])),
+    };
+    globalThis.fetch = async () =>
+      new Response('{"jsonrpc":"2.0","error":{"code":-32000,"message":"Method not allowed."},"id":null}', {
+        status: 405,
+        headers: upstreamHeaders,
+      });
+    const res = await handler(
+      new Request('https://www.worldmonitor.app/api/docs-mcp', { method: 'GET', headers: { accept: 'application/json' } }),
+    );
+    assert.equal(res.status, 405, 'the upstream status is preserved');
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+    for (const name of CDN_CACHE_HEADERS) {
+      assert.equal(res.headers.get(name), null, `${name} must be stripped from the proxied response`);
+    }
+    for (const [name, value] of res.headers) {
+      assert.ok(!CACHE_POLICY_HEADER_NAME.test(name) || value === 'no-store', `${name}: ${value} is a shared-cache policy`);
+    }
+    assert.equal(res.headers.get('content-type'), 'application/json');
   });
 
   it('answers OPTIONS preflight locally with permissive CORS', async () => {

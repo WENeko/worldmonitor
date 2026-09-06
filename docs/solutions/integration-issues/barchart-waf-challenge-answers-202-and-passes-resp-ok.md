@@ -77,3 +77,58 @@ The replacement removes the dependence on a rendered page entirely. The scanner 
 - PR #7723 (the fix).
 - `docs/solutions/integration-issues/upstash-max-request-size-counts-one-command-and-answers-http-200.md`: another upstream that reports success on the status line while the body says otherwise.
 - `seed-fear-greed.mjs` still scrapes `$CPC` (total put/call) from Barchart; the status gate is now `status !== 200` so a 202 logs as HTTP 202 instead of "price not found". It still degrades to null and needs its own source. TradingView lists `USI:PCC` but the scanner does not serve it.
+
+## Recovery after a repaired deployment
+
+A source repair that arrives after a Saturday run can wait until Tuesday under
+the `0 2 * * 2-6` schedule. This is a recovery gap even when the scheduler works.
+
+The desired cron is now `0 2,8 * * *`. Two daily attempts cap the normal wait at
+18 hours, including weekends and holidays. `runSeed` retains its four-attempt
+limit and exponential backoff. Each scan has a 15-second timeout. The breadth
+fetch phase has a 90-second deadline. A challenge or incomplete scan ends the
+attempt without immediate retries. There are at most eight source requests per
+day under persistent transient failure.
+
+The scanner request includes `time`, the source daily-bar open timestamp.
+All rows must belong to the same completed weekday session. New York time
+handles DST. The seeder waits until 16:00 even on early-close days. It uses the
+source session date for history, so a weekend or holiday attempt cannot create
+a weekend or holiday row. Repeat attempts update the same latest row. An older
+session cannot replace a newer published session. Missed sessions are not backfilled.
+
+Failed requests, incomplete readings, and invalid dates preserve both last-good
+history and success metadata. The existing 96-hour seed-age health budget is
+unchanged. A new five-day content-age limit starts at the source bar's open,
+which precedes overnight collection. That extra calendar day covers the timestamp
+offset and holiday collection window. It prevents repeated valid responses from
+keeping an unchanged source healthy forever. A short failed refresh retains its
+previous health verdict until the real seed or source budget expires.
+
+`tests/market-breadth-recovery.test.mts` executes the real seeder and `runSeed`
+against a fake Redis transport. It checks the health classifier, RPC reader,
+bootstrap envelope reader, and Fear & Greed breadth reader. The original code
+fails the Sunday recovery case by storing September 5 for September 4 data.
+It also republishes an old source. The fixed tests cover repeat attempts,
+failed and partial scans, and bounded transient retries.
+
+### Pending operator application
+
+After the code has merged and the deployed service includes the session-date
+guards, an operator must authorize the following change for `seed-market-breadth`:
+
+- Set **Cron Schedule** to `0 2,8 * * *` in Railway.
+- Keep **Start Command** as `node seed-market-breadth.mjs`.
+- Verify the adapter and seeder remain in the service watch paths.
+
+Do not apply the more frequent schedule before the date guards are deployed.
+The old worker stamps rows with its wall-clock date. The fleet-wide
+`audit-railway-watch-paths.mjs --apply` can change other services and is not a
+scoped application command for this repair.
+
+After application, wait for a natural scheduled run. Confirm the deployed commit,
+complete constituent scan, source session date, canonical envelope, and
+`seed-meta:market:breadth-history` advancement. Confirm that the breadth RPC and
+Fear & Greed reader agree on the published 200-day reading. Check the next repeat
+attempt for a duplicate-free history and unchanged source timestamp.
+A successful deployment or green CI alone does not establish production acceptance.

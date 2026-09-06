@@ -1483,6 +1483,7 @@
     "entry": "scripts/seed-market-breadth.mjs",
     "deployMode": "nixpacks-root-scripts",
     "service": "seed-market-breadth",
+    "cronSchedule": "0 2,8 * * *",
     "watchPatterns": [
       "scripts/_proxy-utils.cjs",
       "scripts/_seed-contract.mjs",

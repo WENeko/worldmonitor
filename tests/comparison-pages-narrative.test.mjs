@@ -20,7 +20,6 @@ import {
 const MIN_H2_FOLLOWING_CHARS = 80;
 const MIN_VS_UNIQUE_PROSE_WORDS = 1200;
 const MIN_MULTI_UNIQUE_PROSE_WORDS = 2000;
-const MIN_HUB_UNIQUE_PROSE_WORDS = 600;
 const MIN_FAQ_COUNT = 8;
 const MAX_FAQ_COUNT = 12;
 const MIN_DUPLICATE_PARAGRAPH_CHARS = 40;
@@ -276,12 +275,66 @@ describe('comparison page narrative depth (#7743)', () => {
     }
   });
 
-  it('puts unique prose in the word-count bands from the GEO audit', () => {
-    const hubWords = uniqueProseWordCount(hubHtml);
-    assert.ok(
-      hubWords >= MIN_HUB_UNIQUE_PROSE_WORDS,
-      `hub unique prose must be >= ${MIN_HUB_UNIQUE_PROSE_WORDS} words, got ${hubWords}`,
+  it('helps hub readers choose a comparison without exposing publishing internals', () => {
+    const main = mainEl(hubHtml);
+    assert.equal(
+      normalizeText(main.querySelector('p.lede')?.textContent),
+      'Compare tools for conflict monitoring, country risk, shipping disruption, and live geopolitical data. Review their prices, data coverage, update frequency, API access, and limitations, then open a detailed comparison for your use case.',
     );
+
+    const howToChoose = h2Sections(main)
+      .find((section) => section.heading === 'How to choose a comparison');
+    assert.ok(howToChoose, 'hub must include practical selection guidance');
+    assert.match(
+      howToChoose.following,
+      /Start with the task you need to complete\. Compare tools with the same criteria, then consult the named vendor's current documentation for the capabilities that matter to you\./,
+    );
+
+    const choices = [
+      ['global multi-domain monitoring', 'best-geopolitical-risk-dashboards'],
+      ['structured historical conflict research', 'worldmonitor-vs-acled'],
+      ['Ukraine frontline detail', 'worldmonitor-vs-deepstatemap'],
+      ['programmatic API or MCP access', 'mcp-servers-for-geopolitical-data'],
+      ['monitoring versus travel assistance', 'travel-risk-intelligence-vs-assistance'],
+    ];
+    for (const [need, slug] of choices) {
+      const page = COMPARISON_PAGES.find((candidate) => candidate.slug === slug);
+      assert.ok(page, `${slug} must remain in the comparison registry`);
+      assert.match(howToChoose.following, new RegExp(`${need}[^.]*${page.h1}`, 'i'));
+      assert.ok(
+        main.querySelector(`a.card[href="${page.path}"]`),
+        `${page.h1} must remain available in the hub navigation`,
+      );
+    }
+
+    const changedCopy = [
+      normalizeText(main.querySelector('p.lede')?.textContent),
+      howToChoose.following,
+    ].join(' ');
+    assert.doesNotMatch(
+      changedCopy,
+      /questions engines|extractable|search[- ]engine|URL construction|vs-\* URLs|content generation|linked (?:product documentation|source links)/i,
+    );
+
+    const sections = new Map(h2Sections(main).map((section) => [section.heading, section.following]));
+    assert.ok(main.querySelector('table'), 'hub must retain the master comparison matrix');
+    assert.ok(sections.get('What we concede on purpose'), 'hub must retain named limitations');
+    assert.match(sections.get('How these figures were checked') ?? '', /checked on 5 September 2026/);
+    assert.match(
+      sections.get('How these figures were checked') ?? '',
+      /confirm the current price or capability in the named vendor's documentation before you buy/i,
+    );
+    assert.doesNotMatch(
+      sections.get('How these figures were checked') ?? '',
+      /linked vendor page/i,
+    );
+    assert.match(
+      howToChoose.following,
+      /Check the detailed comparison's dated methodology, then confirm the current price or capability with the vendor because both can change\./,
+    );
+  });
+
+  it('puts unique prose in the word-count bands from the GEO audit', () => {
     for (const page of COMPARISON_PAGES) {
       const words = uniqueProseWordCount(pages.get(page.slug));
       const min = VS_SLUGS.has(page.slug)

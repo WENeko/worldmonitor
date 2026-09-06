@@ -2603,9 +2603,10 @@ export async function fetchCrossStraitActivitySnapshot({
   });
   let discoveredCount = 0;
   let requestCount = 0;
+  let listRequestCount = 0;
   const runStartedAt = nowFn();
 
-  for (let page = 1; page <= listPages; page += 1) {
+  for (let page = 1; page <= listPages && listRequestCount < MND_MAX_LIST_PAGES_PER_BACKFILL_RUN; page += 1) {
     const url = page === 1 ? mndListUrl : `${mndListUrl}/${page}`;
     const cadenceMs = requestCount > 0 ? REQUEST_CADENCE_MS : 0;
     if (!hasMndOutboundBudget({ runStartedAt, nowFn, cadenceMs })) {
@@ -2617,9 +2618,22 @@ export async function fetchCrossStraitActivitySnapshot({
       break;
     }
     try {
-      if (cadenceMs) await sleepFn(cadenceMs);
-      requestCount += 1;
-      const html = await fetchBoundedText(fetchFn, url, mndContract);
+      let html;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (requestCount > 0) await sleepFn(REQUEST_CADENCE_MS);
+        requestCount += 1;
+        listRequestCount += 1;
+        try {
+          html = await fetchBoundedText(fetchFn, url, mndContract);
+          break;
+        } catch (error) {
+          if (errorCode(error) !== 'TIMEOUT' || attempt === 1
+            || listRequestCount >= MND_MAX_LIST_PAGES_PER_BACKFILL_RUN
+            || !hasMndOutboundBudget({ runStartedAt, nowFn, cadenceMs: REQUEST_CADENCE_MS })) {
+            throw error;
+          }
+        }
+      }
       const rows = parseTaiwanMndList(html).map((row) => {
         const previous = previousMndByUrl.get(row.sourceUrl);
         return {
@@ -2688,17 +2702,17 @@ export async function fetchCrossStraitActivitySnapshot({
     const candidateErrors = isRefresh ? mndRefreshErrors : mndErrors;
     if (primaryBudgetExhausted && !isRefresh) continue;
     const detailAttemptLimit = MND_MAX_DETAIL_REQUESTS_PER_RUN - reservedRefreshAttempts;
-    let retryingMissingMetadata = false;
+    let retryErrorCode = null;
     while (detailRequestCount < detailAttemptLimit) {
       if (!hasMndOutboundBudget({
         runStartedAt,
         nowFn,
         cadenceMs: REQUEST_CADENCE_MS,
-        reservedRequestCount: isRefresh && !retryingMissingMetadata ? 0 : reservedRefreshAttempts,
+        reservedRequestCount: isRefresh && !retryErrorCode ? 0 : reservedRefreshAttempts,
       })) {
-        if (retryingMissingMetadata) candidateErrors.push('MND_PUBLICATION_METADATA_MISSING');
+        if (retryErrorCode) candidateErrors.push(retryErrorCode);
         candidateErrors.push('OUTBOUND_BUDGET_EXHAUSTED');
-        if (isRefresh && !retryingMissingMetadata) break candidateLoop;
+        if (isRefresh && !retryErrorCode) break candidateLoop;
         if (!isRefresh) primaryBudgetExhausted = true;
         break;
       }
@@ -2718,11 +2732,11 @@ export async function fetchCrossStraitActivitySnapshot({
       } catch (error) {
         const code = errorCode(error);
         if (
-          code === 'MND_PUBLICATION_METADATA_MISSING'
-          && !retryingMissingMetadata
+          (code === 'MND_PUBLICATION_METADATA_MISSING' || code === 'TIMEOUT')
+          && !retryErrorCode
           && detailRequestCount < detailAttemptLimit
         ) {
-          retryingMissingMetadata = true;
+          retryErrorCode = code;
           continue;
         }
         candidateErrors.push(code);

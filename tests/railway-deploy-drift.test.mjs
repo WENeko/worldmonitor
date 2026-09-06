@@ -340,6 +340,50 @@ describe('Railway deploy drift classification', () => {
     assert.equal(result.verdict, 'BUILD_FAILED');
   });
 
+  it('ignores a failed build that a later build already superseded', () => {
+    const result = classify([
+      deployment('SUCCESS', { at: '2026-08-04T06:00:00Z', sha: HEAD }),
+      deployment('FAILED', { at: '2026-08-04T05:30:00Z', sha: NEWER }),
+      deployment('REMOVED', { at: '2026-08-04T05:00:00Z', sha: PREVIOUS }),
+    ]);
+    assert.equal(result.verdict, 'CURRENT');
+  });
+
+  it('names a crashed serving deployment behind a failed build as a stopped cron', () => {
+    const result = classify([
+      deployment('FAILED', { at: '2026-08-04T05:30:00Z', sha: HEAD }),
+      deployment('CRASHED', { at: '2026-08-04T05:00:00Z', sha: PREVIOUS }),
+    ], { cronSchedule: '0 * * * *' });
+    assert.equal(result.verdict, 'BUILD_FAILED');
+    assert.equal(result.runningStatus, 'CRASHED');
+    assert.match(result.detail, /cron will not tick again/);
+    assert.match(result.detail, /railway redeploy --service seed-example --from-source/);
+  });
+
+  it('reports a crashed always-on service behind a failed build without a cron claim', () => {
+    const result = classify([
+      deployment('FAILED', { at: '2026-08-04T05:30:00Z', sha: HEAD }),
+      deployment('CRASHED', { at: '2026-08-04T05:00:00Z', sha: PREVIOUS }),
+    ]);
+    assert.equal(result.verdict, 'BUILD_FAILED');
+    assert.match(result.detail, /has CRASHED/);
+    assert.doesNotMatch(result.detail, /cron/);
+  });
+
+  it('lets a build under way outrank an older failure', () => {
+    const history = [
+      deployment('BUILDING', { at: '2026-08-04T05:50:00Z', sha: HEAD }),
+      deployment('FAILED', { at: '2026-08-04T05:30:00Z', sha: NEWER }),
+      deployment('CRASHED', { at: '2026-08-04T05:00:00Z', sha: PREVIOUS }),
+    ];
+    const pending = classify(history, { now: Date.parse('2026-08-04T06:00:00Z'), cronSchedule: '0 * * * *' });
+    assert.equal(pending.verdict, 'PENDING_BUILD');
+
+    const stalled = classify(history, { now: Date.parse('2026-08-07T06:00:00Z'), cronSchedule: '0 * * * *' });
+    assert.equal(stalled.verdict, 'BUILD_STALLED');
+    assert.match(stalled.detail, /cron will not tick again/);
+  });
+
   it('reports a window whose only running record never built anything', () => {
     const result = classify([
       deployment('FAILED', { at: '2026-08-04T05:30:00Z', sha: PREVIOUS }),
@@ -439,6 +483,33 @@ describe('Railway deploy drift against the service closure', () => {
       ...overrides,
     });
   }
+
+  // seed-fred-rates, 2026-09-05: docs/solutions/integration-issues/railway-cron-crash-behind-failed-build-never-self-heals.md
+  it('reports a failed build newer than the serving source even when head was path-skipped since', () => {
+    const result = classifyWithClosure([
+      deployment('SKIPPED', { at: '2026-09-05T18:44:13Z', sha: HEAD, skippedReason: 'No changes to watched files' }),
+      deployment('FAILED', { at: '2026-09-05T15:28:14Z', sha: NEWER, buildOnly: true }),
+      deployment('CRASHED', { at: '2026-09-04T20:16:48Z', sha: PREVIOUS }),
+    ], { changedPaths: ['src/App.ts'], changedPathsIn: () => ['src/App.ts'], cronSchedule: '0 * * * *' });
+    assert.equal(result.verdict, 'BUILD_FAILED');
+    assert.equal(isProblemVerdict(result.verdict), true);
+    assert.equal(result.runningSha, PREVIOUS);
+    assert.equal(result.runningStatus, 'CRASHED');
+    assert.match(result.detail, /build for 4e89f7ea4 failed/);
+    assert.match(result.detail, /nothing has built since/);
+    assert.match(result.detail, /cron will not tick again/);
+  });
+
+  it('reports a failed build behind a healthy serving source without the stopped-cron claim', () => {
+    const result = classifyWithClosure([
+      deployment('SKIPPED', { at: '2026-09-05T18:44:13Z', sha: HEAD, skippedReason: 'No changes to watched files' }),
+      deployment('FAILED', { at: '2026-09-05T15:28:14Z', sha: NEWER, buildOnly: true }),
+      deployment('SUCCESS', { at: '2026-09-04T20:16:48Z', sha: PREVIOUS }),
+    ], { changedPaths: ['src/App.ts'], changedPathsIn: () => ['src/App.ts'] });
+    assert.equal(result.verdict, 'BUILD_FAILED');
+    assert.equal(result.runningStatus, 'SUCCESS');
+    assert.doesNotMatch(result.detail, /cron will not tick again/);
+  });
 
   it('accepts a service running everything that reaches it, head or not', () => {
     const result = classifyWithClosure(

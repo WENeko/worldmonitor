@@ -12,7 +12,7 @@ await runBundle('derived-signals', [
   // the source-specific name alone would hard-fail this section in an
   // environment where only the shared exit is configured -- even though the
   // seeder would have run with no degradation.
-  { label: 'Cross-Strait-Activity', script: 'seed-cross-strait-activity.mjs', seedMetaKey: 'military:cross-strait-activity:complete', intervalMs: 3 * HOUR, timeoutMs: 300_000, requiredEnv: [['JAPAN_MOD_PROXY_URL', 'PROXY_URL']] },
+  { label: 'Cross-Strait-Activity', script: 'seed-cross-strait-activity.mjs', seedMetaKey: 'military:cross-strait-activity:complete', sourceRetryMetaKey: 'seed-meta:military:cross-strait-activity:taiwan-mnd', sourceRetryDelayMs: 30 * MIN, intervalMs: 3 * HOUR, timeoutMs: 300_000, requiredEnv: [['JAPAN_MOD_PROXY_URL', 'PROXY_URL']] },
   { label: 'China-Decision-Signals', script: 'seed-china-decision-signals.mjs', seedMetaKey: 'intelligence:china-decision-signals', canonicalKey: CHINA_DECISION_SIGNALS_KEY, completionMetaKey: 'seed-completion:intelligence:china-decision-signals', intervalMs: 15 * MIN, timeoutMs: 90_000 },
   { label: 'Regional-Snapshots', script: 'seed-regional-snapshots.mjs', seedMetaKey: 'intelligence:regional-snapshots', intervalMs: 6 * HOUR, timeoutMs: 180_000 },
 ], {

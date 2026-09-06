@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import test from 'node:test';
 
 import { __testing__ } from '../api/health.js';
 import seedHealthHandler from '../api/seed-health.js';
 import { atomicPublish, runSeed } from '../scripts/_seed-utils.mjs';
+import { readSectionFreshness } from '../scripts/_bundle-runner.mjs';
+import { extractRunBundleSectionSource } from './helpers/bundle-section-parser.mjs';
 import { CROSS_STRAIT_ACTIVITY_KEY } from '../scripts/cross-strait-activity/adapters.mjs';
 import {
   CROSS_STRAIT_ACTIVITY_BOOTSTRAP_KEY,
@@ -177,6 +180,18 @@ test('MND metadata counts completed source attempts independently of canonical p
   const start = Date.parse('2026-09-05T12:00:00.000Z');
   const minute = 60_000;
   const stored = new Map<string, Record<string, unknown>>();
+  const sectionSource = extractRunBundleSectionSource(read('scripts/seed-bundle-derived-signals.mjs'), 'derived-signals');
+  assert.ok(sectionSource);
+  const section = runInNewContext(`(${sectionSource})`, {
+    MIN: minute, HOUR: 60 * minute, CHINA_DECISION_SIGNALS_KEY: 'unused-in-this-test',
+  }).find(section => section.label === 'Cross-Strait-Activity');
+  assert.equal(section?.sourceRetryMetaKey, metaKey);
+  assert.equal(section?.sourceRetryDelayMs, 30 * minute);
+  const freshness = async () => {
+    const { retryClaim, ...clocks } = await readSectionFreshness(section, async key => stored.get(key) ?? null);
+    if (retryClaim) assert.equal(JSON.parse(retryClaim.nextValue).fetchedAt, clocks.fetchedAt);
+    return clocks;
+  };
   const reads: string[] = [];
   const write = async (key: string, value: Record<string, unknown>) => { stored.set(key, value); };
   const reader = async (key: string, options: { strict: boolean }) => {
@@ -195,6 +210,7 @@ test('MND metadata counts completed source attempts independently of canonical p
         lastSuccessAt: new Date(lastSuccessAt).toISOString(),
       }],
     }, write, reader);
+    await writePublicationCompletion({ observations: [{ sourceId: 'taiwan-mnd' }] }, write, attemptAt + 1000);
     const meta = stored.get(metaKey);
     assert.ok(meta);
     return meta;
@@ -210,6 +226,7 @@ test('MND metadata counts completed source attempts independently of canonical p
   assert.equal(success.sourceState, 'ok');
   assert.equal(success.consecutiveSourceFailures, 0);
   assert.equal(success.firstSourceFailureAt, null);
+  assert.deepEqual(await freshness(), { fetchedAt: start + 1000 });
 
   const first = await publish(start + minute, 'MND_HTTP_503');
   assert.deepEqual(first, {
@@ -224,6 +241,7 @@ test('MND metadata counts completed source attempts independently of canonical p
     firstSourceFailureAt: start + minute,
   });
   assert.deepEqual(await publish(start + minute, 'MND_HTTP_503'), first, 'duplicate source write is not another attempt');
+  assert.deepEqual(await freshness(), { fetchedAt: start + minute + 1000, retryAt: start + 31 * minute });
   const firstEntry = classify(first, start + minute);
   assert.equal(firstEntry.status, 'SEED_ERROR', 'raw source failure remains visible');
   assert.equal(healthStatusBucket(firstEntry, start + minute), 'ok');
@@ -233,19 +251,23 @@ test('MND metadata counts completed source attempts independently of canonical p
   const second = await publish(start + 181 * minute, 'MND_HTTP_503');
   assert.equal(second.consecutiveSourceFailures, 2);
   assert.equal(second.firstSourceFailureAt, first.firstSourceFailureAt);
+  assert.deepEqual(await freshness(), { fetchedAt: start + 181 * minute + 1000 });
   assert.equal(healthStatusBucket(classify(second, start + 181 * minute), start + 181 * minute), 'warn');
   const changed = await publish(start + 182 * minute, 'MND_PUBLICATION_METADATA_MISSING');
   assert.equal(changed.consecutiveSourceFailures, 1);
   assert.equal(changed.firstSourceFailureAt, first.firstSourceFailureAt, 'cause churn keeps the episode deadline');
+  assert.deepEqual(await freshness(), { fetchedAt: start + 182 * minute + 1000 });
 
   const recovered = await publish(start + 183 * minute, null, start + 183 * minute);
   assert.equal(recovered.consecutiveSourceFailures, 0);
   assert.equal(recovered.firstSourceFailureAt, null);
   assert.equal(recovered.lastSourceFailureCode, null);
   assert.equal(classify(recovered, start + 183 * minute).status, 'OK');
+  assert.deepEqual(await freshness(), { fetchedAt: start + 183 * minute + 1000 });
   const afterCanonicalFailure = await publish(start + 184 * minute, 'MND_HTTP_503', start);
   assert.equal(afterCanonicalFailure.fetchedAt, start, 'retained record freshness follows the served archive, not an unpublished successful fetch');
   assert.equal(afterCanonicalFailure.firstSourceFailureAt, start + 184 * minute);
+  assert.deepEqual(await freshness(), { fetchedAt: start + 184 * minute + 1000, retryAt: start + 214 * minute });
   assert.ok(reads.every(key => key === metaKey), 'history reads use source metadata, not the canonical archive');
 });
 

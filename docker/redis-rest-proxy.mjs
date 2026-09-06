@@ -516,7 +516,13 @@ const PHYSICAL_DIVERGENCE_PUBLISH_SCRIPT = [
   'end',
   'return #KEYS',
 ].join('\n');
+const SOURCE_RETRY_CLAIM_SCRIPT = [
+  "if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end",
+  "redis.call('SET', KEYS[1], ARGV[2], 'XX', 'KEEPTTL')",
+  'return 1',
+].join('\n');
 const ALLOWED_EVAL_SCRIPTS = new Set([
+  SOURCE_RETRY_CLAIM_SCRIPT,
   DIGEST_LASTGOOD_PUBLISH_SCRIPT,
   STORY_ALIAS_PUBLISH_SCRIPT,
   MCP_QUOTA_RESERVE_SCRIPT,

@@ -14,7 +14,8 @@ const WINDOWS = [
   { field: 'pctAbove50d', column: 'SMA50' },
   { field: 'pctAbove200d', column: 'SMA200' },
 ];
-const COLUMNS = ['name', 'close', ...WINDOWS.map((w) => w.column)];
+const COLUMNS = ['name', 'close', ...WINDOWS.map((w) => w.column), 'time'];
+const TIME_INDEX = COLUMNS.indexOf('time');
 const CLOSE_INDEX = 1;
 const FIRST_SMA_INDEX = 2;
 // Pin the page so a library-default [0, 50] cannot pass the 450-row floor as
@@ -23,6 +24,11 @@ const SCAN_RANGE = [0, 1000];
 
 export const BREADTH_HISTORY_KEY = 'market:breadth-history:v1';
 export const HISTORY_LENGTH = 252;
+// Daily bars start at the open, before the overnight seed. Allow that extra
+// calendar day in the content budget; the existing seed-age budget stays 96h.
+export const MAX_SESSION_AGE_MIN = 7200;
+const SESSION_DATE = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' });
+const SESSION_HOUR = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hourCycle: 'h23' });
 
 // The index holds ~503 tickers (dual share classes included). A window with
 // fewer valid rows than this is a partial scan, and a percentage of a partial
@@ -38,7 +44,7 @@ function scanError(message, { status, nonRetryable = true, retryAfterMs } = {}) 
 }
 
 /**
- * @param {Array<{ s: string, d: Array<string|number|null> }>} rows scanner rows, d = [name, close, SMA20, SMA50, SMA200]
+ * @param {Array<{ s: string, d: Array<string|number|null> }>} rows scanner rows, d = [name, close, SMA20, SMA50, SMA200, time]
  * @returns {{ readings: Record<string, number|null>, constituents: number, valid: Record<string, number> }}
  */
 export function computeBreadth(rows, minValid = MIN_VALID_CONSTITUENTS) {
@@ -69,6 +75,7 @@ export function requireCompleteReadings(readings) {
 export function mergeBreadthHistory(history, readings, today, maxLength = HISTORY_LENGTH) {
   const next = Array.isArray(history) ? history.map((entry) => ({ ...entry })) : [];
   const last = next.at(-1);
+  if (last?.date > today) throw scanError(`Breadth session ${today} is older than published ${last.date}`);
   const updatedExisting = last?.date === today;
   if (updatedExisting) {
     last.pctAbove20d = readings.pctAbove20d;
@@ -134,7 +141,7 @@ export async function readPublishedPctAbove200d(opts) {
   return Number.isFinite(value) ? value : null;
 }
 
-export async function fetchSp500Breadth({ fetchImpl = fetch, timeoutMs = 15_000 } = {}) {
+export async function fetchSp500Breadth({ fetchImpl = fetch, timeoutMs = 15_000, now = Date.now() } = {}) {
   const resp = await fetchImpl(SCANNER_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': CHROME_UA },
@@ -166,5 +173,25 @@ export async function fetchSp500Breadth({ fetchImpl = fetch, timeoutMs = 15_000 
       `TradingView scan truncated: totalCount=${body.totalCount} data=${body.data.length}`,
     );
   }
-  return computeBreadth(body.data);
+  const breadth = computeBreadth(body.data);
+  requireCompleteReadings(breadth.readings);
+  const sourceSessionAt = body.data[0]?.d?.[TIME_INDEX] * 1000;
+  if (!Number.isFinite(sourceSessionAt) || sourceSessionAt <= 0 || sourceSessionAt > now
+      || now - sourceSessionAt > MAX_SESSION_AGE_MIN * 60_000) {
+    throw scanError('Breadth source session is missing, future, or stale');
+  }
+  const sessionDate = SESSION_DATE.format(sourceSessionAt);
+  if (body.data.some((row) => !Number.isFinite(row?.d?.[TIME_INDEX])
+      || row.d[TIME_INDEX] <= 0 || row.d[TIME_INDEX] * 1000 > now
+      || SESSION_DATE.format(row.d[TIME_INDEX] * 1000) !== sessionDate)) {
+    throw scanError('Breadth scan contains missing or mixed source sessions');
+  }
+  const weekday = new Date(`${sessionDate}T12:00:00Z`).getUTCDay();
+  // A daily bar's timestamp is its open. Wait until the regular close even
+  // on early-close days; the twice-daily cron runs outside trading hours.
+  if (weekday === 0 || weekday === 6
+      || (sessionDate === SESSION_DATE.format(now) && Number(SESSION_HOUR.format(now)) < 16)) {
+    throw scanError('Breadth source session has not closed or is not a weekday');
+  }
+  return { ...breadth, sessionDate, sourceSessionAt };
 }

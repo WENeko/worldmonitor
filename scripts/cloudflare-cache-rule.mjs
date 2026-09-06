@@ -236,15 +236,24 @@ function buildCorpusCacheExpression({
     ].join('\n');
   });
   const agentFiles = files.map((file) => `"/${file}"`).join(' ');
-  // Header names arrive lowercased in http.request.headers.names; Accept values
-  // do not, and both origins match media types case-insensitively, hence lower().
+  // Presence of an RSC header is tested through the `http.request.headers[...]`
+  // map, whose keys are the lowercased names, NOT through
+  // `http.request.headers.names[*] == "rsc"`: that array keeps the sender's
+  // casing, and HTTP/1.1 clients send it verbatim (Node's fetch puts `RSC: 1` on
+  // the wire as-is; only HTTP/2 lowercases). Measured 2026-09-06: with the names
+  // form, `RSC: 1` was MISS on /docs/documentation and stored the flight under
+  // the HTML URL, so every later plain request got text/x-component from the
+  // edge until a zone purge; `rsc: 1` was DYNAMIC. The live sweep sends `RSC: 1`
+  // through fetch() and had been reading the cached HTML for the same reason.
+  // Accept values keep their case and both origins match media types
+  // case-insensitively, hence lower().
   // Accept is a list-typed header that may arrive as several lines, and Cloudflare
   // exposes each line as one array element; the origins honour the combined list
   // (`Accept: text/markdown` on a second line still yields markdown), so every
   // element is inspected — `[0]` alone would admit a request whose first line is
   // harmless and whose second asks for markdown.
   const noRscFlight = RSC_REQUEST_HEADERS.map(
-    (name) => `      and not any(http.request.headers.names[*] == "${name}")`,
+    (name) => `      and not any(http.request.headers["${name}"][*] != "")`,
   );
   const noNegotiation = NEGOTIATED_MEDIA_TYPES.map(
     (type) => `      and not any(lower(http.request.headers["accept"][*])[*] contains "${type}")`,

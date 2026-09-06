@@ -184,11 +184,16 @@ export function classifyServiceDeploy({
   // Paths changed by one commit, used to judge whether a single refusal was the
   // filter working. Same default, same reason.
   changedPathsIn = () => null,
+  // The service's cron expression from the live deployment config, or null for
+  // an always-on service. Decides whether a crashed serving deployment behind a
+  // failed or in-flight build is reported as a stopped cron.
+  cronSchedule = null,
 }) {
   const base = {
     service,
     runningSha: null,
     runningAt: null,
+    runningStatus: null,
     rejectedShas: [],
     unknownStatuses: [],
   };
@@ -223,6 +228,7 @@ export function classifyServiceDeploy({
       unknownStatuses,
       runningSha: running?.meta?.commitHash ?? null,
       runningAt: running?.createdAt ?? null,
+      runningStatus: running?.status ?? null,
       detail: `Railway reported ${unknownStatuses.join(', ')}, which this check cannot classify`,
     };
   }
@@ -284,16 +290,42 @@ export function classifyServiceDeploy({
     ...base,
     runningSha,
     runningAt: running?.createdAt ?? null,
+    runningStatus: running?.status ?? null,
     rejectedShas,
   };
 
-  // A failed build for head outranks an outstanding rejection when it is the
-  // newer event: that is exactly the #6142 recovery path, where the trigger is
-  // fixed, the build finally fires, and it breaks. Reporting REJECTED_PUSH
-  // there would name a cause that has already been resolved.
+  // A failed build newer than the serving source outranks an outstanding
+  // rejection when it is the newer event: that is exactly the #6142 recovery
+  // path, where the trigger is fixed, the build finally fires, and it breaks.
+  // Reporting REJECTED_PUSH there would name a cause that has already been
+  // resolved.
   const forHead = (statuses) => ordered.find((deployment) => statuses.includes(deployment.status)
     && deployment.meta?.commitHash === headSha);
-  const failedForHead = forHead(FAILED_STATUSES);
+  // The newest build attempt since the serving source was built. A failure
+  // counts only until a later attempt starts; an in-flight attempt reports
+  // through the PENDING_BUILD and BUILD_STALLED branches below.
+  const newestAttempt = running
+    ? ordered.find((deployment) => (FAILED_STATUSES.includes(deployment.status)
+      || IN_FLIGHT_STATUSES.includes(deployment.status)) && newerThanRunning(deployment))
+    : null;
+  const failedBuild = newestAttempt && FAILED_STATUSES.includes(newestAttempt.status) ? newestAttempt : null;
+  const inFlightForHead = forHead(IN_FLIGHT_STATUSES);
+  // Railway ticks a cron service's serving deployment while a newer build is
+  // FAILED or in flight; once that deployment crashes nothing is left to
+  // schedule. An always-on service is restarted instead. See
+  // docs/solutions/integration-issues/railway-cron-crash-behind-failed-build-never-self-heals.md.
+  const servingCrashedBehindBuild = running?.status === 'CRASHED' && Boolean(failedBuild || inFlightForHead);
+  const stoppedCron = !servingCrashedBehindBuild
+    ? ''
+    : cronSchedule
+      ? '; that deployment has CRASHED and its cron will not tick again until a build succeeds'
+      : '; that deployment has CRASHED';
+  const buildFailedDetail = () => {
+    const failedSha = failedBuild.meta?.commitHash;
+    return `the build for ${failedSha ? failedSha.slice(0, 9) : 'an unidentified commit'} failed, so ${runningSha ? runningSha.slice(0, 9) : 'an unidentified source'} is still serving`
+      + stoppedCron
+      + `; nothing has built since, so run \`railway redeploy --service ${service} --from-source\` to rebuild at head`;
+  };
   // A frozen comparison head can have a failed build even after a newer
   // descendant is serving. Production is ahead in that case. Keep outstanding
   // rejection handling below ahead of the final AHEAD verdict: a later refused
@@ -306,11 +338,11 @@ export function classifyServiceDeploy({
   const newestRejectionAt = outstandingRejections.length > 0
     ? Math.max(...outstandingRejections.map(createdAtMs))
     : Number.NEGATIVE_INFINITY;
-  if (!runningIsAhead && failedForHead && createdAtMs(failedForHead) > newestRejectionAt) {
+  if (!runningIsAhead && failedBuild && createdAtMs(failedBuild) > newestRejectionAt) {
     return {
       ...identified,
       verdict: 'BUILD_FAILED',
-      detail: `the build for ${headSha.slice(0, 9)} failed, so ${runningSha?.slice(0, 9) ?? 'an unidentified source'} is still serving`,
+      detail: buildFailedDetail(),
     };
   }
 
@@ -363,25 +395,24 @@ export function classifyServiceDeploy({
     };
   }
 
-  if (failedForHead) {
+  if (failedBuild) {
     return {
       ...identified,
       verdict: 'BUILD_FAILED',
-      detail: `the build for ${headSha.slice(0, 9)} failed, so ${identified.runningSha.slice(0, 9)} is still serving`,
+      detail: buildFailedDetail(),
     };
   }
   // A build that started must also still be plausibly running. Without the age
   // bound a build that wedged days ago kept reporting PENDING_BUILD — a healthy
   // verdict — for as long as head did not move, which is precisely the
   // green-while-stale outcome this check exists to prevent.
-  const inFlightForHead = forHead(IN_FLIGHT_STATUSES);
   if (inFlightForHead) {
     const startedMs = createdAtMs(inFlightForHead);
     if (Number.isFinite(now) && now - startedMs > buildGraceMs) {
       return {
         ...identified,
         verdict: 'BUILD_STALLED',
-        detail: `a build for ${headSha.slice(0, 9)} has been ${inFlightForHead.status} since ${inFlightForHead.createdAt}, longer than the ${Math.round(buildGraceMs / 60_000)}m grace`,
+        detail: `a build for ${headSha.slice(0, 9)} has been ${inFlightForHead.status} since ${inFlightForHead.createdAt}, longer than the ${Math.round(buildGraceMs / 60_000)}m grace${stoppedCron}`,
       };
     }
     return { ...identified, verdict: 'PENDING_BUILD', detail: `a build for ${headSha.slice(0, 9)} is under way` };
@@ -948,6 +979,9 @@ async function main() {
     changedPathsIn: (sha) => (
       classificationDeadlineReached() ? null : changedPathsIn(sha)
     ),
+    cronSchedule: liveById[service.id]?.deploy?.cronSchedule
+      ?? registryByService.get(service.name)?.cronSchedule
+      ?? null,
   });
 
   const shallowResults = classifyFleetWithinDeadline(services, histories, {

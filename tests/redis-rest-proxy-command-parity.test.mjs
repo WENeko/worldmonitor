@@ -34,6 +34,7 @@ import {
   ACK_RECEIPTS_LUA,
   STATUS_LUA,
 } from '../scripts/lib/x-post-budget.cjs';
+import { SOURCE_RETRY_CLAIM_SCRIPT } from '../scripts/_bundle-runner.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
@@ -207,6 +208,14 @@ describe('redis-rest-proxy command gate', () => {
       false,
       'a one-character script variant must stay blocked',
     );
+  });
+
+  it('admits the exact bundle recovery claim through the self-hosted proxy', () => {
+    const gate = buildGate();
+    const command = ['EVAL', SOURCE_RETRY_CLAIM_SCRIPT, '1', 'seed-meta:military:cross-strait-activity:complete', '{}', '{}'];
+    assert.equal(accepts(gate, command), true);
+    assert.deepEqual(Array.from(gate.commandForExecution(command)), command);
+    assert.equal(accepts(gate, ['EVAL', `${SOURCE_RETRY_CLAIM_SCRIPT} `, '1', 'k']), false);
   });
 
   it('pins the atomic physical-premium publication by exact bytes', () => {
