@@ -111,14 +111,15 @@ export function isStaleContentGraceProblem(problem, now = Date.now()) {
 }
 
 export function isSourceFailurePendingProblem(problem, now = Date.now()) {
+  const earthquake = problem?.errorCode === 'EARTHQUAKE_UPSTREAM_INCOMPLETE';
   return problem?.status === 'SEED_ERROR'
     && Number.isFinite(problem.records) && problem.records > 0
     && Number.isFinite(problem.seedAgeMin) && problem.seedAgeMin >= 0
     && Number.isFinite(problem.maxStaleMin) && problem.seedAgeMin <= problem.maxStaleMin
     && problem.consecutiveSourceFailures === 1
-    && typeof problem.errorCode === 'string' && /^MND_[A-Z0-9_]{1,60}$/.test(problem.errorCode)
+    && typeof problem.errorCode === 'string' && (earthquake || /^MND_[A-Z0-9_]{1,60}$/.test(problem.errorCode))
     && problem.errorCode === problem.lastSourceFailureCode
-    && hasActiveBoundedDeadline(problem.sourceFailurePendingUntil, now, 215 * 60_000);
+    && hasActiveBoundedDeadline(problem.sourceFailurePendingUntil, now, (earthquake ? 15 : 215) * 60_000);
 }
 
 export function findPendingDiagnostics(payload, now = Date.now()) {

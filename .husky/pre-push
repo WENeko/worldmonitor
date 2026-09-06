@@ -440,6 +440,7 @@ PROTO_INPUTS=(
   .github/workflows/proto-check.yml
   scripts/_conflict-gdelt.mjs
   scripts/_gdelt-bulk-materializer.mjs
+  scripts/_gdelt-country-codes.mjs
   scripts/_html-entities.mjs
   scripts/apply-openapi-filter-param-schemas.mjs
   scripts/generate-request-validation.mjs

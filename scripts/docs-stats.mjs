@@ -16,7 +16,7 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { buildSourceAttributionStats } from './source-attribution.mjs';
 import { extractAssignedObjectBlock } from './lib/js-source-structure.mjs';
 
@@ -948,7 +948,10 @@ export async function withStatsRoot(fn) {
         continue;
       }
       try {
-        cpSync(join(ROOT, entry.name), join(sandbox, entry.name), { recursive: true });
+        cpSync(join(ROOT, entry.name), join(sandbox, entry.name), {
+          recursive: true,
+          filter: (from) => basename(from) !== 'node_modules',
+        });
       } catch {
         // A path that cannot be copied (platform link, transient state): the
         // stat reports zero for whatever lived there, same as a repo

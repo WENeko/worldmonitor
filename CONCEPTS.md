@@ -278,15 +278,19 @@ The rule that decides whether a news item is about a country: its display name o
 
 ### Brief Grounding
 
-The set of digest headlines a country brief is generated from and may cite; a brief's citations index that set and nothing else. Grounding is *thin* when its headlines come from fewer distinct Publisher Families than the publish floor requires, in which case no brief is requested or published and the page keeps only the dated headlines — a multi-horizon outlook synthesised from one outlet is not published on an indexed page. The dashboard's anonymous brief instead falls back to global stories when nothing names the country; the prerendered corpus refuses that fallback. See also: Publisher Family, Country Mention, Feed Digest.
+The set of headlines a country brief is generated from and may cite — the week's digest rows that name the country, topped up from the Country Article Index where the digest leaves the country short; a brief's citations index that set and nothing else. Grounding is *thin* when its headlines come from fewer distinct Publisher Families than the publish floor requires, in which case no brief is requested or published and the page keeps only the dated headlines — a multi-horizon outlook synthesised from one outlet is not published on an indexed page. The dashboard's anonymous brief instead falls back to global stories when nothing names the country; the prerendered corpus refuses that fallback. See also: Publisher Family, Country Mention, Country Article Index, Feed Digest.
 
 ### Publisher Family
 
-The newsroom behind one or more feed labels — several editions or regional feeds of one outlet are a single family, and an unmapped label is its own family so no feed can silently claim to corroborate another. Every rule that speaks of "N independent sources" counts families, never labels. See also: Brief Grounding.
+The newsroom behind one or more feed labels — several editions or regional feeds of one outlet are a single family, and an unmapped label is its own family so no feed can silently claim to corroborate another. Every rule that speaks of "N independent sources" counts families, never labels. For the brief floor, rows published on one site are also one publisher whatever their labels say, because an index row is labelled by its domain while a digest row is labelled by its feed. See also: Brief Grounding, Country Article Index.
+
+### Country Article Index
+
+A rolling, per-country index of GDELT GKG articles the bulk materializer keeps alongside its topic products: each article is filed under the countries its location mentions name (FIPS codes mapped to ISO-2), title mentions first and then primary mentions, and an article naming many countries is filed under its primary country only. Served through the GDELT search route's `country:` query form, it is the grounding pool for the countries the week's digest never names. A location mention alone never publishes a row: the title must pass the Country Mention rule, so an index row on a country page is about that country, not merely set in it. Index rows come from whatever host GDELT crawled rather than a curated feed, so a page renders them `nofollow`, and they corroborate a brief but never ground one alone — a published brief needs at least one curated row behind it. See also: Brief Grounding, Country Mention, Enrichment Tail.
 
 ### Enrichment Tail
 
-The indexed country pages that carry no dated development in a given weekly capture. Its size is a property of the grounding pool — how many countries the week's digest actually names — not of whether the enrichment ran, and it is recorded as a count in the capture's coverage rather than gated to zero, because no news pool names every country every week. See also: Recent Developments, Brief Grounding.
+The indexed country pages that carry no dated development in a given weekly capture. Its size is a property of the grounding pool — how many countries the week's digest and the Country Article Index actually name — not of whether the enrichment ran, and it is recorded as a count in the capture's coverage rather than gated to zero, because no article pool names every country every week. A capture whose freeze attempted the index — whatever the index answered — is held to a higher coverage floor at build time than one frozen before the index existed, so a tail the size of the digest-only era cannot ship as a green build, and a gate that relaxed when the index failed would be no gate. A measured-but-lower week can still publish through an operator override on the weekly workflow rather than by editing the floor. See also: Recent Developments, Brief Grounding, Country Article Index.
 
 ## Prediction Markets
 
@@ -459,6 +463,20 @@ The gate checks the state that will actually be published rather than trusting u
 A dependency advisory the security gate knowingly tolerates, recorded per-lockfile with written reasoning for why the vulnerable path is unreachable in this project — typically a build-time-only or dev-tooling chain, or a fix that is semver-major on a parent the project cannot yet move.
 
 The baseline is an exemption list, not a suppression: an advisory outside it fails the gate for every branch at once, which is why a newly published advisory blocks the whole repository until someone either patches or baselines it. Each entry carries its justification inline so a later reader can re-evaluate rather than inherit a bare allowlist, and an entry that no longer matches any live advisory is surfaced as stale so the list does not accrete dead exemptions. See also: Third-Party Rot, Acceptance Baseline.
+
+### Deploy Gate
+
+The single merge-blocking status that CI computes for a commit once the gated workflows finish, from a fixed list of check-run names. Each listed name resolves to the conclusion of its latest check run: a name no run has published holds the gate pending, a skipped conclusion counts as passing, and any other non-success fails it. A periodic sweep re-evaluates pending or stale statuses, so a status that arrived before its checks heals on its own. It is the CI counterpart of the Tiered Gate, which is a local pre-flight rather than the merge authority.
+
+Because a listed name must publish a run on every change, only a job inside a workflow that always triggers can be listed; a workflow behind a path filter publishes nothing when its paths do not match and would hold the gate forever. Conditional coverage is therefore expressed as an if-gated job, whose skip the gate accepts, and that job's change filter must name every input of the command it runs, including the manifest that defines the command. See also: Tiered Gate, Gate Contract, Advisory-Only Check.
+
+### Gate Contract
+
+The fingerprint of the Deploy Gate's required list, stamped onto every gate status it posts. Changing the list changes the stamp, so a status minted under the old list is treated as stale and re-evaluated rather than trusted: a branch approved under a narrower set cannot stay mergeable, and open branches read a newly required name as pending until they publish it. See also: Deploy Gate.
+
+### Advisory-Only Check
+
+A CI job that runs and reports on a change but is neither a branch-protection context nor a name on the Deploy Gate's required list, so a red result blocks nothing. It is the state a check falls into silently when it is moved out of a required job without being listed itself, and the reason a Wiring Guard fails the build whenever a gated workflow gains a job the required list does not name. See also: Deploy Gate, Wiring Guard, Vacuous Guard.
 
 ## Localization & First Paint
 
@@ -837,3 +855,4 @@ The comparison needs enough accumulated history to be meaningful and is suppress
 - *"Variant"* resolves differently per surface — a served host on the web, a locally stored selection on desktop. Only the web sense is addressable by URL; a desktop artifact is never variant-specific, so a variant accompanying a desktop artifact request is an identity label rather than a selector.
 - *"wingbits"* as a publication source means different things across the two Theater Posture producers — the military-flights seeder's keyed regional supplement after adsb.lol, but the relay loop's last-resort fallback. The recorded producer disambiguates which reading applies; never compare the token across producers.
 - *"Crashed"* had been used for both a build that failed and a run that exited non-zero — these are distinct. A failed build never started a container and leaves the previous Active Deployment serving; a crash is a started run that exited non-zero. Only the second is a seeder outcome; the first is a platform outcome that decides whether the seeder will ever run again.
+- *"Gate"* had been used for both the local pre-push Tiered Gate and the CI Deploy Gate — these are distinct. The Tiered Gate is a cacheable pre-flight that can be scoped or escalated on one machine; only the Deploy Gate decides mergeability, and only names on its required list count toward it.

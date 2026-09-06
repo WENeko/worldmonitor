@@ -1041,6 +1041,8 @@ ${providerCards}
         mainEntity: {
           '@type': 'ItemList',
           numberOfItems: sourceCatalog.length,
+          itemListOrder: 'https://schema.org/ItemListUnordered',
+          itemListElement: sourceCatalog.map((provider) => provider.displayName),
         },
       },
       catalogLd,

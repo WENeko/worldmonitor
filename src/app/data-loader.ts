@@ -46,8 +46,8 @@ import {
 import { INTEL_HOTSPOTS, CONFLICT_ZONES } from '@/config/geo';
 import { tokenizeForMatch, matchKeyword } from '@/utils/keyword-match';
 import { withTimeout } from '@/utils/with-timeout';
+import { fetchPredictionCandidates, reprioritizeMarketsForRegion as reprioritizePredictionMarketsForRegion } from '@/services/prediction';
 import {
-  fetchPredictions,
   fetchEarthquakes,
   fetchWeatherAlerts,
   fetchCanadaRoads,
@@ -475,6 +475,10 @@ export class DataLoaderManager implements AppModule {
   private readonly marketLoadGuard = new LatestRequestGuard();
   private readonly physicalComparisonLoadGuard = new LatestRequestGuard();
   private readonly mineralProductionLoadGuard = new LatestRequestGuard();
+  // Prediction ranking snapshots ctx.resolvedLocation at fetch start. A late
+  // region arrival (e.g. delayed geolocation, #7778) bumps the generation so
+  // the re-ranking pass — not the stale in-flight request — owns the commit.
+  private readonly predictionRegionGuard = new LatestRequestGuard();
   private globalTenderGeneration = 0;
   private globalTenderFilters: GlobalTenderFilters = {};
   private activeGlobalTenderScopedGeneration: number | null = null;
@@ -2151,6 +2155,11 @@ export class DataLoaderManager implements AppModule {
     this.updateMonitorResults();
 
     try {
+      // Snapshot local-ML availability AT this generation's clustering choice
+      // (#7779): available takes the hybrid path, unavailable the analysis
+      // path. Worker readiness alone must never force a news reload or
+      // retroactively regroup committed first-load results — a later normal
+      // refresh re-reads availability and may use newly available ML.
       const clusters = mlWorker.isAvailable
         ? await clusterNewsHybrid(this.ctx.allNews)
         : await analysisWorker.clusterNews(this.ctx.allNews);
@@ -2976,24 +2985,66 @@ export class DataLoaderManager implements AppModule {
     }
   }
 
+  // Full 25-candidate pool behind the displayed 15. The late-region path
+  // re-ranks this pool so region matches at positions 16-25 can still promote
+  // exactly as if the region had resolved before the fetch (#7778).
+  private latestPredictionCandidates: import('@/services/prediction').PredictionMarket[] = [];
+
   async loadPredictions(): Promise<void> {
+    // Capture the region at fetch start: a late region arrival re-ranks the
+    // kept candidate pool (reprioritizeLateRegionPredictions) instead of
+    // letting this stale request overwrite the panel with the old ordering.
+    const expectedRegion = this.ctx.resolvedLocation;
+    const regionGeneration = this.predictionRegionGuard.begin();
     try {
-      const predictions = await fetchPredictions({ region: this.ctx.resolvedLocation });
-      this.ctx.latestPredictions = predictions;
-      (this.ctx.panels['polymarket'] as PredictionPanel | undefined)?.renderPredictions(predictions);
-
-      this.ctx.statusPanel?.updateFeed('Polymarket', { status: 'ok', itemCount: predictions.length });
-      this.ctx.statusPanel?.updateApi('Polymarket', { status: 'ok' });
-      dataFreshness.recordUpdate('polymarket', predictions.length);
-      dataFreshness.recordUpdate('predictions', predictions.length);
-
+      const { candidates, displayed } = await fetchPredictionCandidates({ region: expectedRegion });
+      if (this.ctx.isDestroyed || !this.predictionRegionGuard.isCurrent(regionGeneration)) return;
+      this.commitPredictionResults(displayed, candidates);
       void this.runCorrelationAnalysis();
     } catch (error) {
+      if (this.ctx.isDestroyed || !this.predictionRegionGuard.isCurrent(regionGeneration)) return;
       this.ctx.statusPanel?.updateFeed('Polymarket', { status: 'error', errorMessage: String(error) });
       this.ctx.statusPanel?.updateApi('Polymarket', { status: 'error' });
       dataFreshness.recordError('polymarket', String(error));
       dataFreshness.recordError('predictions', String(error));
     }
+  }
+
+  /**
+   * Re-rank the kept candidate pool after a late region arrival without
+   * another network request solely for geolocation (#7778). Same regional
+   * match rules and normal relevance order as fetchPredictions.
+   *
+   * In-flight safety: the generation is bumped only when the re-rank actually
+   * commits, so a cold-start load whose result has not arrived yet keeps its
+   * result instead of being discarded into an empty panel — the bump then
+   * makes that late commit apply the CURRENT region, not the stale one. No
+   * eligibility, limit, market-selection, or freshness-schedule changes.
+   */
+  reprioritizeLateRegionPredictions(region: string): void {
+    if (this.ctx.isDestroyed || !region || region === 'global') return;
+    const pool = this.latestPredictionCandidates.length > 0
+      ? this.latestPredictionCandidates
+      : this.ctx.latestPredictions;
+    if (pool.length === 0) return;
+    this.predictionRegionGuard.begin();
+    this.commitPredictionResults(reprioritizePredictionMarketsForRegion(pool, region, 15), pool);
+  }
+
+  private commitPredictionResults(
+    predictions: import('@/services/prediction').PredictionMarket[],
+    candidates?: import('@/services/prediction').PredictionMarket[],
+  ): void {
+    this.ctx.latestPredictions = predictions;
+    if (candidates) this.latestPredictionCandidates = candidates;
+    this.ctx.latestPredictions = predictions;
+    if (candidates) this.latestPredictionCandidates = candidates;
+    (this.ctx.panels['polymarket'] as PredictionPanel | undefined)?.renderPredictions(predictions);
+
+    this.ctx.statusPanel?.updateFeed('Polymarket', { status: 'ok', itemCount: predictions.length });
+    this.ctx.statusPanel?.updateApi('Polymarket', { status: 'ok' });
+    dataFreshness.recordUpdate('polymarket', predictions.length);
+    dataFreshness.recordUpdate('predictions', predictions.length);
   }
 
   async loadForecasts(): Promise<void> {
@@ -4458,6 +4509,9 @@ export class DataLoaderManager implements AppModule {
     const newsGeneration = this.committedNewsGeneration;
     const newsServedStale = this.committedNewsServedStale;
     try {
+      // Same per-generation availability snapshot as loadNews (#7779): pair
+      // the clustering path with THIS call's news body, never with a later
+      // worker-ready event that would regroup already-committed clusters.
       if (this.ctx.latestClusters.length === 0 && this.ctx.allNews.length > 0) {
         this.ctx.latestClusters = mlWorker.isAvailable
           ? await clusterNewsHybrid(this.ctx.allNews)

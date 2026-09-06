@@ -65,6 +65,8 @@ const EXCLUDED_FROM_MCP = new Map([
     'operational: Taiwan MND transport status, errors, and last-success time consumed by api/health.js; #5580 owns final MCP composition for the separately attributed official activity records.'],
   ['maritime:ais-gaps:v1',
     'intermediate: relay-published dark-ship count consumed server-side by the temporal-anomalies rebuild as the ais_gaps count source (COUNT_SOURCE_KEYS #7574); the signal surfaces through the temporal anomalies tool, not a standalone MCP slice.'],
+  ['gdelt:bulk:country-articles:v1',
+    'intermediate: rolling per-country GKG article index consumed by the search-gdelt-documents route\'s `country:<ISO2>` form for the weekly crawlable freeze (#7748); its rows reach agents through the prerendered country pages and their dataset downloads. Exposing the country form as an MCP tool input (and grounding get_country_brief on it) is the agent-native follow-up recorded on PR #7786, at which point this exclusion moves to that tool\'s _cacheKeys.'],
   ['military:cross-strait-activity:v1:source:japan-mod',
     'operational: Japan Joint Staff transport status, errors, and last-success time consumed by api/health.js; #5580 owns final MCP composition for the separately attributed reviewed activity records.'],
   ['market:china:stock-connect:v1',

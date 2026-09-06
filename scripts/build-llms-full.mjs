@@ -21,7 +21,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { GLOSSARY_TERMS } from '../blog-site/src/data/glossary.ts';
 import { COMPARISON_MATRIX_COLUMNS, comparisonDiscoveryEntries } from './build-comparison-pages.mjs';
-import { resolveLatestResilienceSnapshotPath } from './build-crawlable-corpus.mjs';
+import { resolveLatestResilienceSnapshotPath, slugify } from './build-crawlable-corpus.mjs';
 import { CHOKEPOINT_CONTENT } from './chokepoint-page-content.mjs';
 import { SITE_ORIGIN } from './discover-content-corpus-pages.mjs';
 
@@ -82,10 +82,58 @@ function stripMdx(source) {
 }
 
 function briefPrefix(existing) {
+  existing = existing
+    .replace(/<!-- corpus-navigation:start -->[\s\S]*?<!-- corpus-navigation:end -->\n*/g, '')
+    .replace(/^<a id="corpus-[^"]+"><\/a>\n/gm, '');
   const heading = `\n${LLMS_FULL_GENERATED_HEADING}\n`;
   const idx = existing.indexOf(heading);
   const prefix = idx === -1 ? existing : existing.slice(0, idx);
   return prefix.replace(/\s+$/, '');
+}
+
+function mapProseLines(source, transform) {
+  let fence = null;
+  return source.split('\n').map((line) => {
+    const delimiter = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+    if (delimiter) {
+      if (!fence) fence = delimiter[1];
+      else if (delimiter[1][0] === fence[0] && delimiter[1].length >= fence.length) fence = null;
+      return line;
+    }
+    return fence ? line : transform(line);
+  }).join('\n');
+}
+
+/** Keep imported documents' links local even when their headings collide. */
+export function withCorpusNavigation(sections) {
+  const used = new Set();
+  const contents = [];
+  const body = sections.map(({ title: scope, text }) => {
+    const anchors = new Map();
+    const renamed = mapProseLines(text, (line) => {
+      const heading = line.match(/^(#{1,6}) (.+)$/);
+      if (!heading) return line;
+      const [, level, original] = heading;
+      const originalSlug = slugify(original);
+      let title = original;
+      if (used.has(originalSlug)) title = `${original} (${scope})`;
+      const qualified = title;
+      for (let n = 2; used.has(slugify(title)); n += 1) title = `${qualified} ${n}`;
+      const slug = slugify(title);
+      used.add(slug);
+      const anchor = `corpus-${slug}`;
+      if (!anchors.has(originalSlug)) anchors.set(originalSlug, anchor);
+      if (level === '##') contents.push(`- [${title}](#${anchor})`);
+      const marker = `<a id="${anchor}"></a>`;
+      return level === '#' ? `${level} ${title}\n${marker}` : `${marker}\n${level} ${title}`;
+    });
+    return mapProseLines(renamed, (line) => line.replace(/\]\(#([^)]+)\)/g, (link, fragment) => (
+      anchors.has(fragment) ? `](#${anchors.get(fragment)})` : link
+    )));
+  }).join('\n\n');
+  const navigation = ['<!-- corpus-navigation:start -->', '**Contents**', '', ...contents,
+    '<!-- corpus-navigation:end -->'].join('\n');
+  return body.replace(/\n(?=<a id="corpus-[^"]+"><\/a>\n## )/, `\n${navigation}\n\n`);
 }
 
 export const VERSION_HEADER_RE = /^> Version: \d+\.\d+\.\d+ · Last updated: \d{4}-\d{2}-\d{2}$/m;
@@ -221,7 +269,7 @@ export function buildLlmsFullText({ rootDir = ROOT } = {}) {
     ? read(rootDir, OUTPUT_PATH)
     : '';
   const prefix = withVersionHeader(briefPrefix(existing), readVersionHeader(rootDir));
-  const generated = [
+  const introduction = [
     LLMS_FULL_GENERATED_HEADING,
     '',
     'The sections below are produced by `npm run build:llms-full` from the comparison-page registry, glossary terms, chokepoint methodology, published chokepoint explainers, the Country Resilience Index methodology, the corrections log, and the current published ranking snapshot.',
@@ -231,32 +279,21 @@ export function buildLlmsFullText({ rootDir = ROOT } = {}) {
     renderGlossary().trim(),
     '',
     renderChokepointBlurbs().trim(),
-    '',
-    '## Chokepoint methodology',
-    '',
-    stripMdx(read(rootDir, 'docs/methodology/chokepoints.mdx')),
-    '',
-    '## Chokepoint explainers',
-    '',
-    ...CHOKEPOINT_BLOGS.flatMap((relativePath) => [
-      `### ${relativePath}`,
-      '',
-      stripFrontmatter(read(rootDir, relativePath)),
-      '',
-    ]),
-    '## Country Resilience Index methodology',
-    '',
-    stripMdx(read(rootDir, 'docs/methodology/country-resilience-index.mdx')),
-    '',
-    '## Revision and corrections log',
-    '',
-    stripMdx(read(rootDir, 'docs/corrections.mdx')),
-    '',
-    renderSnapshotTable(rootDir).trim(),
-    '',
   ].join('\n');
-
-  return `${prefix}\n\n${generated}`;
+  return withCorpusNavigation([
+    { title: 'World Monitor', text: prefix },
+    { title: 'Generated corpus', text: introduction },
+    { title: 'Chokepoint methodology', text: `## Chokepoint methodology\n\n${stripMdx(read(rootDir, 'docs/methodology/chokepoints.mdx'))}` },
+    { title: 'Chokepoint explainers', text: '## Chokepoint explainers' },
+    ...CHOKEPOINT_BLOGS.map((relativePath) => {
+      const source = read(rootDir, relativePath);
+      const title = source.match(/^title: "(.+)"$/m)[1];
+      return { title, text: `### ${relativePath}\n\n${stripFrontmatter(source)}` };
+    }),
+    { title: 'Country Resilience Index methodology', text: `## Country Resilience Index methodology\n\n${stripMdx(read(rootDir, 'docs/methodology/country-resilience-index.mdx'))}` },
+    { title: 'Revision and corrections log', text: `## Revision and corrections log\n\n${stripMdx(read(rootDir, 'docs/corrections.mdx'))}` },
+    { title: 'Published country resilience ranking', text: renderSnapshotTable(rootDir).trim() },
+  ]) + '\n';
 }
 
 /**

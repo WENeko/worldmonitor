@@ -230,8 +230,7 @@ export function renderVariantDashboardHtml(fullDashboardHtml: string, variant: s
     'hreflang alternates',
   );
 
-  // Social card images (per-variant OG assets exist under public/favico/<variant>/,
-  // same files middleware.ts VARIANT_OG points at).
+  // Social card images use the per-variant assets under public/favico/<variant>/.
   html = replaceCounted(
     html,
     /(<meta (?:property="og:image"|name="twitter:image") content=")[^"]*(" \/>)/g,

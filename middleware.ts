@@ -88,48 +88,6 @@ const VARIANT_HOST_MAP: Record<string, string> = {
   'energy.worldmonitor.app': 'energy',
 };
 
-// Source of truth: src/config/variant-meta.ts — keep in sync when variant metadata changes.
-// `name` is the short brand for JSON-LD `SoftwareApplication.name`; `title` is the full
-// page <title>. They are split fields (not derived via title.split(' - ')) so a
-// future title format change cannot silently corrupt the JSON-LD name.
-const VARIANT_OG: Record<string, { name: string; title: string; description: string; image: string; url: string }> = {
-  tech: {
-    name: 'Tech Monitor',
-    title: 'Tech Monitor - Real-Time AI & Tech Industry Dashboard',
-    description: 'Real-time AI and tech industry dashboard tracking tech giants, AI labs, startup ecosystems, funding rounds, and technology events worldwide with live context.',
-    image: 'https://tech.worldmonitor.app/favico/tech/og-image.png',
-    url: 'https://tech.worldmonitor.app/dashboard',
-  },
-  finance: {
-    name: 'Finance Monitor',
-    title: 'Finance Monitor - Real-Time Markets & Trading Dashboard',
-    description: 'Real-time finance and trading dashboard tracking global markets, stock exchanges, central banks, commodities, forex, crypto, and economic indicators worldwide.',
-    image: 'https://finance.worldmonitor.app/favico/finance/og-image.png',
-    url: 'https://finance.worldmonitor.app/dashboard',
-  },
-  commodity: {
-    name: 'Commodity Monitor',
-    title: 'Commodity Monitor - Real-Time Commodity Markets & Supply Chain Dashboard',
-    description: 'Real-time commodity markets dashboard tracking mining sites, processing plants, commodity ports, supply chains, and global trade flows with live context.',
-    image: 'https://commodity.worldmonitor.app/favico/commodity/og-image.png',
-    url: 'https://commodity.worldmonitor.app/dashboard',
-  },
-  happy: {
-    name: 'Happy Monitor',
-    title: 'Happy Monitor - Good News & Global Progress',
-    description: 'Curated positive news, global progress data, science breakthroughs, conservation wins, and uplifting stories from around the world with daily highlights.',
-    image: 'https://happy.worldmonitor.app/favico/happy/og-image.png',
-    url: 'https://happy.worldmonitor.app/dashboard',
-  },
-  energy: {
-    name: 'Energy Atlas',
-    title: 'Energy Atlas - Real-Time Global Energy Intelligence Dashboard',
-    description: 'Real-time global energy atlas tracking oil and gas pipelines, storage facilities, chokepoints, fuel shortages, tanker flows, and disruption events worldwide.',
-    image: 'https://energy.worldmonitor.app/favico/energy/og-image.png',
-    url: 'https://energy.worldmonitor.app/dashboard',
-  },
-};
-
 function normalizeHost(raw: string): string {
   return raw.toLowerCase().replace(/:\d+$/, '');
 }
@@ -152,15 +110,6 @@ function clientAcceptsSse(request: Request): boolean {
     const q = Number(qParam.slice(2));
     return Number.isFinite(q) && q > 0;
   });
-}
-
-function escHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 /** Query keys that create duplicate index entries without changing document identity. */
@@ -331,42 +280,6 @@ export default function middleware(request: Request) {
     // matcher and fall through to public/404.html.
     if (!isKnownPublicPagePath(path)) {
       return originNotFoundResponse(path, request);
-    }
-  }
-
-  if (path === '/' && SOCIAL_PREVIEW_UA.test(ua)) {
-    // variant is truthy only for VARIANT_HOST_MAP keys, which are all served
-    // hosts by construction — no separate allowlist check (#7616).
-    const variant = VARIANT_HOST_MAP[host];
-    if (variant) {
-      const og = VARIANT_OG[variant as keyof typeof VARIANT_OG];
-      if (og) {
-        const eTitle = escHtml(og.title);
-        const eDesc = escHtml(og.description);
-        const eImage = escHtml(og.image);
-        const eUrl = escHtml(og.url);
-        const html = `<!DOCTYPE html><html lang="en"><head>
-<meta property="og:type" content="website"/>
-<meta property="og:title" content="${eTitle}"/>
-<meta property="og:description" content="${eDesc}"/>
-<meta property="og:image" content="${eImage}"/>
-<meta property="og:url" content="${eUrl}"/>
-<meta name="twitter:card" content="summary_large_image"/>
-<meta name="twitter:title" content="${eTitle}"/>
-<meta name="twitter:description" content="${eDesc}"/>
-<meta name="twitter:image" content="${eImage}"/>
-<link rel="canonical" href="${eUrl}"/>
-<title>${eTitle}</title>
-</head><body></body></html>`;
-        return new Response(html, {
-          status: 200,
-          headers: {
-            'Content-Type': 'text/html; charset=utf-8',
-            'Cache-Control': 'no-store',
-            'Vary': 'User-Agent, Host',
-          },
-        });
-      }
     }
   }
 

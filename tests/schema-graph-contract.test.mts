@@ -525,7 +525,8 @@ describe('canonical schema graph', () => {
         `${path} disambiguatingDescription must distinguish, not restate description`,
       );
       assert.ok(
-        /worldmonitor\.io/.test(disambiguation) && /world-monitor\.app/.test(disambiguation),
+        /worldmonitor\.io/.test(disambiguation) && /world-monitor\.app/.test(disambiguation)
+          && /world-monitor\.com/.test(disambiguation),
         `${path} disambiguation must name the colliding domains it is disclaiming`,
       );
       assert.match(

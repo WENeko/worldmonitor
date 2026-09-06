@@ -10,7 +10,7 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { comparisonDiscoveryEntries } from '../scripts/build-comparison-pages.mjs';
-import { COMPARISONS_HEADING, buildLlmsFullText, redactInternalApiOrigins, withComparisonsSection } from '../scripts/build-llms-full.mjs';
+import { COMPARISONS_HEADING, buildLlmsFullText, redactInternalApiOrigins, withComparisonsSection, withCorpusNavigation } from '../scripts/build-llms-full.mjs';
 import { resolveLatestLivePulseSnapshotPath } from '../scripts/build-crawlable-corpus.mjs';
 import { parseSitemapDocument } from '../scripts/verify-sitemaps.mjs';
 
@@ -119,6 +119,39 @@ describe('GEO residue #7463', () => {
     assert.match(mixed, /\[REDACTED\]\/api\/resilience\/v1\/get-runtime-manifest/);
     assert.ok(mixed.includes(`${publicApiOrigin}${manifestPath}`), 'the public API origin must survive redaction');
     assert.match(mixed, /pragma: allowlist secret/);
+  });
+
+  it('gives the full corpus unique headings and a complete, resolvable contents list (#7749)', () => {
+    const generated = buildLlmsFullText({ rootDir: repoRoot });
+    const headings = [...generated.matchAll(/^## (.+)$/gm)].map((match) => match[1]);
+    assert.equal(new Set(headings).size, headings.length, 'section headings must be unique');
+    const contents = generated.match(/<!-- corpus-navigation:start -->([\s\S]*?)<!-- corpus-navigation:end -->/)?.[1];
+    assert.ok(contents, 'the generated corpus needs a table of contents');
+    const links = [...contents.matchAll(/^- \[([^\]]+)\]\(#([^\)]+)\)$/gm)];
+    assert.deepEqual(links.map((match) => match[1]), headings, 'contents must enumerate every section in order');
+    assert.equal(new Set(links.map((match) => match[2])).size, links.length);
+    for (const [, , anchor] of links) {
+      assert.equal(generated.split(`<a id="${anchor}"></a>`).length - 1, 1, `${anchor} must resolve exactly once`);
+    }
+    assert.match(generated, /\[Data Sources\]\(#corpus-data-sources-country-resilience-index-methodology\)/,
+      'the imported methodology must link its own data sources');
+    for (const [, anchor] of generated.matchAll(/\]\(#([^)]+)\)/g)) {
+      assert.ok(generated.includes(`<a id="${anchor}"></a>`), `${anchor} must resolve within the corpus`);
+    }
+  });
+
+  it('qualifies colliding headings, preserves code examples, and rewrites document-local links (#7749)', () => {
+    const code = '```markdown\n## Sources\n[example](#sources)\n```';
+    const generated = withCorpusNavigation([
+      { title: 'Brief', text: '# Product\n\n## Sources\n[Brief sources](#sources)' },
+      { title: 'Methodology', text: `## Sources!\n[Method sources](#sources)\n\n${code}\n\n### Sources` },
+    ]);
+    assert.match(generated, /^# Product\n/);
+    assert.match(generated, /## Sources! \(Methodology\)/);
+    assert.match(generated, /### Sources \(Methodology\) 2/);
+    assert.match(generated, /\[Brief sources\]\(#corpus-sources\)/);
+    assert.match(generated, /\[Method sources\]\(#corpus-sources-methodology\)/);
+    assert.ok(generated.includes(code), 'fenced headings and links must remain code');
   });
 
   it('serves the MCP server card at the newer well-known server.json name', () => {

@@ -23,6 +23,10 @@ import {
   assertCountryBriefPresentation,
   assertCountryDevelopmentsRendered,
   assertDevelopmentsCoverage,
+  DEVELOPMENTS_COVERAGE_RATIO_ENV,
+  MIN_DEVELOPMENTS_COVERAGE_RATIO_WITH_COUNTRY_INDEX,
+  resolveDevelopmentsCoverageRatioOverride,
+  snapshotAttemptedCountryIndex,
   CHOKEPOINT_PAGE_CONTENT_VERSION,
   CHOKEPOINT_PAGE_LASTMOD_PATHS,
   COMPARISON_PAGE_LASTMOD_PATHS,
@@ -3584,6 +3588,20 @@ describe('crawlable corpus generator', () => {
       );
 
       const sourcesPage = read(outDir, 'sources/index.html');
+      const sourceNodes = jsonLdObjects(sourcesPage);
+      const providerList = sourceNodes.find((node) => node['@type'] === 'CollectionPage').mainEntity;
+      assert.equal(providerList.itemListOrder, 'https://schema.org/ItemListUnordered');
+      assert.deepEqual(providerList.itemListElement, corpusData.sourceCatalog.map((provider) => provider.displayName));
+      assert.equal(providerList.numberOfItems, providerList.itemListElement.length);
+      const catalog = sourceNodes.find((node) => node['@type'] === 'DataCatalog');
+      assert.equal(catalog.dataset.length, corpusData.crises.length + 1);
+      for (const dataset of catalog.dataset) {
+        assert.ok(dataset['@id'], `${dataset.name} must reuse its detail-page identity`);
+        const detailPath = new URL(dataset.url).pathname.slice(1) + 'index.html';
+        const details = jsonLdObjects(read(outDir, detailPath)).flatMap((node) => collectDatasets(node));
+        assert.ok(details.some((node) => node['@type'] === 'Dataset' && node['@id'] === dataset['@id']),
+          `${dataset['@id']} must identify a Dataset on the generated detail page`);
+      }
       assert.match(sourcesPage, /<h1>See every source behind World Monitor\.<\/h1>/);
       assert.match(sourcesPage, /<link rel="canonical" href="https:\/\/www\.worldmonitor\.app\/sources\/">/);
       assert.doesNotMatch(sourcesPage, /id="app"/, 'sources page must be raw static HTML, not the SPA shell');
@@ -4418,11 +4436,19 @@ describe('crawlable corpus generator', () => {
           ld.some((entry) => entry['@type'] === 'FAQPage'),
           page.slug + ' must emit FAQPage JSON-LD (#7610)',
         );
-        if (page.itemList) {
+        const categorySlugs = ['liveuamap-alternatives', 'best-geopolitical-risk-dashboards',
+          'mcp-servers-for-geopolitical-data', 'chokepoint-monitoring-tools', 'free-geopolitical-risk-dashboards'];
+        if (categorySlugs.includes(page.slug)) {
           const itemList = ld.find((entry) => entry['@type'] === 'ItemList');
-          assert.ok(itemList, page.slug + ' must emit ranked ItemList JSON-LD (#7610)');
-          assert.equal(itemList.numberOfItems, page.itemList.length);
-          assert.equal(itemList.itemListOrder, 'https://schema.org/ItemListOrderAscending');
+          assert.ok(itemList, page.slug + ' must emit ItemList JSON-LD (#7749)');
+          const expectedNames = page.itemList?.map((item) => item.name) ?? page.matrixRows.map(([name]) => name);
+          assert.equal(itemList.numberOfItems, expectedNames.length);
+          assert.deepEqual(itemList.itemListElement.map((item) => item.name), expectedNames);
+          assert.deepEqual(itemList.itemListElement.map((item) => item.position), expectedNames.map((_, i) => i + 1));
+          assert.equal(itemList.itemListOrder, page.itemList
+            ? 'https://schema.org/ItemListOrderAscending' : 'https://schema.org/ItemListUnordered');
+        } else {
+          assert.ok(!ld.some((entry) => entry['@type'] === 'ItemList'), 'head-to-head pages do not declare a category list');
         }
         assert.match(
           html,
@@ -5219,7 +5245,7 @@ describe('live-pulse snapshot injection (#7533)', () => {
   // #7533-allowlist: 2026-08-08 x3 2026-08-09 x4 2026-08-10 x4 2026-08-11 x3 2026-08-12 x3 2026-08-13 x4 — sourcePageLastmod pure-function fixtures
   // #7533-allowlist: 2026-08-29 x5 — STORY_CAPTURED_AT synthetic story clock and static snapshot-path fixtures
   // #7533-allowlist: 2026-09-01 x4 — CORPUS_GENERATOR_CONTENT_VERSION and synthetic development fixtures
-  // #7533-allowlist: 2026-09-02 x15 — synthetic developments timestamps
+  // #7533-allowlist: 2026-09-02 x17 — synthetic developments timestamps (incl. the nofollow index-row render fixture, #7748)
   // #7533-allowlist: 2026-09-03 x14 — genuinely static: research lastmod, DataCatalog render fixture, datasetObservationCoverage fixtures
   it('rejects undocumented calendar-date literals in this file', () => {
     const source = readFileSync(fileURLToPath(import.meta.url), 'utf8');
@@ -5810,6 +5836,149 @@ describe('country recent developments', () => {
       carriesDevelopments: false,
       developmentsPageCount: 0,
       indexedCountryPageCount: 196,
+    });
+  });
+
+  it('raises the coverage floor once the freeze attempted the per-country index (#7748)', () => {
+    // The digest alone covered 61 of 196; with the index most of the rest
+    // are reachable. A capture that ran with the index yet covers only the
+    // digest-era share means the top-up broke, and must not ship green.
+    assert.equal(MIN_DEVELOPMENTS_COVERAGE_RATIO_WITH_COUNTRY_INDEX, 0.6);
+    assert.throws(
+      () => assertDevelopmentsCoverage({
+        carriesDevelopments: true,
+        developmentsPageCount: 61,
+        indexedCountryPageCount: 196,
+        countryIndexAttempted: true,
+      }),
+      /captured dated country developments for 61 of 196 indexed country pages; expected at least 118 for an index-era capture.*developmentsCountryIndex.*CRAWLABLE_DEVELOPMENTS_COVERAGE_RATIO/,
+    );
+    assert.throws(
+      () => assertDevelopmentsCoverage({
+        carriesDevelopments: true,
+        developmentsPageCount: 117,
+        indexedCountryPageCount: 196,
+        countryIndexAttempted: true,
+      }),
+      /expected at least 118/,
+    );
+    assertDevelopmentsCoverage({
+      carriesDevelopments: true,
+      developmentsPageCount: 118,
+      indexedCountryPageCount: 196,
+      countryIndexAttempted: true,
+    });
+    // The same 61 still passes a capture frozen before the index existed.
+    assertDevelopmentsCoverage({
+      carriesDevelopments: true,
+      developmentsPageCount: 61,
+      indexedCountryPageCount: 196,
+      countryIndexAttempted: false,
+    });
+    // The declaration is the snapshot's own, and it is "attempted", not
+    // "answered": a gate that relaxed exactly when the index failed would
+    // be no gate, so every recorded state raises the floor.
+    for (const state of ['available', 'partial', 'unavailable', 'error', 'not-requested']) {
+      assert.equal(snapshotAttemptedCountryIndex({ coverage: { developmentsCountryIndex: { state } } }), true, `state=${state}`);
+    }
+    assert.equal(snapshotAttemptedCountryIndex({ coverage: { developmentsCountryIndex: {} } }), false);
+    assert.equal(snapshotAttemptedCountryIndex({ coverage: {} }), false);
+    assert.equal(snapshotAttemptedCountryIndex(null), false);
+  });
+
+  it('lets an operator override the floor for one measured week, and refuses a malformed override', () => {
+    assert.equal(DEVELOPMENTS_COVERAGE_RATIO_ENV, 'CRAWLABLE_DEVELOPMENTS_COVERAGE_RATIO');
+    assert.equal(resolveDevelopmentsCoverageRatioOverride({}), null);
+    assert.equal(resolveDevelopmentsCoverageRatioOverride({ [DEVELOPMENTS_COVERAGE_RATIO_ENV]: '' }), null);
+    assert.equal(resolveDevelopmentsCoverageRatioOverride({ [DEVELOPMENTS_COVERAGE_RATIO_ENV]: ' 0.4 ' }), 0.4);
+    for (const bad of ['0', '1.5', 'sixty', '-0.2', '60%']) {
+      assert.throws(
+        () => resolveDevelopmentsCoverageRatioOverride({ [DEVELOPMENTS_COVERAGE_RATIO_ENV]: bad }),
+        /must be a ratio in \(0, 1\]/,
+        `${bad} must not silently keep the default`,
+      );
+    }
+    // 61 of 196 fails the index-era floor and passes under an override of 0.3.
+    assertDevelopmentsCoverage({
+      carriesDevelopments: true,
+      developmentsPageCount: 61,
+      indexedCountryPageCount: 196,
+      countryIndexAttempted: true,
+      ratioOverride: 0.3,
+    });
+    assert.throws(
+      () => assertDevelopmentsCoverage({
+        carriesDevelopments: true,
+        developmentsPageCount: 58,
+        indexedCountryPageCount: 196,
+        countryIndexAttempted: true,
+        ratioOverride: 0.3,
+      }),
+      /expected at least 59 \(operator override 0.3\)/,
+    );
+  });
+
+  it('holds an index-era snapshot to the raised floor through the real build, and honours the override', async () => {
+    const fixturePath = join(repoRoot, 'tests/fixtures/crawlable-live-pulse-fixture.json');
+    const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'));
+    const today = new Date().toISOString().slice(0, 10);
+    const deltaDays = Math.round(
+      (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${fixture.capturedAt}T00:00:00Z`)) / 86_400_000,
+    );
+    const shifted = shiftLivePulseDates(fixture, deltaDays);
+    // The fixture predates the index: declare an index-era capture whose
+    // index answered seed-unavailable, leaving the digest-era coverage.
+    shifted.coverage.developmentsCountryIndex = {
+      state: 'unavailable', requestCount: 1, servedCount: 0, unavailableCount: 1, errorCount: 0, countryCount: 0,
+    };
+    const dir = mkdtempSync(join(tmpdir(), 'wm-pulse-index-floor-'));
+    const snapshotPath = join(dir, `crawlable-live-pulse-${today}.json`);
+    writeFileSync(snapshotPath, JSON.stringify(shifted));
+    const outDir = join(dir, 'out');
+    const previous = process.env[DEVELOPMENTS_COVERAGE_RATIO_ENV];
+    try {
+      delete process.env[DEVELOPMENTS_COVERAGE_RATIO_ENV];
+      const data = await loadCorpusData({ rootDir: repoRoot, livePulseSnapshotPath: snapshotPath });
+      const covered = data.countries.filter((country) => developmentsHasDatedItem(data.livePulse.countries[country.code]?.developments)).length;
+      assert.ok(covered < Math.ceil(data.countries.length * MIN_DEVELOPMENTS_COVERAGE_RATIO_WITH_COUNTRY_INDEX),
+        'the fixture must sit under the index-era floor for this test to mean anything');
+      await assert.rejects(
+        buildCorpus({ rootDir: repoRoot, outDir, livePulseSnapshotPath: snapshotPath }),
+        /for an index-era capture/,
+        'an index-era capture with digest-era coverage must not build',
+      );
+      process.env[DEVELOPMENTS_COVERAGE_RATIO_ENV] = '0.1';
+      await buildCorpus({ rootDir: repoRoot, outDir, livePulseSnapshotPath: snapshotPath });
+      process.env[DEVELOPMENTS_COVERAGE_RATIO_ENV] = 'lots';
+      await assert.rejects(
+        buildCorpus({ rootDir: repoRoot, outDir, livePulseSnapshotPath: snapshotPath }),
+        /must be a ratio in \(0, 1\]/,
+      );
+    } finally {
+      if (previous === undefined) delete process.env[DEVELOPMENTS_COVERAGE_RATIO_ENV];
+      else process.env[DEVELOPMENTS_COVERAGE_RATIO_ENV] = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('renders an index row nofollow and a digest row as an ordinary link (#7748)', () => {
+    const digest = { title: 'Bhutan hydropower export deal signed', source: 'Test Wire', url: 'https://example.test/bhutan-hydro', publishedAt: '2026-09-02T10:00:00.000Z' };
+    const index = { title: 'Bhutan tightens <monetary> policy & rates', source: 'kuenselonline.example', url: 'https://kuenselonline.example/rates?a=1&b=2', publishedAt: '2026-09-02T11:00:00.000Z', origin: 'country-index' };
+    const html = renderCountryDevelopments({
+      countryCode: 'BT',
+      countryName: 'Bhutan',
+      developments: { headlines: [digest, index], brief: null, timeline: [], briefSkipped: 'uncurated-grounding' },
+    });
+    assert.ok(html.includes('<a href="https://example.test/bhutan-hydro">Bhutan hydropower export deal signed</a>'));
+    assert.ok(html.includes('<a href="https://kuenselonline.example/rates?a=1&amp;b=2" rel="nofollow">Bhutan tightens &lt;monetary&gt; policy &amp; rates</a>'));
+    assert.ok(html.includes('kuenselonline.example'));
+    assert.ok(!html.includes('<monetary>'), 'an open-web title is escaped like any other');
+    assertCountryDevelopmentsRendered({
+      pagePath: '/countries/bhutan/',
+      html,
+      developments: { headlines: [digest, index], brief: null, timeline: [] },
+      countryCode: 'BT',
+      countryName: 'Bhutan',
     });
   });
 

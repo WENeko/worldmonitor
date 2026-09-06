@@ -69,14 +69,13 @@ describe('middleware variant root user agents', () => {
     }
   });
 
-  it('keeps social preview metadata variant-specific', async () => {
-    const res = call('https://tech.worldmonitor.app/', SLACKBOT_UA);
-    assert.ok(res instanceof Response);
-    assert.equal(res.status, 200);
-    const html = await res.text();
-    assert.match(html, /<meta property="og:title" content="Tech Monitor/);
-    assert.match(html, /<link rel="canonical" href="https:\/\/tech\.worldmonitor\.app\/dashboard"/);
-    assert.doesNotMatch(html, /application\/ld\+json/);
+  it('lets social crawlers use the production redirect and dashboard metadata (#7749)', () => {
+    for (const variant of WEB_DASHBOARD_VARIANTS) {
+      const root = new URL(VARIANT_META[variant].url).origin;
+      for (const ua of [SLACKBOT_UA, 'Twitterbot/1.0', 'facebookexternalhit/1.1']) {
+        assert.equal(call(root, ua), undefined, `${root} must use the shared /dashboard redirect`);
+      }
+    }
   });
 });
 

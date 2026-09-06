@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
+import { runInNewContext } from 'node:vm';
 import { parse } from 'yaml';
 
 const root = resolve(import.meta.dirname, '..');
@@ -56,7 +57,13 @@ test('Railway-only changes retain unit proof and intentionally skip the browser'
     assert.equal(result.code, 'true');
     assert.equal(result.browser, 'false');
   }
-  assert.equal(workflow.jobs['variant-smoke-full'].if, "needs.changes.outputs.browser == 'true'");
+  assert.equal(workflow.jobs['variant-smoke-shards'].if, "needs.changes.outputs.browser == 'true'");
+  assert.equal(workflow.jobs['variant-smoke-pro-webmcp'].if, "needs.changes.outputs.browser == 'true'");
+  assert.deepEqual(
+    workflow.jobs['variant-smoke-full'].needs,
+    ['changes', 'variant-smoke-shards', 'variant-smoke-pro-webmcp'],
+  );
+  assert.equal(workflow.jobs['variant-smoke-full'].if, 'always()');
 });
 
 test('runtime, browser harness, assets, build inputs and unknown paths run the browser', () => {
@@ -95,6 +102,40 @@ test('unusable, incomplete and moved diff metadata runs every Test job', () => {
   }
 });
 
+test('src-tauri node suites are code, so unit and sidecar run on their own PRs', () => {
+  // tests/package-test-command-paths.test.mjs polices src-tauri/ suites from
+  // inside unit, and sidecar runs them; both are gated on `code`, which the
+  // src-tauri exclusion below would otherwise leave false (#7772).
+  // Every extension the guard discovers must classify as code, or a suite in
+  // that extension is exactly the unowned file the guard cannot see.
+  for (const extension of ['mjs', 'mts', 'cjs', 'js', 'ts', 'tsx']) {
+    assert.equal(classify([`src-tauri/open-url-safety.test.${extension}`]).code, 'true', extension);
+  }
+  for (const event of ['pull_request', 'push']) {
+    assert.equal(classify(['src-tauri/open-url-safety.test.mjs'], { event }).code, 'true', event);
+    assert.equal(classify([
+      { filename: 'src-tauri/open-url-policy.test.mjs', previous_filename: 'src-tauri/open-url-safety.test.mjs', status: 'renamed' },
+    ], { event }).code, 'true', `${event}: rename`);
+    assert.equal(classify(['src-tauri/src/main.rs'], { event }).code, 'false', `${event}: desktop-rust owns Rust sources`);
+  }
+});
+
+test('resilience-validation-smoke runs only for validation changes that skip unit', () => {
+  const job = workflow.jobs['resilience-validation-smoke'];
+  const runs = (outputs) => runInNewContext(job.if, { needs: { changes: { outputs } } }, { timeout: 1000 });
+  const validationDoc = 'docs/methodology/country-resilience-index/validation/benchmark.md';
+  for (const event of ['pull_request', 'push']) {
+    const docsOnly = classify([validationDoc], { event });
+    assert.equal(docsOnly.validation, 'true');
+    assert.equal(docsOnly.code, 'false');
+    assert.equal(runs(docsOnly), true, `${event}: unit is skipped, so this job is the only run of the validation suite`);
+    const withCode = classify([validationDoc, 'scripts/_bundle-runner.mjs'], { event });
+    assert.equal(withCode.validation, 'true');
+    assert.equal(withCode.code, 'true');
+    assert.equal(runs(withCode), false, `${event}: unit already runs the same files inside test:data`);
+  }
+});
+
 test('required unit aggregate rejects failed, cancelled and unexpected skips', () => {
   const aggregate = workflow.jobs.unit;
   assert.deepEqual(aggregate.needs, ['changes', 'unit-shards']);
@@ -111,6 +152,70 @@ test('required unit aggregate rejects failed, cancelled and unexpected skips', (
           encoding: 'utf8', env: { ...process.env, CHANGES_RESULT: changes, CODE_CHANGED: code, SHARDS_RESULT: result },
         });
         assert.equal(run.status === 0, expected, `${changes}/${code}/${result}`);
+      }
+    }
+  }
+});
+
+test('required variant-smoke aggregate rejects failed, cancelled and unexpected skips', () => {
+  const aggregate = workflow.jobs['variant-smoke-full'];
+  const shards = workflow.jobs['variant-smoke-shards'];
+  assert.deepEqual(aggregate.needs, ['changes', 'variant-smoke-shards', 'variant-smoke-pro-webmcp']);
+  assert.equal(aggregate.if, 'always()');
+  assert.deepEqual(aggregate.steps[0].env, {
+    CHANGES_RESULT: '${{ needs.changes.result }}',
+    BROWSER_CHANGED: '${{ needs.changes.outputs.browser }}',
+    SHARDS_RESULT: '${{ needs.variant-smoke-shards.result }}',
+    PRO_WEBMCP_RESULT: '${{ needs.variant-smoke-pro-webmcp.result }}',
+  });
+  assert.deepEqual(shards.strategy.matrix.shard, [1, 2]);
+  assert.equal(shards.strategy['fail-fast'], false);
+  assert.match(
+    shards.steps.find((step) => step.run?.includes('npm run test:e2e:ci-smoke:')).run,
+    /npm run test:e2e:ci-smoke:\$\{\{ matrix.shard \}\}/,
+  );
+  const truthTable = spawnSync('bash', ['-euo', 'pipefail', '-c', [
+    'aggregate_check() {',
+    aggregate.steps[0].run,
+    '}',
+    'for changes in success failure cancelled skipped; do',
+    '  for browser in true false empty; do',
+    '    for shards in success failure cancelled skipped; do',
+    '      for tail in success failure cancelled skipped; do',
+    '        if (',
+    '          export CHANGES_RESULT="$changes"',
+    '          export BROWSER_CHANGED="${browser#empty}"',
+    '          export SHARDS_RESULT="$shards"',
+    '          export PRO_WEBMCP_RESULT="$tail"',
+    '          aggregate_check',
+    '        ) >/dev/null 2>&1; then passed=true; else passed=false; fi',
+    '        printf "%s/%s/%s/%s=%s\\n" "$changes" "${browser#empty}" "$shards" "$tail" "$passed"',
+    '      done',
+    '    done',
+    '  done',
+    'done',
+  ].join('\n')], { encoding: 'utf8' });
+  assert.equal(truthTable.status, 0, truthTable.stderr);
+  const actual = new Map(
+    truthTable.stdout.trim().split('\n').map((line) => {
+      const separator = line.lastIndexOf('=');
+      return [line.slice(0, separator), line.slice(separator + 1) === 'true'];
+    }),
+  );
+  for (const changes of ['success', 'failure', 'cancelled', 'skipped']) {
+    for (const browser of ['true', 'false', '']) {
+      for (const shardsResult of ['success', 'failure', 'cancelled', 'skipped']) {
+        for (const tailResult of ['success', 'failure', 'cancelled', 'skipped']) {
+          const expected = changes === 'success' && (
+            (browser === 'true' && shardsResult === 'success' && tailResult === 'success')
+            || (browser === 'false' && shardsResult === 'skipped' && tailResult === 'skipped')
+          );
+          assert.equal(
+            actual.get(`${changes}/${browser}/${shardsResult}/${tailResult}`),
+            expected,
+            `${changes}/${browser}/${shardsResult}/${tailResult}`,
+          );
+        }
       }
     }
   }

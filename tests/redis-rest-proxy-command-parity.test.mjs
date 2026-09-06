@@ -35,6 +35,7 @@ import {
   STATUS_LUA,
 } from '../scripts/lib/x-post-budget.cjs';
 import { SOURCE_RETRY_CLAIM_SCRIPT } from '../scripts/_bundle-runner.mjs';
+import { CABLE_HEALTH_REPAIR_SCRIPT } from '../shared/cable-health-repair-script.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
@@ -216,6 +217,13 @@ describe('redis-rest-proxy command gate', () => {
     assert.equal(accepts(gate, command), true);
     assert.deepEqual(Array.from(gate.commandForExecution(command)), command);
     assert.equal(accepts(gate, ['EVAL', `${SOURCE_RETRY_CLAIM_SCRIPT} `, '1', 'k']), false);
+  });
+
+  it('admits only the exact cable snapshot repair script', () => {
+    const gate = buildGate();
+    const command = ['EVAL', CABLE_HEALTH_REPAIR_SCRIPT, '2', 'snapshot', 'meta'];
+    assert.deepEqual(Array.from(gate.commandForExecution(command)), command);
+    assert.equal(accepts(gate, ['EVAL', `${CABLE_HEALTH_REPAIR_SCRIPT} `, '2', 'snapshot', 'meta']), false);
   });
 
   it('pins the atomic physical-premium publication by exact bytes', () => {

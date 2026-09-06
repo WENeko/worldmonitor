@@ -330,6 +330,11 @@ const BOOTSTRAP_KEYS = {
 // sweep so the canadaAlerts probe grades the data clients actually receive.
 const STANDALONE_KEYS = {
   predictionCountryMarkets: 'prediction:markets-country-index:v1',
+  // Per-country GDELT article index (#7748): read only by the search route's
+  // country form and the weekly crawlable freeze, never by the dashboard, so
+  // it is monitored here rather than bootstrap-tiered. Without this gate an
+  // evicted or stale index stays invisible until the next weekly freeze.
+  gdeltCountryArticles: 'gdelt:bulk:country-articles:v1',
   chinaCoverage:      CHINA_COVERAGE_SUMMARY_KEY,
   // Control-plane heartbeat only. Convex owns every durable scan lease,
   // checkpoint, receipt, and replay decision; this Redis value is disposable.
@@ -607,7 +612,14 @@ const SEED_META = {
   // Always-on loop publishes every few seconds. Five minutes tolerates deploy
   // churn while still detecting a stopped worker well before leases age out.
   companyMonitoringWorker: { key: 'seed-meta:company-monitoring:worker', maxStaleMin: 5, workerControl: true },
-  earthquakes:      { key: 'seed-meta:seismology:earthquakes',  maxStaleMin: 30 },
+  earthquakes: {
+    key: 'seed-meta:seismology:earthquakes', maxStaleMin: 30,
+    sourceFailure: {
+      warnAfterConsecutive: 2, maxPendingMin: 10,
+      successAtField: 'lastSourceSuccessAt',
+      failureCodePattern: /^EARTHQUAKE_UPSTREAM_INCOMPLETE$/,
+    },
+  },
   wildfires:        {
     key: 'seed-meta:wildfire:fires',
     maxStaleMin: 360,
@@ -1004,6 +1016,20 @@ const SEED_META = {
   techEvents:       { key: 'seed-meta:research:tech-events',       maxStaleMin: 480 },
   researchArxivHnTrending: { key: 'seed-meta:research:arxiv-hn-trending', maxStaleMin: 150 },
   gdeltIntel:       { key: 'seed-meta:intelligence:gdelt-intel',   maxStaleMin: 45 }, // 15min bulk materializer; 45min = 3× cadence and expires before the 24h canonical key.
+  // Same materializer tick as gdeltIntel; the 2-day data TTL outlives this
+  // gate. Pending until the materializer's first successful index publish
+  // writes the durable marker, strict after it (#7748).
+  gdeltCountryArticles: {
+    key: 'seed-meta:gdelt:bulk:country-articles',
+    maxStaleMin: 45,
+    activationKey: 'seed-activated:gdelt:bulk:country-articles',
+    cutover: {
+      mode: 'activation-marker',
+      fromKey: null,
+      issue: 7748,
+      activationKey: 'seed-activated:gdelt:bulk:country-articles',
+    },
+  },
   telegramFeed:     { key: 'seed-meta:intelligence:telegram-feed:v1', maxStaleMin: 10 }, // 60s poll interval; 10min grace catches poll failures before they go stale in the panel
   xFeed:            { key: 'seed-meta:intelligence:x-feed:v1', maxStaleMin: 45 }, // Fixed 15min List slots; 45min = 3 missed slots. Freshness advances only after an accepted page is published.
   digestNotifications: { key: 'seed-meta:digest:last-run',          maxStaleMin: 90 }, // Railway digest-notifications cron runs every 30min; 90 = 3x cadence and detects a dead cron before daily digests are missed.
@@ -1564,6 +1590,10 @@ const ON_DEMAND_KEYS = new Set([
   // Scheduled country-index projection. The marker is written only after the
   // projection and its seed metadata publish successfully.
   'predictionCountryMarkets',
+  // Per-country GDELT article index (#7748). The 15-minute materializer
+  // writes the marker after the index and its seed-meta publish; absence is
+  // pending until that first tick and strict afterward.
+  'gdeltCountryArticles',
   // Scheduled producer. The marker is written only after a successful
   // publish of the canonical snapshot. Before that first publish, absence is
   // pending activation; after it, missing or stale data is strict.
@@ -1659,6 +1689,9 @@ const ACTIVATION_MARKERS = {
   torontoTfs: SEED_META.torontoTfs.activationKey,
   torontoTps: SEED_META.torontoTps.activationKey,
   predictionCountryMarkets: SEED_META.predictionCountryMarkets.activationKey,
+  // Written by scripts/seed-gdelt-bulk-materializer.mjs after the per-country
+  // article index publishes with its seed-meta (#7748).
+  gdeltCountryArticles: SEED_META.gdeltCountryArticles.activationKey,
   physicalPremiums: SEED_META.physicalPremiums.activationKey,
   physicalDivergence: SEED_META.physicalDivergence.activationKey,
   scorecardFiveFactor: SEED_META.scorecardFiveFactor.activationKey,
@@ -2223,7 +2256,8 @@ function projectSourceFailure(meta, policy, now, maxStaleMin) {
   if (policy.maxPendingMin != null) {
     const first = meta.firstSourceFailureAt;
     const attempt = meta.lastSourceAttemptAt;
-    const success = meta.fetchedAt;
+    // A mixed-source publication may be new while one retained provider is older.
+    const success = meta[policy.successAtField || 'fetchedAt'];
     const validEpisode = [first, attempt, success].every((value) => Number.isSafeInteger(value) && value > 0)
       && success <= first && first <= attempt && attempt <= now;
     const deadline = validEpisode

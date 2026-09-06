@@ -1459,11 +1459,21 @@ export class Panel {
     this.setContentHtml(safeHtmlToString(html), afterUpdate);
   }
 
-  private setContentHtml(html: string, afterUpdate?: () => void): void {
+  /**
+   * User-action twin of `setSafeContent`. Same safe-HTML boundary, lock bail,
+   * error/retry clear, dirty-check, and `setContentImmediate` commit — without
+   * the 150 ms background coalescing timer. A pending coalesced write and its
+   * callback are cancelled so they cannot paint over this interaction.
+   */
+  public setSafeContentImmediate(html: SafeHtml, afterUpdate?: () => void): void {
+    this.setContentHtml(safeHtmlToString(html), afterUpdate, true);
+  }
+
+  private setContentHtml(html: string, afterUpdate?: () => void, immediate = false): void {
     // #6714: clear error state before the lock bail — see setContentNodes.
     this.clearErrorState();
     if (this._locked) return;
-    if (this.pendingContentHtml === html) {
+    if (!immediate && this.pendingContentHtml === html) {
       if (afterUpdate) this.pendingContentCallback = afterUpdate;
       return;
     }
@@ -1481,6 +1491,10 @@ export class Panel {
 
     this.pendingContentHtml = html;
     this.pendingContentCallback = afterUpdate ?? null;
+    if (immediate) {
+      this.setContentImmediate(html);
+      return;
+    }
     if (this.contentDebounceTimer) {
       clearTimeout(this.contentDebounceTimer);
     }

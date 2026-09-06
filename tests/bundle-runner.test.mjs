@@ -1063,7 +1063,7 @@ test('timeout emits terminal reason BEFORE SIGTERM/SIGKILL grace (survives conta
 test('budget check accounts for SIGKILL grace when deferring', async () => {
   const cleanupFirst = writeFixture(
     '_bundle-fixture-budget-first.mjs',
-    `await new Promise((r) => setTimeout(r, 16000));\nconsole.log('first-ran');\n`,
+    `console.log('first-ran');\n`,
   );
   const cleanupGated = writeFixture(
     '_bundle-fixture-sleep.mjs',
@@ -1079,19 +1079,16 @@ test('budget check accounts for SIGKILL grace when deferring', async () => {
     // FIRST has to burn more than ADMISSION_HEADROOM_MS for GATED to defer at
     // all: any section that passes the startup check by definition fits the
     // budget with the headroom to spare, so only elapsed time beyond that
-    // headroom can squeeze it out. That is what makes this test slow, and why
-    // it cannot be tightened without also weakening what it proves.
-    //
-    // FIRST's timeout is ~2x its sleep on purpose. This file spawns real child
-    // processes and a loaded CI runner has already produced one cold-start
-    // flake here (PR #3617); a timeout close to the sleep would turn that into
-    // a section failure and change the exit code being asserted.
-    const { code, stdout } = await runBundleWith(
+    // headroom can squeeze it out. The virtual clock supplies that elapsed
+    // time; FIRST's timeout stays ~2x the simulated burn so a cold-start
+    // flake cannot turn the fixture into a section failure (PR #3617).
+    const { code, stdout } = await runBundleWithVirtualClock(
       [
         { label: 'FIRST', script: '_bundle-fixture-budget-first.mjs', intervalMs: 1, timeoutMs: 30_000 },
         { label: 'GATED', script: '_bundle-fixture-sleep.mjs', intervalMs: 1, timeoutMs: 35_000 },
       ],
       { maxBundleMs: 60_000 },
+      [0, 0, 0, 100, 16_000, 16_000],
     );
     assert.equal(code, 0, 'a deferral after real work is pressure, not a failure');
     assert.match(stdout, /\[FIRST\] first-ran/);
@@ -1286,16 +1283,17 @@ test('a graceful skip that publishes nothing and defers work exits non-zero', as
   // successful work to vouch for it, whatever the reason.
   const cleanupGrace = writeFixture(
     '_bundle-fixture-slow-graceful.mjs',
-    `await new Promise((r) => setTimeout(r, 16000));\nconsole.log('=== Failed gracefully ===');\nprocess.exit(${GRACEFUL_FETCH_FAILURE_EXIT_CODE});\n`,
+    `console.log('=== Failed gracefully ===');\nprocess.exit(${GRACEFUL_FETCH_FAILURE_EXIT_CODE});\n`,
   );
   const cleanupLate = writeFixture('_bundle-fixture-late.mjs', `console.log('late-ran');\n`);
   try {
-    const { code, stdout, stderr } = await runBundleWith(
+    const { code, stdout, stderr } = await runBundleWithVirtualClock(
       [
         { label: 'GRACE', script: '_bundle-fixture-slow-graceful.mjs', intervalMs: 1, timeoutMs: 30_000 },
         { label: 'LATE', script: '_bundle-fixture-late.mjs', intervalMs: 1, timeoutMs: 35_000 },
       ],
       { maxBundleMs: 60_000 },
+      [0, 0, 0, 100, 16_000, 16_000],
     );
     assert.equal(code, 1, 'a tick that published nothing and shed due work must not report success');
     assert.match(stdout, /\[Bundle:test\] Finished .* ran:0 skipped:0 deferred:1 failed:0 graceful:1/);

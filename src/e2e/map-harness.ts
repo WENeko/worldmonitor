@@ -108,6 +108,69 @@ type VisualScenarioSummary = {
   variant: 'both' | HarnessVariant;
 };
 
+type TradeAnimationProfileOptions = {
+  displayFrames?: number;
+  warmupFrames?: number;
+  zoom?: number;
+  enabledLayers?: HarnessLayerKey[];
+  includeNews?: boolean;
+};
+
+type TradeAnimationProfileSample = {
+  totalMs: number;
+  jsBuildMs: number;
+  deckCommitMs: number;
+  layerCount: number;
+  nuclearIdentityChanged: boolean;
+  tripsIdentityChanged: boolean;
+};
+
+type TradeAnimationProfileResult = {
+  displayFrames: number;
+  warmupFrames: number;
+  zoom: number;
+  enabledLayers: HarnessLayerKey[];
+  buildCount: number;
+  hintCallCount: number;
+  hintScanCount: number;
+  samples: TradeAnimationProfileSample[];
+  rafIntervalsMs: number[];
+  longTasks: Array<{ name: string; duration: number; startTime: number }>;
+  fixture: {
+    nuclearCount: number;
+    datacenterCount: number;
+    routeSegments: number;
+    trips: number;
+    chokepoints: number;
+    newsMarkers: number;
+    layerIds: string[];
+  };
+  glRenderer: string | null;
+};
+
+type DeckLayerManager = {
+  updateLayers: () => void;
+};
+
+type MapInternal = {
+  updateLayers: (deferred?: boolean) => void;
+  buildLayers: (deferHeavy?: boolean) => Array<{ id: string }>;
+  updateZoomHints: () => void;
+  container: HTMLElement;
+  state: { layers: MapLayers };
+  maplibreMap?: MapLibreMap;
+  deckOverlay?: {
+    setProps: (props: { layers?: unknown }) => void;
+    _deck?: { layerManager?: DeckLayerManager };
+  };
+  tradeTrips: unknown[];
+  tradeRouteSegments: unknown[];
+  zoomHintGuard?: {
+    shouldScan: (inputs: { zoom: number; layers: MapLayers }, toggleList: Element) => boolean;
+  };
+  stopPulseAnimation?: () => void;
+};
+
 type MapHarness = {
   ready: boolean;
   variant: HarnessVariant;
@@ -134,6 +197,9 @@ type MapHarness = {
   getOverlaySnapshot: () => OverlaySnapshot;
   getCyberTooltipHtml: (indicator: string) => string;
   showChinaCorridor: (index?: number) => void;
+  runTradeAnimationProfile: (
+    options?: TradeAnimationProfileOptions,
+  ) => Promise<TradeAnimationProfileResult>;
   destroy: () => void;
 };
 
@@ -554,6 +620,220 @@ const getDeckLayerSnapshot = (): LayerSnapshot[] => {
 
 const getLayerDataCount = (layerId: string): number => {
   return getDeckLayerSnapshot().find((layer) => layer.id === layerId)?.dataCount ?? 0;
+};
+
+const waitAnimationFrames = (count: number, onFrame?: (now: number) => void): Promise<void> => {
+  return new Promise((resolve) => {
+    let seen = 0;
+    const tick = (now: number) => {
+      onFrame?.(now);
+      seen += 1;
+      if (seen >= count) {
+        resolve();
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+};
+
+const readGlRenderer = (): string | null => {
+  const canvas = document.querySelector('#deckgl-basemap canvas') as HTMLCanvasElement | null;
+  const gl = canvas?.getContext('webgl2') ?? canvas?.getContext('webgl');
+  if (!gl) return null;
+  const ext = gl.getExtension('WEBGL_debug_renderer_info');
+  if (!ext) return gl.getParameter(gl.RENDERER);
+  return gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+};
+
+const TRADE_ANIMATION_PROFILE_LAYERS: HarnessLayerKey[] = ['nuclear', 'datacenters', 'tradeRoutes'];
+
+const runTradeAnimationProfile = async (
+  options: TradeAnimationProfileOptions = {},
+): Promise<TradeAnimationProfileResult> => {
+  const displayFrames = options.displayFrames ?? 61;
+  const warmupFrames = options.warmupFrames ?? 20;
+  const zoom = options.zoom ?? 5;
+  const enabledLayers = options.enabledLayers ?? TRADE_ANIMATION_PROFILE_LAYERS;
+  const includeNews = options.includeNews ?? true;
+
+  const mapInternal = map as unknown as MapInternal;
+  mapInternal.stopPulseAnimation?.();
+  map.setProtests([]);
+  map.updateHotspotActivity([]);
+  setLayersForSnapshot(enabledLayers);
+  map.setNewsLocations(includeNews ? SEEDED_NEWS_LOCATIONS : []);
+  if (includeNews) makeNewsLocationsNonRecent();
+  else internals.newsLocationFirstSeen?.clear();
+  mapInternal.stopPulseAnimation?.();
+  setCamera({ lon: 0, lat: 20, zoom });
+  map.setRenderPaused(false);
+  map.render();
+
+  const origUpdate = mapInternal.updateLayers;
+  const origBuild = mapInternal.buildLayers;
+  const origHints = mapInternal.updateZoomHints;
+  const overlay = mapInternal.deckOverlay;
+  const layerManager = overlay?._deck?.layerManager;
+  const origLayerUpdate = layerManager?.updateLayers.bind(layerManager);
+
+  let inUpdate = false;
+  let lastJsBuild = 0;
+  let lastDeckCommit = 0;
+  let lastLayerCount = 0;
+  let lastNuclear: { id: string } | null = null;
+  let lastTrips: { id: string } | null = null;
+  let buildCount = 0;
+  let hintCallCount = 0;
+  let hintScanCount = 0;
+  const samples: TradeAnimationProfileSample[] = [];
+  const rafIntervalsMs: number[] = [];
+  const longTasks: Array<{ name: string; duration: number; startTime: number }> = [];
+
+  let observer: PerformanceObserver | null = null;
+  try {
+    observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        longTasks.push({
+          name: entry.name,
+          duration: entry.duration,
+          startTime: entry.startTime,
+        });
+      }
+    });
+    observer.observe({ type: 'longtask', buffered: true });
+  } catch {
+    observer = null;
+  }
+
+  mapInternal.buildLayers = function wrappedBuildLayers(deferHeavy?: boolean) {
+    const started = performance.now();
+    const layers = origBuild.call(this, deferHeavy);
+    if (inUpdate) {
+      lastJsBuild = performance.now() - started;
+      lastLayerCount = layers.length;
+      buildCount += 1;
+      const nuclear = layers.find((layer) => layer.id === 'nuclear-layer') ?? null;
+      const trips = layers.find((layer) => layer.id === 'trade-route-trips-layer') ?? null;
+      lastNuclear = nuclear;
+      lastTrips = trips;
+    }
+    return layers;
+  };
+
+  const applyDeckCommit = (elapsed: number): void => {
+    const last = samples[samples.length - 1];
+    if (last) {
+      last.deckCommitMs += elapsed;
+      last.totalMs = last.jsBuildMs + last.deckCommitMs;
+      return;
+    }
+    lastDeckCommit += elapsed;
+  };
+
+  if (layerManager && origLayerUpdate) {
+    // deck.gl queues layers in setProps; matching, lifecycle, and attribute
+    // rebuilds run later in LayerManager.updateLayers during the map render.
+    layerManager.updateLayers = function wrappedLayerManagerUpdate() {
+      const started = performance.now();
+      origLayerUpdate();
+      applyDeckCommit(performance.now() - started);
+    };
+  }
+
+  mapInternal.updateZoomHints = function wrappedUpdateZoomHints() {
+    hintCallCount += 1;
+    const toggleList = this.container.querySelector('.deckgl-layer-toggles .toggle-list');
+    const currentZoom = this.maplibreMap?.getZoom() || 2;
+    if (
+      toggleList
+      && this.zoomHintGuard?.shouldScan({ zoom: currentZoom, layers: this.state.layers }, toggleList)
+    ) {
+      hintScanCount += 1;
+    }
+    origHints.call(this);
+  };
+
+  mapInternal.updateLayers = function wrappedUpdateLayers(deferred?: boolean) {
+    inUpdate = true;
+    const previousNuclear = lastNuclear;
+    const previousTrips = lastTrips;
+    lastJsBuild = 0;
+    lastLayerCount = 0;
+    const sample: TradeAnimationProfileSample = {
+      totalMs: 0,
+      jsBuildMs: 0,
+      deckCommitMs: lastDeckCommit,
+      layerCount: 0,
+      nuclearIdentityChanged: false,
+      tripsIdentityChanged: false,
+    };
+    lastDeckCommit = 0;
+    samples.push(sample);
+    try {
+      origUpdate.call(this, deferred);
+    } finally {
+      inUpdate = false;
+    }
+    sample.jsBuildMs = lastJsBuild;
+    sample.layerCount = lastLayerCount;
+    sample.nuclearIdentityChanged = Boolean(lastNuclear) && lastNuclear !== previousNuclear;
+    sample.tripsIdentityChanged = Boolean(lastTrips) && lastTrips !== previousTrips;
+    sample.totalMs = sample.jsBuildMs + sample.deckCommitMs;
+  };
+
+  try {
+    await waitAnimationFrames(warmupFrames);
+    buildCount = 0;
+    hintCallCount = 0;
+    hintScanCount = 0;
+    samples.length = 0;
+    longTasks.length = 0;
+    lastDeckCommit = 0;
+    lastJsBuild = 0;
+    lastNuclear = null;
+    lastTrips = null;
+
+    let previousRaf = 0;
+    await waitAnimationFrames(displayFrames, (now) => {
+      if (previousRaf > 0) rafIntervalsMs.push(now - previousRaf);
+      previousRaf = now;
+    });
+    // Flush a deferred LayerManager.updateLayers that is still queued after
+    // the last animation-driven setProps.
+    await waitAnimationFrames(2);
+
+    const snapshot = getDeckLayerSnapshot();
+    return {
+      displayFrames,
+      warmupFrames,
+      zoom,
+      enabledLayers,
+      buildCount,
+      hintCallCount,
+      hintScanCount,
+      samples,
+      rafIntervalsMs,
+      longTasks,
+      fixture: {
+        nuclearCount: getLayerDataCount('nuclear-layer'),
+        datacenterCount: getLayerDataCount('datacenters-layer'),
+        routeSegments: enabledLayers.includes('tradeRoutes') ? mapInternal.tradeRouteSegments.length : 0,
+        trips: enabledLayers.includes('tradeRoutes') ? mapInternal.tradeTrips.length : 0,
+        chokepoints: getLayerDataCount('trade-chokepoints-layer'),
+        newsMarkers: getLayerDataCount('news-locations-layer'),
+        layerIds: snapshot.map((layer) => layer.id),
+      },
+      glRenderer: readGlRenderer(),
+    };
+  } finally {
+    observer?.disconnect();
+    mapInternal.updateLayers = origUpdate;
+    mapInternal.buildLayers = origBuild;
+    mapInternal.updateZoomHints = origHints;
+    if (layerManager && origLayerUpdate) layerManager.updateLayers = origLayerUpdate;
+  }
 };
 
 const getLayerFirstScreenTransform = (layerId: string): string | null => {
@@ -1690,6 +1970,7 @@ window.__mapHarness = {
   getProtestClusterCount,
   getOverlaySnapshot,
   getCyberTooltipHtml,
+  runTradeAnimationProfile,
   showChinaCorridor: (index = 0): void => {
     const definition = CHINA_LOGISTICS_CORRIDORS[index] ?? CHINA_LOGISTICS_CORRIDORS[0]!;
     map.setChinaCorridorSelection({

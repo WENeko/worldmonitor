@@ -3,8 +3,9 @@
 // chokepoint status, crisis HAPI summaries, the top news headlines,
 // the market tape, and
 // per-country recent developments (digest headlines matched per country,
-// plus the intel brief and timeline where a service key unlocks the
-// tier-gated routes). Writes
+// topped up from the per-country GDELT article index where the digest
+// leaves a country short, plus the intel brief and timeline where a service
+// key unlocks the tier-gated routes). Writes
 // docs/snapshots/crawlable-live-pulse-<YYYY-MM-DD>.json.
 //
 // Usage:
@@ -31,11 +32,15 @@ import {
 } from './crawlable-live-tools.mjs';
 import { loadEnvFile } from './_seed-utils.mjs';
 import {
+  briefGroundingGap,
+  COUNTRY_INDEX_ORIGIN,
   developmentsHasDatedItem,
   hasBriefGrounding,
+  isVerifiableArticleUrl,
   MIN_BRIEF_GROUNDING_PUBLISHERS,
   normalizeFrozenDevelopments,
 } from './crawlable-developments.mjs';
+import { countryIndexPath, topUpCountryIndex } from './crawlable-country-index.mjs';
 import { countryMentionTerms, mentionsCountry } from '../shared/country-mention.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -108,21 +113,11 @@ export function minimumBriefCaptures(briefMatchedCount) {
   ));
 }
 
-// Aggregator hosts whose article links are opaque, expiring redirects rather
-// than the publisher's own URL. A frozen row is published for up to
-// MAX_LIVE_PULSE_SNAPSHOT_AGE_DAYS, and "verifiable" has to mean a reader can
-// see the outlet in the URL and still reach the piece next week.
-const AGGREGATOR_LINK_HOSTS = new Set(['news.google.com']);
-
-// Shared with scripts/build-welcome-teasers.mjs so the capture-time rule and
-// the publish-time re-check cannot drift apart.
-export function isVerifiableArticleUrl(url) {
-  const value = String(url || '').trim();
-  const parsed = URL.parse(value);
-  if (!parsed || parsed.protocol !== 'https:' || !parsed.hostname) return false;
-  const hostname = parsed.hostname.toLowerCase().replace(/\.+$/, '');
-  return hostname.length > 0 && !AGGREGATOR_LINK_HOSTS.has(hostname);
-}
+// isVerifiableArticleUrl (https on the publisher's own host, never an
+// aggregator redirect) lives in scripts/crawlable-developments.mjs with the
+// other publish rules and is re-exported below for
+// scripts/build-welcome-teasers.mjs, so the capture-time rule and the
+// publish-time re-check cannot drift apart.
 
 // The market card's twelve rows, and the labels it renders them under.
 //
@@ -231,6 +226,8 @@ const BRIEF_CONTEXT_MAX_CHARS = 3800;
 // `full` alone named 48 of 194 countries, the five variants pooled named 68.
 // `full` goes first so its rows win ties and URL de-duplication.
 const COUNTRY_DIGEST_VARIANTS = Object.freeze(['full', 'tech', 'finance', 'commodity', 'happy']);
+// The per-country index top-up (#7748) that fills the countries the pool
+// leaves short lives in scripts/crawlable-country-index.mjs.
 
 // Operator-facing review-hygiene text the chokepoint status contract appends
 // (THREAT_CONFIG_STALE_NOTE in server/worldmonitor/supply-chain/v1/get-chokepoint-status.ts).
@@ -468,7 +465,7 @@ function briefRecord(payload, digestUrls) {
   }
   const sources = Array.isArray(payload?.sources) ? payload.sources : [];
   if (sources.length === 0) {
-    throw new Error('brief response carried no sources from the frozen digest generation');
+    throw new Error('brief response carried no sources from the frozen grounding pool');
   }
   const normalizedSources = sources.map((source) => {
     const title = String(source?.title || '').trim();
@@ -479,7 +476,7 @@ function briefRecord(payload, digestUrls) {
       throw new Error('brief response carried an invalid source');
     }
     if (!digestUrls.has(url)) {
-      throw new Error(`brief source was not in the frozen digest generation: ${url}`);
+      throw new Error(`brief source was not in the frozen grounding pool: ${url}`);
     }
     return {
       title,
@@ -527,10 +524,14 @@ function timelineRecord(record) {
 // `briefSkipped` states, published as-is in the corpus dataset download:
 //   null              a brief was requested and captured
 //   'no-service-key'  keyless run; tier-gated routes not attempted
-//   'no-grounding'    no digest headline named the country
+//   'no-grounding'    no digest or index headline named the country
 //   'thin-grounding'  fewer than MIN_BRIEF_GROUNDING_PUBLISHERS distinct
 //                     publishers behind the headlines (or the returned
 //                     sources), so no forecast is published
+//   'uncurated-grounding'
+//                     enough publishers, but every headline came from the
+//                     open-web index; index rows corroborate a brief, they
+//                     do not ground one alone
 //   'empty'           the route answered with no brief text (LLM outage)
 //   'failed'          the request itself failed; see errors.developments
 // The timeline sibling uses timelineStatus the same way.
@@ -923,16 +924,34 @@ export async function freezeCrawlableLivePulse({
   for (const code of Object.keys(countries)) {
     headlinesByCode.set(code, selectCountryHeadlines(digestItems, code, COUNTRY_HEADLINE_LIMIT));
   }
+
+  // Per-country index top-up (#7748): every country the pool leaves short
+  // asks the index; digest rows keep precedence and index rows fill the
+  // remaining slots. The top-up is never a reason to lose the capture — its
+  // errors are recorded per country, or once for a missing index — and they
+  // are appended AFTER the brief loop below so the gate's thrown cause is
+  // never a top-up hiccup.
+  const { countryIndex, errors: countryIndexErrors, urls: countryIndexUrls } = await topUpCountryIndex({
+    codes: Object.keys(countries),
+    headlinesByCode,
+    headlineLimit: COUNTRY_HEADLINE_LIMIT,
+    fetchIndex: (code) => authedGet(countryIndexPath(code), token, base, authOpts),
+    nowMs: freezeStartedAt,
+    requestGapMs,
+    sleep,
+  });
+
   // Provenance cross-check (#7615): a brief source renders headline-grade on
-  // the page, so its URL must have been in the frozen digest generation. The
+  // the page, so its URL must have been in this run's frozen grounding pool —
+  // the pooled digest generation plus the index rows accepted above. The
   // server re-grounds from its own live digest read at brief time; anything
-  // outside this run's frozen generation (rotation, hallucination) rejects
-  // the entire brief rather than being removed and shifting citation indexes.
-  // Both sides use the same HTTPS-only URL serialization.
-  const digestUrls = new Set();
+  // outside the pool (rotation, hallucination) rejects the entire brief
+  // rather than being removed and shifting citation indexes. Both sides use
+  // the same HTTPS-only URL serialization.
+  const groundingUrls = new Set(countryIndexUrls);
   for (const item of digestItems) {
     const url = normalizeHttpsUrl(item?.link);
-    if (url) digestUrls.add(url);
+    if (url) groundingUrls.add(url);
   }
   const timelineFrom = freezeStartedAt - COUNTRY_TIMELINE_WINDOW_MS;
   // Countries a brief was requested for. The brief gate divides by this set,
@@ -947,9 +966,7 @@ export async function freezeCrawlableLivePulse({
       ? 'no-service-key'
       : countryHeadlines.length === 0
         ? 'no-grounding'
-        : !hasBriefGrounding(countryHeadlines)
-          ? 'thin-grounding'
-          : null;
+        : briefGroundingGap(countryHeadlines);
     const developments = {
       ...emptyDevelopments(freezeStartedAt, briefSkipped),
       headlines: countryHeadlines,
@@ -964,9 +981,17 @@ export async function freezeCrawlableLivePulse({
           base,
           authOpts,
         );
-        const brief = briefRecord(briefPayload, digestUrls);
+        const brief = briefRecord(briefPayload, groundingUrls);
         if (brief) {
-          developments.brief = brief;
+          // The server echoes the Source lines without provenance; restore
+          // the origin stamp by URL so the corpus's publish-time floor sees
+          // the same curated-versus-index split the freeze saw.
+          developments.brief = {
+            ...brief,
+            sources: brief.sources.map((source) => (
+              countryIndexUrls.has(source.url) ? { ...source, origin: COUNTRY_INDEX_ORIGIN } : source
+            )),
+          };
         } else {
           developments.briefSkipped = 'empty';
           developmentsErrors.push({ code, stage: 'brief', message: 'response carried no publishable brief text' });
@@ -1030,7 +1055,7 @@ export async function freezeCrawlableLivePulse({
     }
     countries[code].developments = normalized;
   }
-  developmentsErrors.push(...digestVariantErrors);
+  developmentsErrors.push(...digestVariantErrors, ...countryIndexErrors);
 
   const geoLeaders = Object.entries(countries)
     .filter(([, row]) => Number.isFinite(row.geoConvergence) && row.geoConvergence > 0)
@@ -1086,6 +1111,10 @@ export async function freezeCrawlableLivePulse({
       briefThinGroundingCount: Object.values(countries)
         .filter((row) => row.developments?.briefSkipped === 'thin-grounding'
           && !hasBriefGrounding(row.developments?.headlines)).length,
+      // Countries the open-web index named but no curated feed did: dated
+      // headlines, no brief (#7748 review).
+      briefUncuratedGroundingCount: Object.values(countries)
+        .filter((row) => row.developments?.briefSkipped === 'uncurated-grounding').length,
       timelineCountryCount: Object.values(countries)
         .filter((row) => (row.developments?.timeline?.length || 0) > 0).length,
       // The enrichment tail (#7748): indexed pages with no dated item at all.
@@ -1097,6 +1126,12 @@ export async function freezeCrawlableLivePulse({
         .filter((row) => !developmentsHasDatedItem(row.developments)).length,
       developmentsDigestVariants: digestVariantStates,
       developmentsDigestItemCount: digestItems.length,
+      // The per-country index top-up (#7748): whether the route served,
+      // how many countries were asked, and how many gained at least one
+      // index row. The corpus build raises its coverage floor when the
+      // state is 'available', so a freeze that ran with the index can no
+      // longer publish a digest-sized tail as a green build.
+      developmentsCountryIndex: countryIndex,
       serviceKeyPresent: keyed,
       developmentsErrorCount: developmentsErrors.length,
     },
@@ -1190,16 +1225,29 @@ if (isMain) {
         + `developmentsCountries=${snapshot.coverage.developmentsCountryCount} `
         + `developmentsMissing=${snapshot.coverage.developmentsMissingCount} `
         + `digestPool=${snapshot.coverage.developmentsDigestItemCount} `
+        + `countryIndex=${snapshot.coverage.developmentsCountryIndex.state}`
+        + `:${snapshot.coverage.developmentsCountryIndex.countryCount} `
         + `keyed=${snapshot.coverage.serviceKeyPresent}`,
       );
       if (snapshot.coverage.developmentsMissingCount > 0) {
-        // The unenriched tail is a structural gap, not a capture error: the
-        // news pool names roughly a third of indexed countries in any week.
-        // Logged so every weekly PR states the number (#7748).
+        // The remaining tail is the countries neither the digest pool nor the
+        // per-country index named this week. Logged so every weekly PR
+        // states the number (#7748).
         console.warn(
           `[freeze-crawlable-live-pulse] ${snapshot.coverage.developmentsMissingCount} of `
           + `${snapshot.coverage.countryCount} countries have no dated development this run `
-          + '(no digest mention, brief or timeline event).',
+          + '(no digest or index mention, brief or timeline event).',
+        );
+      }
+      if (snapshot.coverage.developmentsCountryIndex.state !== 'available') {
+        // Loud like the keyless warning: without the index the tail reverts
+        // to the digest-only size, and the corpus build's raised floor does
+        // not apply, so a green weekly PR would look complete while shipping
+        // ~130 pages with no dated item.
+        console.warn(
+          `[freeze-crawlable-live-pulse] WARNING: per-country article index ${snapshot.coverage.developmentsCountryIndex.state}; `
+          + 'country pages the digest does not name carry no dated development. '
+          + `Cause: ${snapshot.errors.developments.find((entry) => entry.stage === 'country-index')?.message || 'unrecorded'}`,
         );
       }
       if (snapshot.coverage.headlineCount < HEADLINE_CAPTURE_COUNT) {
@@ -1262,6 +1310,7 @@ export {
   authedGet,
   selectCountryHeadlines,
   buildBriefContext,
+  isVerifiableArticleUrl,
   COUNTRY_DIGEST_VARIANTS,
   normalizeHttpsUrl,
   timelineRecord,

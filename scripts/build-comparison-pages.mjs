@@ -305,6 +305,7 @@ const COMPARISON_PAGE_SEEDS = [
   },
   {
     slug: 'mcp-servers-for-geopolitical-data',
+    categoryList: true,
     path: '/compare/mcp-servers-for-geopolitical-data/',
     title: 'MCP Servers for Geopolitical Data | World Monitor',
     h1: 'MCP Servers for Geopolitical Data',
@@ -338,6 +339,7 @@ const COMPARISON_PAGE_SEEDS = [
   },
   {
     slug: 'chokepoint-monitoring-tools',
+    categoryList: true,
     path: '/compare/chokepoint-monitoring-tools/',
     title: 'Chokepoint Monitoring Tools | World Monitor',
     h1: 'Chokepoint Monitoring Tools',
@@ -371,6 +373,7 @@ const COMPARISON_PAGE_SEEDS = [
   },
   {
     slug: 'free-geopolitical-risk-dashboards',
+    categoryList: true,
     path: '/compare/free-geopolitical-risk-dashboards/',
     title: 'Free Geopolitical Risk Dashboards | World Monitor',
     h1: 'Free Geopolitical Risk Dashboards',
@@ -579,14 +582,17 @@ function renderComparePage(page, { tpl, baseUrl, lastmod }) {
   assertMetaDescription(description, page.slug);
 
   const jsonLd = [];
-  if (page.itemList) {
+  const items = page.itemList ?? (page.categoryList
+    ? page.matrixRows.map(([name], index) => ({ name, position: index + 1 }))
+    : null);
+  if (items) {
     jsonLd.push({
       '@context': 'https://schema.org',
       '@type': 'ItemList',
       name: page.h1,
-      numberOfItems: page.itemList.length,
-      itemListOrder: 'https://schema.org/ItemListOrderAscending',
-      itemListElement: page.itemList.map((item) => ({
+      numberOfItems: items.length,
+      itemListOrder: page.itemList ? 'https://schema.org/ItemListOrderAscending' : 'https://schema.org/ItemListUnordered',
+      itemListElement: items.map((item) => ({
         '@type': 'ListItem',
         position: item.position,
         name: item.name,

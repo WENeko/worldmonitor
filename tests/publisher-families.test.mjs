@@ -24,6 +24,8 @@ import {
   countPublisherFamilies,
   publisherFamiliesFor,
   publisherFamilyFor,
+  publisherFamilyForDomain,
+  PUBLISHER_FAMILY_DOMAIN_TABLE,
   publisherNameForFamily,
 } from '../shared/publisher-families.js';
 
@@ -192,6 +194,32 @@ describe('publisher-families map data', () => {
       }
     }
     assert.deepEqual(duplicates, [], duplicates.join('\n'));
+  });
+
+  it('maps curated domains to existing families, one family per domain (#7748)', () => {
+    for (const [familyId, domains] of Object.entries(PUBLISHER_FAMILY_DOMAIN_TABLE)) {
+      assert.ok(familyId in PUBLISHER_FAMILIES, `${familyId} lists domains but is not a curated family`);
+      assert.ok(domains.length > 0, `${familyId} lists no domains`);
+      for (const domain of domains) {
+        assert.match(domain, /^[a-z0-9-]+(\.[a-z0-9-]+)+$/, `${familyId}: ${domain} is not a bare registrable domain`);
+      }
+    }
+    const seen = new Map();
+    for (const [familyId, domains] of Object.entries(PUBLISHER_FAMILY_DOMAIN_TABLE)) {
+      for (const domain of domains) {
+        assert.ok(!seen.has(domain), `${domain} is listed under ${seen.get(domain)} and ${familyId}`);
+        seen.set(domain, familyId);
+      }
+    }
+    assert.equal(publisherFamilyForDomain('www.bbc.co.uk'), 'bbc');
+    assert.equal(publisherFamilyForDomain('bbc.com'), 'bbc');
+    assert.equal(publisherFamilyForDomain('amp.theguardian.com'), 'guardian');
+    assert.equal(publisherFamilyForDomain('APNEWS.COM'), 'ap-news');
+    assert.equal(publisherFamilyForDomain('news.google.com'), '', 'an aggregator host names no newsroom');
+    assert.equal(publisherFamilyForDomain('rnz.co.nz'), '', 'an unlisted domain stays its own family');
+    assert.equal(publisherFamilyForDomain('com'), '');
+    assert.equal(publisherFamilyForDomain(''), '');
+    assert.equal(publisherFamilyForDomain(undefined), '');
   });
 
   it('keeps curated family ids out of the singleton namespace', () => {
