@@ -6,7 +6,7 @@ import { runHydrationTier, type HydrationTask } from '@/app/hydration-scheduler'
 import { yieldToMain } from '@/utils/after-paint';
 import { getSignalAggregator, type SignalAggregator } from '@/app/lazy-services';
 import { getMilitaryVesselsModule, isVesselRuntimeStoppedError } from '@/services/military-vessels-lazy';
-import type { NewsItem, MapLayers, SocialUnrestEvent, MilitaryFlight } from '@/types';
+import type { ClusteredEvent, NewsItem, MapLayers, SocialUnrestEvent, MilitaryFlight } from '@/types';
 import type { MarketData } from '@/types';
 import type { TimeRange } from '@/components/MapContainer';
 import {
@@ -109,7 +109,7 @@ import {
 import { checkBatchForBreakingAlerts, dispatchOrefBreakingAlert } from '@/services/breaking-news-alerts';
 import { displayPubDateMs, effectivePubDateMs } from '@/services/feed-date';
 import { mlWorker } from '@/services/ml-worker';
-import { clusterNewsHybrid } from '@/services/clustering';
+import { clusterNewsHybrid, clusterNewsWithWorkerFallback } from '@/services/clustering';
 import { ingestProtests, ingestFlights, ingestVessels, ingestEarthquakes, detectGeoConvergence, geoConvergenceToSignal } from '@/services/geo-convergence';
 import { consumeServerAnomalies, fetchLiveAnomalies } from '@/services/temporal-baseline';
 import { fetchAllFires, flattenFires, computeRegionStats, toMapFires } from '@/services/wildfires';
@@ -438,6 +438,29 @@ const HYDRATION_TIER_FOUR = new Set([
 ]);
 const HYDRATION_TIERS: HydrationTier[] = [1, 2, 3, 4];
 
+type NewsClusteringProfilePath = 'hybrid' | 'analysis-worker';
+
+interface NewsClusteringProfileResult {
+  generation: number;
+  selectedPath: NewsClusteringProfilePath;
+  mlAvailableAtSelection: boolean;
+  itemCount: number;
+  clusterCount: number;
+}
+
+interface NewsClusteringProfileHook {
+  getState(): {
+    mlAvailable: boolean;
+    capabilities: typeof mlWorker.mlCapabilities;
+    loadedModelIds: string[];
+  };
+  run(path: NewsClusteringProfilePath, items: ProtoNewsItem[]): Promise<NewsClusteringProfileResult>;
+}
+
+type NewsClusteringProfileWindow = Window & {
+  __wmNewsClusteringProfile?: NewsClusteringProfileHook;
+};
+
 export class DataLoaderManager implements AppModule {
   private ctx: AppContext;
   private callbacks: DataLoaderCallbacks;
@@ -551,6 +574,16 @@ export class DataLoaderManager implements AppModule {
   constructor(ctx: AppContext, callbacks: DataLoaderCallbacks) {
     this.ctx = ctx;
     this.callbacks = callbacks;
+    if (import.meta.env.VITE_E2E === '1') {
+      (window as NewsClusteringProfileWindow).__wmNewsClusteringProfile = {
+        getState: () => ({
+          mlAvailable: mlWorker.isAvailable,
+          capabilities: mlWorker.mlCapabilities,
+          loadedModelIds: mlWorker.loadedModelIds,
+        }),
+        run: (path, items) => this.runNewsClusteringProfile(path, items),
+      };
+    }
   }
 
   private getHydrationTier(name: string): HydrationTier {
@@ -620,6 +653,11 @@ export class DataLoaderManager implements AppModule {
   }
 
   destroy(): void {
+    this.newsLoadGeneration += 1;
+    if (import.meta.env.VITE_E2E === '1') {
+      const profileWindow = window as NewsClusteringProfileWindow;
+      delete profileWindow.__wmNewsClusteringProfile;
+    }
     this.globalTenderGeneration += 1;
     this.activeGlobalTenderScopedGeneration = null;
     this.stopSatellitePropagation();
@@ -2011,6 +2049,74 @@ export class DataLoaderManager implements AppModule {
     return generation === this.newsLoadGeneration;
   }
 
+  private async clusterNewsForGeneration(
+    items: NewsItem[],
+    generation: number,
+    forcedPath?: NewsClusteringProfilePath,
+  ): Promise<NewsClusteringProfileResult & { clusters: ClusteredEvent[] }> {
+    const mlAvailableAtSelection = mlWorker.isAvailable;
+    const selectedPath = forcedPath ?? (mlAvailableAtSelection ? 'hybrid' : 'analysis-worker');
+    if (selectedPath === 'hybrid' && !mlAvailableAtSelection) {
+      throw new Error('Hybrid clustering profile requested before local ML became available');
+    }
+
+    const startedAt = import.meta.env.VITE_E2E === '1' ? performance.now() : 0;
+    const clusters = selectedPath === 'hybrid'
+      ? await clusterNewsHybrid(items, { shouldContinue: () => this.isCurrentNewsLoad(generation) })
+      : await clusterNewsWithWorkerFallback(items, {
+        shouldContinue: () => this.isCurrentNewsLoad(generation),
+      });
+    if (import.meta.env.VITE_E2E === '1') {
+      performance.measure(`wm:news-clustering:path:${selectedPath}`, {
+        start: startedAt,
+        end: performance.now(),
+        detail: {
+          generation,
+          selectedPath,
+          mlAvailableAtSelection,
+          itemCount: items.length,
+          clusterCount: clusters.length,
+        },
+      });
+    }
+
+    return {
+      generation,
+      selectedPath,
+      mlAvailableAtSelection,
+      itemCount: items.length,
+      clusterCount: clusters.length,
+      clusters,
+    };
+  }
+
+  private async runNewsClusteringProfile(
+    path: NewsClusteringProfilePath,
+    protoItems: ProtoNewsItem[],
+  ): Promise<NewsClusteringProfileResult> {
+    if (path === 'hybrid' && !mlWorker.isAvailable) {
+      throw new Error('Hybrid clustering profile requested before local ML became available');
+    }
+
+    const generation = this.beginNewsLoad();
+    const items = protoItems.map(protoItemToNewsItem);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    if (!this.isCurrentNewsLoad(generation)) {
+      throw new Error('News clustering profile generation was superseded');
+    }
+    const profiled = await this.clusterNewsForGeneration(items, generation, path);
+    if (!this.isCurrentNewsLoad(generation)) {
+      throw new Error('News clustering profile generation was superseded');
+    }
+    return {
+      generation: profiled.generation,
+      selectedPath: profiled.selectedPath,
+      mlAvailableAtSelection: profiled.mlAvailableAtSelection,
+      itemCount: profiled.itemCount,
+      clusterCount: profiled.clusterCount,
+    };
+  }
+
   private commitNewsFreshness(generation: number, servedStale: boolean): boolean {
     if (!this.isCurrentNewsLoad(generation)) return false;
     this.committedNewsGeneration = generation;
@@ -2160,9 +2266,7 @@ export class DataLoaderManager implements AppModule {
       // path. Worker readiness alone must never force a news reload or
       // retroactively regroup committed first-load results — a later normal
       // refresh re-reads availability and may use newly available ML.
-      const clusters = mlWorker.isAvailable
-        ? await clusterNewsHybrid(this.ctx.allNews)
-        : await analysisWorker.clusterNews(this.ctx.allNews);
+      const { clusters } = await this.clusterNewsForGeneration(this.ctx.allNews, generation);
       if (!this.isCurrentNewsLoad(generation)) return;
       this.ctx.latestClusters = clusters;
       // Only now is an empty cluster set a real answer. Set inside the try, after
@@ -4513,9 +4617,9 @@ export class DataLoaderManager implements AppModule {
       // the clustering path with THIS call's news body, never with a later
       // worker-ready event that would regroup already-committed clusters.
       if (this.ctx.latestClusters.length === 0 && this.ctx.allNews.length > 0) {
-        this.ctx.latestClusters = mlWorker.isAvailable
-          ? await clusterNewsHybrid(this.ctx.allNews)
-          : await analysisWorker.clusterNews(this.ctx.allNews);
+        const { clusters } = await this.clusterNewsForGeneration(this.ctx.allNews, newsGeneration);
+        if (!this.isCurrentNewsLoad(newsGeneration)) return;
+        this.ctx.latestClusters = clusters;
         this.ctx.clustersSettled = true;
       }
 

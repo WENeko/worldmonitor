@@ -486,7 +486,7 @@ describe('live cache sweep deployment timing', () => {
     assert.deepEqual(enforced, [
       'bootstrap-auth', 'warm-cache', 'generated-rpc', 'premium-rpc',
       'mcp-protocol', 'oauth-metadata', 'corpus-edge-cache', 'document-edge-cache',
-      'entry-document-edge-cache',
+      'entry-document-edge-cache', 'agent-api-errors',
     ]);
     const suite = read(resolve(root, 'tests/live-api-cache-auth-regression.test.mjs'));
     const emitted = [...suite.matchAll(/markProbeCompleted\('([a-z-]+)'\)/g)].map((m) => m[1]);

@@ -496,6 +496,9 @@ async function handleAuthenticatedSseReplay(
     usage.phase = getPreCheck.response.headers.get('X-Billing-Verification') ? 'billing' : 'precheck';
     return getPreCheck.response;
   }
+  // No `id` argument on purpose (#7818): the SSE replay channel is a GET with
+  // no JSON-RPC body, so there is no request id to echo and the denial keeps
+  // the spec's null. Every POST caller below passes the parsed `body.id`.
   const getLimited = await applyPerMinuteLimit(auth.context, corsHeaders, getPreCheck.burstPerMinute);
   if (getLimited) {
     usage.phase = 'limit';
@@ -898,8 +901,9 @@ async function mcpHandlerInner(
       // hand to read a plan burst from. `applyPerMinuteLimit` defaults to the
       // common ceiling rather than fetching one: these are metadata and
       // free-tier methods, and the tighter of the two sold thresholds is the
-      // defensible guess.
-      const limited = await applyPerMinuteLimit(context, corsHeaders);
+      // defensible guess. `undefined` for `perMinute` selects that default
+      // explicitly; `id` after it keeps the denial correlatable (#7818).
+      const limited = await applyPerMinuteLimit(context, corsHeaders, undefined, id);
       if (limited) {
         usage.phase = 'limit';
         return limited;
@@ -911,7 +915,7 @@ async function mcpHandlerInner(
       // existing limiter unchanged.
       const anonLimited = isFreeTierToolCall
         ? await applyFreeTierLimit(req, corsHeaders, id)
-        : await applyAnonDiscoveryLimit(req, corsHeaders);
+        : await applyAnonDiscoveryLimit(req, corsHeaders, id);
       if (anonLimited) {
         usage.phase = 'limit';
         return anonLimited;
@@ -944,7 +948,7 @@ async function mcpHandlerInner(
     // entitlement row and fall back to the defaults.
     budget = preCheck.budget;
     freeAccountAllowance = preCheck.freeAccountAllowance === true;
-    const limited = await applyPerMinuteLimit(context, corsHeaders, preCheck.burstPerMinute);
+    const limited = await applyPerMinuteLimit(context, corsHeaders, preCheck.burstPerMinute, id);
     if (limited) {
       usage.phase = 'limit';
       return limited;

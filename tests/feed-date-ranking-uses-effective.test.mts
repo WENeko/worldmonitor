@@ -102,7 +102,7 @@ const ALLOW_LIST: AllowEntry[] = [
   },
   {
     file: 'src/services/clustering.ts',
-    line: 139,
+    line: 182,
     reason: 'allDates aggregation for cluster firstSeen/lastUpdated metadata; not a per-item ranking comparator.',
   },
   {

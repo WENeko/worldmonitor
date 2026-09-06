@@ -16,6 +16,7 @@
 
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
+import agentPolicy from '../shared/agent-request-policy.json' with { type: 'json' };
 
 const LIVE = process.env.LIVE_API_CACHE_TESTS === '1';
 const API_BASE = stripTrailingSlash(process.env.WM_LIVE_API_BASE_URL || 'https://api.worldmonitor.app');
@@ -219,6 +220,42 @@ describe(`live API cache/auth regression sweep (${LIVE ? 'ENABLED' : 'SKIPPED - 
       ),
       /shared-cache HIT/,
     );
+  });
+
+  it('API User-Agent denials retain JSON 403s and nonblocked routes retain JSON 404s on both hosts', async () => {
+    // Pin both production entry points: an override must not silently turn this
+    // acceptance matrix into two reads of www or a preview deployment.
+    for (const origin of ['https://worldmonitor.app', 'https://www.worldmonitor.app']) {
+      for (const path of ['/api/agent-readiness-missing-endpoint', '/api/graphql']) {
+        for (const ua of ['ora-agent', 'curl/8.7.1', 'WorldMonitor-ReadinessCheck/1.0']) {
+          const url = `${origin}${path}`;
+          const { resp, bodyText } = await fetchText(url, {
+            redirect: 'follow', headers: { 'User-Agent': ua, Accept: 'application/json' },
+          });
+          const label = `${url} (${ua})`;
+          console.info(`LIVE_AGENT_API_RESPONSE ${JSON.stringify({
+            at: new Date().toISOString(), url, ua, finalUrl: resp.url,
+            status: resp.status, contentType: resp.headers.get('content-type'),
+            ray: resp.headers.get('cf-ray'), vercelId: resp.headers.get('x-vercel-id'),
+            body: bodyText.slice(0, 600),
+          })}`);
+          const control = ua === 'WorldMonitor-ReadinessCheck/1.0';
+          assert.equal(resp.status, control ? 404 : 403, `${label}: preserve access policy and missing-route status`);
+          assert.match(resp.headers.get('content-type') || '', /application\/json/i, `${label}: error must be application/json`);
+          const payload = JSON.parse(bodyText);
+          if (control) {
+            assert.equal(payload.error?.code, 'not_found', `${label}: origin must still report no endpoint`);
+            assert.ok(payload.error.message?.includes(path), `${label}: missing endpoint must be identified`);
+            assert.ok(typeof payload.error.hint === 'string' && payload.error.hint.trim(), `${label}: recovery hint required`);
+          } else {
+            for (const [field, value] of Object.entries(agentPolicy.blockedResponse)) {
+              assert.equal(payload[field], value, `${label}: denial field ${field} must match the shared policy`);
+            }
+          }
+        }
+      }
+    }
+    markProbeCompleted('agent-api-errors');
   });
 
   it('bootstrap rejects fake auth as dynamic no-store while public weather stays cacheable', async () => {
