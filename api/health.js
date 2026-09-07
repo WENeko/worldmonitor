@@ -623,10 +623,15 @@ const SEED_META = {
   wildfires:        {
     key: 'seed-meta:wildfire:fires',
     maxStaleMin: 360,
-    sourceFailure: {
-      warnAfterConsecutive: 2,
-      failureCodePattern: /^FIRMS_PARTIAL_COVERAGE$/,
-    },
+    sourceFailure: [
+      { warnAfterConsecutive: 2, failureCodePattern: /^FIRMS_PARTIAL_COVERAGE$/ },
+      {
+        warnAfterConsecutive: 2, maxPendingMin: 15,
+        successAtField: 'lastSourceSuccessAt',
+        sources: ['cwfis', 'firms', 'bc'],
+        failureCodePattern: /^CWFIS_SOURCE_FAILED$/,
+      },
+    ],
   }, // FIRMS NRT resets at midnight UTC; new-day data takes 3-6h to accumulate
   wildfiresBootstrap: { key: 'seed-meta:wildfire:fires-bootstrap', maxStaleMin: 360 }, // Compact CDN payload is a distinct publish target; monitor it so canonical fallback cannot hide transform/write failures.
   outages:          { key: 'seed-meta:infra:outages',           maxStaleMin: 30 },
@@ -643,7 +648,16 @@ const SEED_META = {
   etfFlows:         { key: 'seed-meta:market:etf-flows',        maxStaleMin: 60 },
   gulfQuotes:       { key: 'seed-meta:market:gulf-quotes',      maxStaleMin: 30 },
   stablecoinMarkets:{ key: 'seed-meta:market:stablecoins',      maxStaleMin: 60 },
-  naturalEvents:    { key: 'seed-meta:natural:events',          maxStaleMin: 540 }, // 3h Railway climate bundle; 3x cadence preserves a full missed run.
+  naturalEvents:    {
+    key: 'seed-meta:natural:events',
+    maxStaleMin: 540, // 3h Railway climate bundle; 3x cadence preserves a full missed run.
+    sourceFailure: {
+      warnAfterConsecutive: 2,
+      maxPendingMin: 210,
+      successAtField: 'lastSourceSuccessAt',
+      failureCodePattern: /^NHC_(POINT_REQUEST_FAILED|POINT_RESPONSE_INVALID)$/,
+    },
+  },
   hkoWarnings:      { key: 'seed-meta:weather:hko-warnings',    maxStaleMin: 540 }, // successful HKO responses publish a snapshot even when no tropical-cyclone warning is active.
   // #6987: moved off seed-meta:aviation:faa, which carries the FAA-ONLY alert
   // count. This probe's data key is the combined page-load aggregate, so a quiet
@@ -1995,6 +2009,7 @@ const MISSING_DATA_IS_FAILURE_KEYS = new Set([
 // key itself must still exist. Do not use this set in the missing-key branch.
 const ZERO_RECORD_DATA_OK_KEYS = new Set([
   ...EMPTY_DATA_OK_KEYS,
+  'naturalEvents',
   // A current List query can validly return no Posts. The relay still writes
   // the canonical snapshot, so a missing xFeed key remains a hard failure.
   'xFeed',
@@ -2244,6 +2259,7 @@ function parseFiniteRecordCount(raw) {
 }
 
 function projectSourceFailure(meta, policy, now, maxStaleMin) {
+  if (Array.isArray(policy)) policy = policy.find(candidate => candidate.failureCodePattern.test(meta?.errorCode));
   if (!policy || meta?.sourceState !== 'degraded') return null;
   let retainedUntil = Infinity;
   if (policy.sources) {

@@ -1,4 +1,5 @@
 import { SITE_VARIANT } from '@/config/variant';
+import { safeStorageGet } from '@/utils/safe-storage';
 import { getClerkToken } from '@/services/clerk';
 import { withBillingVerificationRetry } from '@/services/billing-retry';
 import { hasExplicitDesktopSignals, isDesktopRuntime } from './desktop-runtime';
@@ -371,7 +372,7 @@ export function installRuntimeFetchPatch(): void {
   const nativeFetch = window.fetch.bind(window);
   const dispatch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const target = getApiTargetFromRequestInput(input);
-    const debug = localStorage.getItem('wm-debug-log') === '1';
+    const debug = safeStorageGet('wm-debug-log') === '1';
 
     if (!target?.startsWith('/api/')) {
       if (debug) {

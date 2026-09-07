@@ -544,6 +544,7 @@ describe('independent FIRMS + CWFIS + BC merge', () => {
       sourceState: 'degraded',
       errorCode: 'BC_WILDFIRE_SOURCE_FAILED',
       canadaSourceFailureCount: 1,
+      failedSources: [], sourceHealth: {}, lastSourceAttemptAt: null,
     });
 
     const now = Date.parse('2026-08-14T12:00:00Z');
@@ -573,6 +574,7 @@ describe('independent FIRMS + CWFIS + BC merge', () => {
       sourceState: 'degraded',
       errorCode: 'CWFIS_PRESCRIBED_FAILED',
       canadaSourceFailureCount: 1,
+      failedSources: [], sourceHealth: {}, lastSourceAttemptAt: null,
     });
     assert.deepEqual(canadianWildfireAfterPublish({
       _cwfisState: 'failed',
@@ -583,6 +585,7 @@ describe('independent FIRMS + CWFIS + BC merge', () => {
       sourceState: 'degraded',
       errorCode: 'CANADA_WILDFIRE_SOURCES_FAILED',
       canadaSourceFailureCount: 2,
+      failedSources: [], sourceHealth: {}, lastSourceAttemptAt: null,
     });
   });
 

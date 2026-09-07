@@ -19,7 +19,7 @@ export const Footer = () => (
         <a href="/crises/" className="hover:text-wm-text transition-colors">Crises</a>
         <a href="/tools/" className="hover:text-wm-text transition-colors">Tools</a>
         <a href="https://www.worldmonitor.app/blog/" className="hover:text-wm-text transition-colors">Blog</a>
-        <a href="https://www.worldmonitor.app/docs" className="hover:text-wm-text transition-colors">Docs</a>
+        <a href="https://www.worldmonitor.app/docs/documentation" className="hover:text-wm-text transition-colors">Docs</a>
         <a href="https://status.worldmonitor.app/" target="_blank" rel="noreferrer" className="hover:text-wm-text transition-colors">Status</a>
         <a href="https://github.com/koala73/worldmonitor" target="_blank" rel="noreferrer" className="hover:text-wm-text transition-colors">GitHub</a>
         <a href="https://discord.gg/re63kWKxaz" target="_blank" rel="noreferrer" className="hover:text-wm-text transition-colors">Discord</a>

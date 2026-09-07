@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -86,6 +86,31 @@ describe('docs locale pair + hreflang cluster', () => {
 });
 
 describe('rewriteDocsLocaleHtml', () => {
+  it('pins Mintlify page metadata to the same public docs base', () => {
+    const config = JSON.parse(readFileSync(join(repoRoot, 'docs/docs.json'), 'utf8'));
+    assert.equal(config.seo.metatags.canonical, `${DOCS_PUBLIC_ORIGIN}/docs`);
+  });
+
+  it('replaces missing, relative, foreign and duplicate canonicals in either locale', () => {
+    for (const pathname of ['/docs/country-instability-index', '/docs/zh/country-instability-index']) {
+      for (const links of [
+        '',
+        '<link href="/wm-proxy/docs/about" rel="canonical">',
+        "<link rel='canonical' href='https://copy.example/docs/about'>",
+        '<link rel="canonical" href="https://copy.example/a"><link rel="canonical" href="https://copy.example/b">',
+      ]) {
+        const seed = `<!DOCTYPE html><html><head>${links}<title>CII</title></head><body>CII</body></html>`;
+        const html = rewriteDocsLocaleHtml(seed, pathname);
+        const head = html.match(/<head>([\s\S]*?)<\/head>/)?.[1] ?? '';
+        assert.deepEqual(head.match(/<link\b[^>]*rel="canonical"[^>]*>/g), [
+          `<link rel="canonical" href="${DOCS_PUBLIC_ORIGIN}${pathname}" />`,
+        ]);
+        assert.equal(rewriteDocsLocaleHtml(html, pathname), html, 'rewriting is idempotent');
+        assert.match(html, /<body>CII<\/body>/);
+      }
+    }
+  });
+
   const zhSeed = `<!DOCTYPE html><html lang="en" class="x"><head>
 <meta name="og:locale" content="en_US"/>
 <link rel="canonical" href="https://www.worldmonitor.app/docs/zh/about"/>

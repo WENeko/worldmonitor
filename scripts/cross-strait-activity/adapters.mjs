@@ -1700,6 +1700,27 @@ async function fetchBoundedText(fetchFn, url, sourceContract, diagnostic = null)
   return text;
 }
 
+async function fetchMndViaProxy(input, init, proxyConfig, proxyRequestFn) {
+  const maxResponseBytes = CROSS_STRAIT_SOURCE_CONTRACTS.taiwanMnd.maxResponseBytes;
+  const result = await proxyRequestFn(String(input), proxyConfig, {
+    headers: init.headers,
+    maxResponseBytes,
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    signal: init.signal,
+  });
+  if (!Number.isInteger(result?.status) || result.status < 200 || result.status > 599) {
+    throw new Error('MND_PROXY_RESPONSE_INVALID');
+  }
+  if (result.status >= 300) {
+    return new Response(null, { status: result.status });
+  }
+  if (!Buffer.isBuffer(result.buffer)) throw new Error('MND_PROXY_RESPONSE_INVALID');
+  if (result.buffer.byteLength > maxResponseBytes) throw new Error('RESPONSE_TOO_LARGE');
+  return new Response(result.status === 204 || result.status === 205 ? null : result.buffer, {
+    status: result.status,
+  });
+}
+
 function shouldProxyJapanModFailure(error) {
   const code = errorCode(error);
   if (code === 'SOURCE_ERROR' || code === 'TIMEOUT' || code === 'JMOD_INDEX_EMPTY') return true;
@@ -2567,6 +2588,7 @@ export async function fetchCrossStraitActivitySnapshot({
   mndListUrl = CROSS_STRAIT_SOURCE_CONTRACTS.taiwanMnd.listUrl,
   sleepFn = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   proxyUrl = process.env.JAPAN_MOD_PROXY_URL || process.env.PROXY_URL || '',
+  mndProxyUrl = process.env.PROXY_URL || '',
   proxyRequestFn = proxyFetch,
   proxyConnectFn = proxyConnectTunnel,
   proxyConnectProbeFn = null,
@@ -2585,6 +2607,15 @@ export async function fetchCrossStraitActivitySnapshot({
   const mndRefreshErrors = [];
   const mndRequestDiagnostics = [];
   const mndContract = CROSS_STRAIT_SOURCE_CONTRACTS.taiwanMnd;
+  const mndProxyConfig = parseProxyConfig(mndProxyUrl);
+  const mndProxyFetchFn = mndProxyConfig
+    && Number.isInteger(mndProxyConfig.port) && mndProxyConfig.port > 0 && mndProxyConfig.port <= 65535
+    ? (input, init) => fetchMndViaProxy(input, init, mndProxyConfig, proxyRequestFn)
+    : null;
+  let mndPreferredFetchFn = fetchFn;
+  const mndTimeoutRetryFetchFn = () => mndProxyFetchFn && mndPreferredFetchFn === fetchFn
+    ? mndProxyFetchFn
+    : fetchFn;
   const resolvedJapanProxyFetchFn = proxyUrl
     ? (input, init) => fetchJapanModViaConfiguredProxy(input, init, {
         proxyUrl,
@@ -2635,14 +2666,23 @@ export async function fetchCrossStraitActivitySnapshot({
           path: new URL(url).pathname, purpose: 'list', attempt: attempt + 1,
           stage: 'response_headers', httpStatus: null,
         };
+        const requestFetchFn = attempt > 0 ? mndTimeoutRetryFetchFn() : mndPreferredFetchFn;
+        if (requestFetchFn === mndProxyFetchFn) diagnostic.transport = 'proxy';
         try {
-          const html = await fetchBoundedText(fetchFn, url, mndContract, diagnostic);
+          const html = await fetchBoundedText(requestFetchFn, url, mndContract, diagnostic);
           rows = parseTaiwanMndList(html);
           if (rows.length === 0) {
             mndErrors.push('MND_LIST_ROWS_MISSING');
             mndRequestDiagnostics.push({
               ...diagnostic, errorCode: 'MND_LIST_ROWS_MISSING', elapsedMs: Math.round(monotonicNow() - startedAt),
             });
+          } else {
+            mndPreferredFetchFn = requestFetchFn;
+            if (attempt > 0 && mndProxyFetchFn) {
+              mndRequestDiagnostics.at(-1).recoveredVia = requestFetchFn === mndProxyFetchFn
+                ? 'proxy'
+                : 'direct';
+            }
           }
           break;
         } catch (error) {
@@ -2742,13 +2782,17 @@ export async function fetchCrossStraitActivitySnapshot({
         purpose: isRefresh ? 'refresh' : 'detail', attempt: retryErrorCode ? 2 : 1,
         stage: 'response_headers', httpStatus: null,
       };
+      const requestFetchFn = retryErrorCode === 'TIMEOUT'
+        ? mndTimeoutRetryFetchFn()
+        : mndPreferredFetchFn;
+      if (requestFetchFn === mndProxyFetchFn) diagnostic.transport = 'proxy';
       let startedAt;
       try {
         await sleepFn(REQUEST_CADENCE_MS);
         detailRequestCount += 1;
         requestCount += 1;
         startedAt = monotonicNow();
-        const html = await fetchBoundedText(fetchFn, candidate.sourceUrl, mndContract, diagnostic);
+        const html = await fetchBoundedText(requestFetchFn, candidate.sourceUrl, mndContract, diagnostic);
         parsedMnd.push(parseTaiwanMndDetail(html, {
           sourceUrl: candidate.sourceUrl,
           retrievedAt: generatedAt,
@@ -2756,6 +2800,12 @@ export async function fetchCrossStraitActivitySnapshot({
           allowPublicationAdvance: candidate.allowPublicationAdvance === true,
           expectedReportingDay: candidate.expectedReportingDay ?? null,
         }));
+        mndPreferredFetchFn = requestFetchFn;
+        if (retryErrorCode && mndProxyFetchFn) {
+          mndRequestDiagnostics.at(-1).recoveredVia = requestFetchFn === mndProxyFetchFn
+            ? 'proxy'
+            : 'direct';
+        }
         break;
       } catch (error) {
         const code = errorCode(error);

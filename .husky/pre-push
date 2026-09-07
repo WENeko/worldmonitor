@@ -619,9 +619,17 @@ fi
 # catch is "someone changed a panel" — prepush-changed-tests.sh only selects a
 # test file when that test file is itself in the changed set, so a test-only
 # guard would first surface in CI after the PR was already open (#6557).
-if changed '^(src/components/|scripts/enforce-panel-content-writes\.mjs$)'; then
+if changed '^(src/components/|scripts/(enforce-panel-content-writes|lib/source-scan)\.mjs$)'; then
   echo "Running Panel content-write check..."
   npm run lint:panel-content-writes || exit 1
+fi
+
+# Gated on all of src/ (not just components/) because a null localStorage
+# crashes a service, a config leaf or a boot module just as readily as a panel
+# — WORLDMONITOR-122 came in through src/App.ts and src/main.ts (#7833).
+if changed '^(src/|scripts/(enforce-safe-local-storage|lib/source-scan)\.mjs$)'; then
+  echo "Running raw localStorage check..."
+  npm run lint:safe-local-storage || exit 1
 fi
 
 if changed '^(src/|api/|server/|scripts/check-sentry-coverage\.mjs$)'; then

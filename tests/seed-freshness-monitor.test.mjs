@@ -17,6 +17,7 @@ import {
   formatAcceptanceMarkdown,
   isOnDemandProblem,
   findPendingDiagnostics,
+  isSourceFailurePendingProblem,
   isStaleContentGraceProblem,
   MAX_STALE_CONTENT_GRACE_MS,
   STALE_CONTENT_GRACE_SKEW_SLACK_MS,
@@ -62,6 +63,25 @@ describe('production acceptance summary', () => {
     ]) {
       const invalid = { status: 'HEALTHY', pending: { crossStraitActivityTaiwanMnd: { ...problem, ...over } } };
       assert.equal(findOperationalProblems(invalid, now).length, 1, JSON.stringify(over));
+    }
+  });
+
+  it('softens only recognized bounded NHC recovery metadata', () => {
+    const problem = {
+      status: 'SEED_ERROR', records: 2, seedAgeMin: 1, maxStaleMin: 540,
+      errorCode: 'NHC_POINT_REQUEST_FAILED', lastSourceFailureCode: 'NHC_POINT_REQUEST_FAILED',
+      consecutiveSourceFailures: 1,
+      sourceFailurePendingUntil: new Date(now + 210 * 60_000).toISOString(),
+    };
+    assert.equal(isSourceFailurePendingProblem(problem, now), true);
+    for (const over of [
+      { errorCode: 'NHC_OTHER', lastSourceFailureCode: 'NHC_OTHER' },
+      { sourceFailurePendingUntil: new Date(now + 216 * 60_000).toISOString() },
+      { consecutiveSourceFailures: 2 },
+      { records: 0 },
+      { seedAgeMin: 541 },
+    ]) {
+      assert.equal(isSourceFailurePendingProblem({ ...problem, ...over }, now), false, JSON.stringify(over));
     }
   });
   const observation = (problems, accepted = baseline) => buildAcceptanceObservation({

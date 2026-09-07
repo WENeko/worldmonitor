@@ -132,6 +132,27 @@ function stripExistingDocsHreflang(html: string): string {
   );
 }
 
+function replaceDocsCanonical(html: string, pathname: string): string {
+  const href = docsAbsoluteUrl(pathname).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  const canonical = `<link rel="canonical" href="${href}" />`;
+  return html.replace(/(<head\b[^>]*>)([\s\S]*?)(<\/head>)/i, (_match, open, head: string, close) => {
+    let replaced = false;
+    const rewritten = head.replace(
+      /<!--[\s\S]*?-->|<script\b[^>]*>[\s\S]*?<\/script\s*>|<link\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi,
+      (tag) => {
+        if (!/^<link\b/i.test(tag)) return tag;
+        const rel = [...tag.matchAll(/\s+([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g)]
+          .find((attribute) => attribute[1]?.toLowerCase() === 'rel');
+        if (!(rel?.[2] ?? rel?.[3] ?? rel?.[4] ?? '').toLowerCase().split(/\s+/).includes('canonical')) return tag;
+        if (replaced) return '';
+        replaced = true;
+        return canonical;
+      },
+    );
+    return `${open}${rewritten}${replaced ? '' : canonical}${close}`;
+  });
+}
+
 function injectAfterCanonical(html: string, linkTags: string[]): string {
   if (linkTags.length === 0) return html;
   const block = linkTags.join('');
@@ -468,7 +489,7 @@ export function rewriteDocsLocaleHtml(html: string, pathname: string): string {
   const pair = resolveDocsLocalePair(pathname);
   if (!pair) return html;
 
-  let next = stripExistingDocsHreflang(html);
+  let next = replaceDocsCanonical(stripExistingDocsHreflang(html), pathname);
   if (pair.active === 'zh') {
     next = replaceHtmlLang(next, DOCS_ZH_HREFLANG);
     next = replaceOgLocale(next, 'zh_CN');

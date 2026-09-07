@@ -2697,13 +2697,15 @@ export async function runSeed(domain, resource, canonicalKey, fetchFn, opts = {}
         // from the previous seed-meta write. The SET below replaces the whole
         // key; without this merge a validate-skip after a healthy publish wipes
         // afterPublish patches and fail-closed consumers false-alarm.
+        const currentSkipDiagnostics =
+          freshnessMetaDiagnosticsPatch(validationSkipResult?.freshnessMetaPatch) || {};
         const preservedDiagnostics = {
           ...(freshnessMetaDiagnosticsPatch(
             validationSkipMetaRead
               ? validationSkipExistingMeta
               : await readExistingSeedMeta(domain, resource),
           ) || {}),
-          ...(freshnessMetaDiagnosticsPatch(validationSkipResult?.freshnessMetaPatch) || {}),
+          ...currentSkipDiagnostics,
         };
         if (canonicalMeta) {
           // Pass-through canonical's contentAge so health doesn't lose the
@@ -2724,9 +2726,15 @@ export async function runSeed(domain, resource, canonicalKey, fetchFn, opts = {}
             `existing cache TTL extended`,
           );
         } else {
-          // No last-good envelope: quiet-period zero write. Drop prior
-          // diagnostics — they described a different cohort and would lie.
-          await writeFreshnessMetadataSafely(domain, resource, 0, opts.sourceVersion, ttlSeconds);
+          // No non-empty last-good envelope: drop prior diagnostics because
+          // they described a different cohort, but retain diagnostics emitted
+          // by this rejected attempt. A valid zero-record predecessor can
+          // still carry bounded source-failure evidence.
+          await writeFreshnessMetadataSafely(
+            domain, resource, 0, opts.sourceVersion, ttlSeconds,
+            undefined, undefined,
+            Object.keys(currentSkipDiagnostics).length > 0 ? currentSkipDiagnostics : null,
+          );
           console.log(`  SKIPPED: validation failed (empty data) — seed-meta refreshed (recordCount=0), existing cache TTL extended`);
         }
       }

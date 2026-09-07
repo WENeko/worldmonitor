@@ -7,11 +7,11 @@
   "totalTolerancePct": 0.25,
   "totalToleranceBytes": 16384,
   "total": {
-    "raw": 1755789
+    "raw": 1755552
   },
   "chunks": {
     "analytics": {
-      "raw": 132816,
+      "raw": 133239,
       "files": 1
     },
     "cached-risk-scores": {
@@ -27,7 +27,7 @@
       "files": 1
     },
     "cross-domain-storage": {
-      "raw": 417,
+      "raw": 415,
       "files": 1
     },
     "data-freshness": {
@@ -59,11 +59,11 @@
       "files": 1
     },
     "main": {
-      "raw": 985381,
+      "raw": 985080,
       "files": 1
     },
     "panel-gating": {
-      "raw": 3143,
+      "raw": 3144,
       "files": 1
     },
     "panels": {
@@ -71,11 +71,7 @@
       "files": 1
     },
     "persistent-cache": {
-      "raw": 3768,
-      "files": 1
-    },
-    "safe-storage": {
-      "raw": 278,
+      "raw": 3697,
       "files": 1
     },
     "storage-facility-registry-store": {
@@ -99,7 +95,7 @@
       "files": 1
     },
     "widget-store": {
-      "raw": 25866,
+      "raw": 25857,
       "files": 1
     }
   }

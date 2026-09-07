@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type TestInfo } from '@playwright/test';
 
 /**
  * #7112 — the SVG renderer's HTML overlay must stay bounded.
@@ -28,11 +28,18 @@ const MOBILE_PER_LAYER = 150;
 // created outside the marker budget, so they carry their own ceiling.
 const MAX_CONCURRENT_FLASHES = 12;
 const STRESS_PER_FEED = 2000;
-const DASHBOARD_MAX_DOM_NODES = 12000;
+const DASHBOARD_METRIC_BUDGETS = {
+  domNodes: 12000,
+  rendererNodes: 15000,
+  listeners: 1500,
+} as const;
+const EXPECTED_DASHBOARD_METRIC_BUDGETS = {
+  domNodes: 12000,
+  rendererNodes: 15000,
+  listeners: 1500,
+} as const;
 // Chromium's renderer-wide metric includes a small amount of browser-owned
 // bookkeeping beyond the document nodes returned by querySelectorAll('*').
-const DASHBOARD_MAX_RENDERER_NODES = 15000;
-const DASHBOARD_MAX_LISTENERS = 1500;
 // Where the pan/zoom test asks the map to look. Nothing special about it beyond
 // being far from the default centre in both axes.
 const VIEW_TARGET = { lat: -55, lon: 125 };
@@ -87,6 +94,15 @@ const MARKER_SETTLE_MS = 6000;
 const MAX_DRAG_REBUILDS = 3;
 
 type Coord = { lat: number; lon: number };
+type DashboardMetric = keyof typeof DASHBOARD_METRIC_BUDGETS;
+type DashboardMetrics = Record<DashboardMetric, number>;
+type ColdDashboardSample = {
+  coldLoad: number;
+  mapRenderReadyMs: number;
+  collectGarbageMs: number;
+  preGc: DashboardMetrics;
+  postGc: DashboardMetrics;
+};
 
 /** Great-circle separation in degrees. Mirrors what proximityRank orders by. */
 function angularDistanceDegrees(a: Coord, b: Coord): number {
@@ -140,7 +156,14 @@ async function installLocalOnlyNetwork(page: Page): Promise<void> {
   });
 }
 
-async function loadColdDashboard(page: Page): Promise<void> {
+async function waitForSvgMapRender(page: Page): Promise<void> {
+  await expect(page.locator('#mapContainer.svg-mode .map-wrapper')).toBeVisible({ timeout: 30000 });
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
+}
+
+async function loadColdDashboard(page: Page): Promise<{ mapRenderReadyMs: number }> {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.addInitScript(() => {
     localStorage.clear();
@@ -148,37 +171,67 @@ async function loadColdDashboard(page: Page): Promise<void> {
     localStorage.setItem('worldmonitor-variant', 'full');
   });
   await installLocalOnlyNetwork(page);
+  const startedAt = Date.now();
   await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => document.documentElement.dataset.wmEventHandlersReady === 'true');
-  await expect(page.locator('#mapContainer')).toBeVisible({ timeout: 30000 });
-  // Let the same local-only boot window settle on every fresh context before
-  // collecting the renderer metrics.
-  await page.waitForTimeout(2000);
+  await waitForSvgMapRender(page);
+  return { mapRenderReadyMs: Date.now() - startedAt };
 }
 
-async function readDashboardDomMetrics(page: Page): Promise<{
-  domNodes: number;
-  rendererNodes: number;
-  listeners: number;
+async function readDashboardMetrics(page: Page): Promise<{
+  collectGarbageMs: number;
+  preGc: DashboardMetrics;
+  postGc: DashboardMetrics;
 }> {
-  const domNodes = await page.evaluate(() => document.querySelectorAll('*').length);
   const session = await page.context().newCDPSession(page);
   try {
     await session.send('Performance.enable');
-    const result = await session.send('Performance.getMetrics');
-    const value = (name: string): number => {
-      const metric = result.metrics.find((entry: { name: string; value: number }) => entry.name === name);
-      if (!metric || !Number.isFinite(metric.value)) throw new Error(`Missing Chromium metric: ${name}`);
-      return metric.value;
+    const read = async (): Promise<DashboardMetrics> => {
+      const [domNodes, result] = await Promise.all([
+        page.evaluate(() => document.querySelectorAll('*').length),
+        session.send('Performance.getMetrics'),
+      ]);
+      const value = (name: string): number => {
+        const metric = result.metrics.find((entry: { name: string; value: number }) => entry.name === name);
+        if (!metric || !Number.isFinite(metric.value)) throw new Error(`Missing Chromium metric: ${name}`);
+        return metric.value;
+      };
+      return {
+        domNodes,
+        rendererNodes: value('Nodes'),
+        listeners: value('JSEventListeners'),
+      };
     };
+    const preGc = await read();
+    const collectGarbageStartedAt = Date.now();
+    await page.requestGC();
+    const collectGarbageMs = Date.now() - collectGarbageStartedAt;
     return {
-      domNodes,
-      rendererNodes: value('Nodes'),
-      listeners: value('JSEventListeners'),
+      collectGarbageMs,
+      preGc,
+      postGc: await read(),
     };
   } finally {
     await session.detach().catch(() => {});
   }
+}
+
+function assertDashboardMetricBudgets(samples: readonly DashboardMetrics[]): void {
+  for (const [metric, limit] of Object.entries(DASHBOARD_METRIC_BUDGETS) as [DashboardMetric, number][]) {
+    const observed = Math.max(...samples.map((sample) => sample[metric]));
+    expect(observed, `${metric} must remain within the dashboard cold-load budget`).toBeLessThanOrEqual(limit);
+  }
+}
+
+async function attachColdDashboardMetrics(testInfo: TestInfo, samples: readonly ColdDashboardSample[]): Promise<void> {
+  await testInfo.attach('cold-dashboard-metrics.json', {
+    contentType: 'application/json',
+    body: JSON.stringify({
+      readiness: 'svg-map-first-paint',
+      measurement: 'post-gc',
+      samples,
+    }, null, 2),
+  });
 }
 
 /** Ready-gated harness boot, shared by the #7145 interaction tests. */
@@ -273,55 +326,56 @@ async function dragMapAcross(page: Page): Promise<{ stepsUnsettled: number }> {
 }
 
 test.describe('SVG map overlay marker budget (#7112)', () => {
-  test('keeps the full dashboard DOM and listener counts bounded across cold loads', async ({ browser }) => {
-    // Three sequential COLD dashboard boots, each with its own 2s settle. On a
-    // loaded CI box that runs past 90s for reasons unrelated to what is being
-    // measured, so the budget is sized to the work rather than to a fast machine.
+  test('keeps the full dashboard DOM and listener counts bounded across cold loads', async ({ browser }, testInfo) => {
     test.setTimeout(240000);
-    const samples: Array<Awaited<ReturnType<typeof readDashboardDomMetrics>>> = [];
+    const samples: ColdDashboardSample[] = [];
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const context = await browser.newContext({
-        viewport: { width: 1440, height: 900 },
-        colorScheme: 'dark',
-        locale: 'en-US',
-        timezoneId: 'UTC',
-      });
-      const page = await context.newPage();
-      try {
-        await loadColdDashboard(page);
-        samples.push(await readDashboardDomMetrics(page));
-      } finally {
-        await context.close();
+    try {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const context = await browser.newContext({
+          viewport: { width: 1440, height: 900 },
+          colorScheme: 'dark',
+          locale: 'en-US',
+          timezoneId: 'UTC',
+        });
+        const page = await context.newPage();
+        try {
+          const { mapRenderReadyMs } = await loadColdDashboard(page);
+          const metrics = await readDashboardMetrics(page);
+          samples.push({ coldLoad: attempt + 1, mapRenderReadyMs, ...metrics });
+        } finally {
+          await context.close();
+        }
+      }
+
+      // A general /dashboard DOM guardrail, NOT the #7112 acceptance evidence.
+      // installLocalOnlyNetwork() aborts every off-origin request, so the live
+      // feeds that produced the 2,088-marker measurement never arrive and these
+      // ceilings would hold with the overlay budget deleted. The budget's teeth
+      // are in the harness tests below, which seed the feeds directly.
+      //
+      // What this test does buy: the whole real document (not just the overlay
+      // root) stays inside the production guardrail from the issue investigation,
+      // and repeated fresh contexts catch cold-load drift.
+      assertDashboardMetricBudgets(samples.map((sample) => sample.postGc));
+
+      // Ceilings only — the run-to-run RANGE of these counters is deliberately not
+      // asserted. The post-GC CDP values distinguish retained renderer objects from
+      // unreachable detached nodes, but their ranges still depend on browser timing.
+    } finally {
+      await attachColdDashboardMetrics(testInfo, samples);
+      if (process.env.WM_MAP_BUDGET_DIAGNOSTICS === '1') {
+        console.info(`[map-budget] ${JSON.stringify(samples)}`);
       }
     }
+  });
 
-    const domNodes = samples.map((sample) => sample.domNodes);
-    const rendererNodes = samples.map((sample) => sample.rendererNodes);
-    const listeners = samples.map((sample) => sample.listeners);
-
-    // A general /dashboard DOM guardrail, NOT the #7112 acceptance evidence.
-    // installLocalOnlyNetwork() aborts every off-origin request, so the live
-    // feeds that produced the 2,088-marker measurement never arrive and these
-    // ceilings would hold with the overlay budget deleted. The budget's teeth
-    // are in the harness tests below, which seed the feeds directly.
-    //
-    // What this test does buy: the whole real document (not just the overlay
-    // root) stays inside the production guardrail from the issue investigation,
-    // and repeated fresh contexts catch cold-load drift.
-    expect(Math.max(...domNodes)).toBeLessThanOrEqual(DASHBOARD_MAX_DOM_NODES);
-    expect(Math.max(...rendererNodes)).toBeLessThanOrEqual(DASHBOARD_MAX_RENDERER_NODES);
-    expect(Math.max(...listeners)).toBeLessThanOrEqual(DASHBOARD_MAX_LISTENERS);
-
-    // Ceilings only — the run-to-run RANGE of these counters is deliberately not
-    // asserted. `Performance.getMetrics()` reports Nodes and JSEventListeners
-    // renderer-wide INCLUDING detached objects still awaiting GC (the same fact
-    // that explains this issue's ~11-bytes-per-node puzzle), so a range assertion
-    // is really an assertion about when the collector ran. Measured: the previous
-    // tolerances failed on an unmodified tree in consecutive runs — document-node
-    // range 999 against a 500 cap, renderer-node range 2813 against 2000 — so they
-    // reported GC timing as a regression. The ceilings above hold across the same
-    // runs and are what the guardrail is actually for.
+  test('keeps each dashboard metric ceiling live', () => {
+    expect(DASHBOARD_METRIC_BUDGETS).toEqual(EXPECTED_DASHBOARD_METRIC_BUDGETS);
+    for (const [metric, limit] of Object.entries(EXPECTED_DASHBOARD_METRIC_BUDGETS) as [DashboardMetric, number][]) {
+      const overLimit = { ...DASHBOARD_METRIC_BUDGETS, [metric]: limit + 1 };
+      expect(() => assertDashboardMetricBudgets([overLimit])).toThrow();
+    }
   });
 
   test('re-ranks the kept markers onto the new view centre after a pan and zoom', async ({ page }) => {
@@ -775,18 +829,35 @@ test.describe('SVG map overlay marker budget (#7112)', () => {
         (window as HarnessWindow).__mobileMapIntegrationHarness!.seedOverlayMarkerStress(perFeed),
       STRESS_PER_FEED,
     );
+    // The seeded feeds truncate layer by layer, so a poll that returns the moment
+    // ONE layer is trimmed hands back a snapshot the renderer is still growing
+    // past. Reading the budget state in one call and the disclosure in the next
+    // then compares two different instants, and the assertion below pins the
+    // first against the second: measured 2 failures in 4 whole-spec runs at 4
+    // workers (#7837), every one of them a state snapshot of `300/2000` against a
+    // summary that already read `798/6000`.
+    //
+    // Sampling both inside the SAME page evaluation closes the gap they drifted
+    // across, and polling that pair waits for the seed to finish propagating
+    // without pinning how many layers it ends up trimming.
     await expect
       .poll(
         async () =>
-          page.evaluate(() =>
-            Object.keys(
-              (window as HarnessWindow).__mobileMapIntegrationHarness!.getOverlayBudgetState()
-                .truncated,
-            ).length,
-          ),
+          page.evaluate(() => {
+            const budget = (
+              window as HarnessWindow
+            ).__mobileMapIntegrationHarness!.getOverlayBudgetState();
+            const counts = Object.values(budget.truncated);
+            const actual = document.querySelector('.map-truncation-summary')?.textContent ?? null;
+            if (counts.length === 0) return `no layer trimmed yet (summary: ${actual})`;
+            const shownNow = counts.reduce((sum, entry) => sum + entry.shown, 0);
+            const totalNow = counts.reduce((sum, entry) => sum + entry.total, 0);
+            const expected = `${shownNow}/${totalNow} markers`;
+            return expected === actual ? 'disclosed' : `state ${expected} != summary ${actual}`;
+          }),
         { timeout: 15000 },
       )
-      .toBeGreaterThan(0);
+      .toBe('disclosed');
 
     const state = await page.evaluate(() =>
       (window as HarnessWindow).__mobileMapIntegrationHarness!.getOverlayBudgetState(),
@@ -802,12 +873,13 @@ test.describe('SVG map overlay marker budget (#7112)', () => {
 
     // Honest private state is necessary but not sufficient: the person looking at
     // the embed must be able to SEE that the map is partial. With no toggle rail
-    // to badge, the compact summary is the only disclosure surface there is.
+    // to badge, the compact summary is the only disclosure surface there is. That
+    // the summary carries the state's own numbers is asserted by the poll above,
+    // which is the only place the two can be compared without a gap between them.
     const summary = page.locator('.map-truncation-summary');
     await expect(summary).toHaveCount(1);
     const shown = Object.values(state.truncated).reduce((sum, counts) => sum + counts.shown, 0);
     const total = Object.values(state.truncated).reduce((sum, counts) => sum + counts.total, 0);
-    await expect(summary).toHaveText(`${shown}/${total} markers`);
     expect(shown).toBeLessThan(total);
     await expect(summary).toBeVisible();
 

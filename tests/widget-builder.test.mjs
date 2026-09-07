@@ -1131,7 +1131,10 @@ describe('PRO widget — store and sanitizer', () => {
     assert.ok(loadIdx !== -1, 'shared widget materializer not found');
     const loadBody = store.slice(loadIdx, loadIdx + 2_000);
     assert.ok(
-      /localStorage\.getItem\(proHtmlKey\(w\.id\)\)/.test(loadBody),
+      // Accessor-agnostic: #7833 moved this read onto safeStorageGet, and what
+      // the assertion is actually about is that the side key is consulted at
+      // all — pinning the spelling just re-breaks on the next migration.
+      /(?:localStorage\.getItem|safeStorageGet)\(proHtmlKey\(w\.id\)\)/.test(loadBody),
       'loadWidgets must read legacy PRO HTML from the side key',
     );
   });

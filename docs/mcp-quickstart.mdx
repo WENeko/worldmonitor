@@ -144,10 +144,10 @@ The MCP handshake is invisible from the chat side, but here's the sequence so yo
 
 ## Server-side curl
 
-If you'd rather skip the OAuth dance and drive MCP from a script:
+Sign in to the [dashboard](https://www.worldmonitor.app/dashboard) with an API Starter or higher plan. Select **Settings → API Keys** to create a key for scripts.
 
 ```bash
-export WM_KEY="wm_0123456789abcdef0123456789abcdef01234567"  # API Starter+ key from worldmonitor.app/settings
+export WM_KEY="wm_0123456789abcdef0123456789abcdef01234567"  # Replace with your API key
 
 # 1. List tools (compressed descriptions)
 curl -s https://worldmonitor.app/mcp \

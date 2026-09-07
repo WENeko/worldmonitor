@@ -1,4 +1,5 @@
 import { Panel } from './Panel';
+import { safeStorageSet } from '@/utils/safe-storage';
 import { t, getLocale } from '@/services/i18n';
 import { unsafeRawHtml } from '@/utils/sanitize';
 
@@ -116,7 +117,7 @@ function loadSelectedCities(): string[] {
 }
 
 function saveSelectedCities(ids: string[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
+  safeStorageSet(STORAGE_KEY, JSON.stringify(ids));
 }
 
 /**

@@ -1,4 +1,5 @@
 import { loadFromStorage, saveToStorage } from '@/utils';
+import { safeStorageGet } from '@/utils/safe-storage';
 import { clearPanelColSpanEntry, clearPanelSpanEntry } from '@/utils/panel-storage';
 import { getAuthState } from '@/services/auth-state';
 import { isEntitled, getEntitlementState } from '@/services/entitlements';
@@ -65,7 +66,7 @@ function materializeWidgets(raw: unknown, strict: boolean): CustomWidgetSpec[] {
     // the dashboard.
     const tier = w.tier === 'pro' ? 'pro' : 'basic';
     if (tier === 'pro') {
-      const sideKeyHtml = localStorage.getItem(proHtmlKey(w.id));
+      const sideKeyHtml = safeStorageGet(proHtmlKey(w.id));
       const storedHtml = typeof w.html === 'string' ? w.html : '';
       const proHtml = storedHtml || sideKeyHtml;
       if (!proHtml) {

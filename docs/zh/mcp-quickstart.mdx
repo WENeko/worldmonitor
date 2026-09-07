@@ -143,10 +143,10 @@ MCP 握手在聊天侧是不可见的，但以下是序列，以便你在出现�
 
 ## 服务端 curl
 
-如果你更愿意跳过 OAuth 流程并从脚本驱动 MCP：
+使用 API Starter 或更高套餐的账户登录[仪表板](https://www.worldmonitor.app/dashboard)。选择 **Settings → API Keys** 为脚本创建密钥。
 
 ```bash
-export WM_KEY="wm_0123456789abcdef0123456789abcdef01234567"  # API Starter+ key from worldmonitor.app/settings
+export WM_KEY="wm_0123456789abcdef0123456789abcdef01234567"  # 替换为你的 API 密钥
 
 # 1. List tools (compressed descriptions)
 curl -s https://worldmonitor.app/mcp \

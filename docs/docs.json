@@ -11,6 +11,7 @@
   "favicon": "/favicon.png",
   "seo": {
     "metatags": {
+      "canonical": "https://www.worldmonitor.app/docs",
       "og:image": "https://www.worldmonitor.app/favico/og-image.png",
       "og:site_name": "World Monitor Documentation",
       "og:type": "website",

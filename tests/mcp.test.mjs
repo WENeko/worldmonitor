@@ -675,7 +675,7 @@ describe('api/mcp.ts — PRO MCP Server', () => {
       [
         { key: 'seed-meta:climate:anomalies', maxStaleMin: 120 },
         { key: 'seed-meta:climate:co2-monitoring', maxStaleMin: 2880 },
-        { key: 'seed-meta:climate:ocean-ice', maxStaleMin: 1440 },
+        { key: 'seed-meta:climate:ocean-ice', maxStaleMin: 2880 },
         { key: 'seed-meta:weather:alerts', maxStaleMin: 45 },
       ],
       [
@@ -697,7 +697,7 @@ describe('api/mcp.ts — PRO MCP Server', () => {
       [
         { key: 'seed-meta:climate:anomalies', maxStaleMin: 120 },
         { key: 'seed-meta:climate:co2-monitoring', maxStaleMin: 2880 },
-        { key: 'seed-meta:climate:ocean-ice', maxStaleMin: 1440 },
+        { key: 'seed-meta:climate:ocean-ice', maxStaleMin: 2880 },
         { key: 'seed-meta:weather:alerts', maxStaleMin: 45 },
       ],
       [

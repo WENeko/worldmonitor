@@ -1,5 +1,6 @@
 import { isKnownPublicPagePath, originNotFoundResponse } from './src/config/agent-not-found';
 import {
+  DOCS_PUBLIC_ORIGIN,
   DOCS_UPSTREAM_ORIGIN,
   DOCS_UPSTREAM_TIMEOUT_MS,
   isDocsFullDocumentRequest,
@@ -271,7 +272,7 @@ export default function middleware(request: Request) {
     // for /docs/zh/* (issue #7378). Proxy full-document HTML only — leave RSC
     // flights and static assets on the direct Mintlify rewrite.
     if (isDocsHtmlDocumentPath(path) && isDocsFullDocumentRequest(request)) {
-      return proxyDocsLocaleHtml(request, url);
+      return proxyDocsLocaleHtml(request, url, host);
     }
 
     // Real HTTP 404 for unknown pages. Agents get markdown (orank
@@ -391,7 +392,23 @@ export default function middleware(request: Request) {
   }
 }
 
-async function proxyDocsLocaleHtml(request: Request, url: URL): Promise<Response> {
+function docsResponseHeaders(upstream: Response, host: string): Headers {
+  const headers = new Headers(upstream.headers);
+  if (host !== new URL(DOCS_PUBLIC_ORIGIN).hostname) {
+    const robots = headers.get('x-robots-tag');
+    headers.set('x-robots-tag', robots ? `noindex, ${robots}` : 'noindex');
+  }
+  const varyParts = new Set(
+    (headers.get('vary') ?? '').split(',').map((part) => part.trim().toLowerCase()).filter(Boolean),
+  );
+  for (const name of ['host', 'accept', 'rsc', 'next-router-state-tree', 'next-router-prefetch']) {
+    varyParts.add(name);
+  }
+  headers.set('vary', [...varyParts].join(', '));
+  return headers;
+}
+
+async function proxyDocsLocaleHtml(request: Request, url: URL, host: string): Promise<Response> {
   const upstreamUrl = `${DOCS_UPSTREAM_ORIGIN}${url.pathname}${url.search}`;
   const forwardHeaders = new Headers();
   for (const name of ['accept', 'accept-language', 'user-agent', 'if-none-match', 'if-modified-since']) {
@@ -412,17 +429,18 @@ async function proxyDocsLocaleHtml(request: Request, url: URL): Promise<Response
       signal: AbortSignal.timeout(DOCS_UPSTREAM_TIMEOUT_MS),
     });
 
-    // Pass through redirects / not-modified without rewriting.
-    if (upstream.status >= 300 && upstream.status < 400) {
+    const contentType = upstream.headers.get('content-type');
+    if (upstream.status !== 304 && (
+      upstream.status !== 200 || !shouldTransformDocsUpstreamHtml(url.pathname, contentType)
+    )) {
       return upstream;
     }
     if (upstream.status === 304 || request.method === 'HEAD') {
-      return upstream;
-    }
-
-    const contentType = upstream.headers.get('content-type');
-    if (!shouldTransformDocsUpstreamHtml(url.pathname, contentType)) {
-      return upstream;
+      return new Response(null, {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers: docsResponseHeaders(upstream, host),
+      });
     }
 
     html = await upstream.text();
@@ -431,25 +449,13 @@ async function proxyDocsLocaleHtml(request: Request, url: URL): Promise<Response
   }
 
   const rewritten = rewriteDocsLocaleHtml(html, url.pathname);
-  const headers = new Headers(upstream.headers);
+  const headers = docsResponseHeaders(upstream, host);
   // Fetch already decoded the body; hop-by-hop / recomputed framing must not
   // be forwarded onto the rewritten string response (Mintlify serves br).
   for (const name of ['content-encoding', 'content-length', 'transfer-encoding', 'connection']) {
     headers.delete(name);
   }
   headers.set('x-wm-docs-locale-seo', '1');
-  // Ensure shared caches vary on the headers that select this proxy path.
-  const vary = headers.get('vary');
-  const varyParts = new Set(
-    (vary ? vary.split(',') : [])
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .map((part) => part.toLowerCase()),
-  );
-  varyParts.add('accept');
-  varyParts.add('rsc');
-  headers.set('vary', [...varyParts].join(', '));
-
   return new Response(rewritten, {
     status: upstream.status,
     statusText: upstream.statusText,

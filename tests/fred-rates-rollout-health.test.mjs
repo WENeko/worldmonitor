@@ -47,6 +47,29 @@ function classify({ now, activated = false, rolloutUntil = UNTIL, recordCount } 
   );
 }
 
+function classifyRetained(name, { now, recordCount, fetchedAt }) {
+  const key = BOOTSTRAP_KEYS[name] ?? STANDALONE_KEYS[name];
+  return classifyKey(
+    name,
+    key,
+    { allowOnDemand: false },
+    {
+      keyStrens: new Map([[key, 128]]),
+      keyErrors: new Map(),
+      keyMetaValues: new Map([[
+        SEED_META[name].key,
+        JSON.stringify({ fetchedAt, recordCount }),
+      ]]),
+      keyMetaErrors: new Map(),
+      activationStates: new Map(
+        Object.keys(ACTIVATION_MARKERS).map((markerName) => [markerName, false]),
+      ),
+      rolloutPendingUntilMs: new Map(),
+      now,
+    },
+  );
+}
+
 test('FRED rollout registers one versioned activation marker and a 24h duration', () => {
   assert.equal(ACTIVATION_MARKERS[NAME], FRED_RATES_ACTIVATION_KEY);
   assert.equal(SEED_META[NAME].key, 'seed-meta:economic:fred-rates');
@@ -57,6 +80,23 @@ test('FRED rollout registers one versioned activation marker and a 24h duration'
 test('fresh FRED coverage is partial at 18 records and OK at all 24 records', () => {
   assert.equal(classify({ now: DEPLOYED_AT, recordCount: 18 }).status, 'COVERAGE_PARTIAL');
   assert.equal(classify({ now: DEPLOYED_AT, recordCount: 24 }).status, 'OK');
+});
+
+test('retained FRED data becomes STALE_SEED at each unchanged health budget', () => {
+  const now = DEPLOYED_AT;
+  for (const { name, recordCount, maxStaleMin } of [
+    { name: 'fredRatesSeeder', recordCount: 24, maxStaleMin: 180 },
+    { name: 'fredBatch', recordCount: 1, maxStaleMin: 1500 },
+    { name: 'economicStress', recordCount: 1, maxStaleMin: 180 },
+  ]) {
+    const entry = classifyRetained(name, {
+      now,
+      recordCount,
+      fetchedAt: now - (maxStaleMin + 1) * 60_000,
+    });
+    assert.equal(entry.status, 'STALE_SEED', name);
+    assert.equal(entry.maxStaleMin, maxStaleMin, name);
+  }
 });
 
 test('a delayed production deployment claims its own durable deadline', () => {

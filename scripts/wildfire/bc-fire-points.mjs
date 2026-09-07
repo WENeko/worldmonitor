@@ -628,9 +628,9 @@ export async function mergeWildfireSourcesWithBc({ fetchFirms, fetchCwfis, fetch
     const firmsErr = firmsResult.reason?.message || firmsResult.reason;
     const cwfisErr = cwfisResult.reason?.message || cwfisResult.reason;
     const bcErr = bcResult.reason?.message || bcResult.reason;
-    throw new BcFirePointsError(
+    throw Object.assign(new BcFirePointsError(
       `All wildfire upstreams failed (firms: ${firmsErr}; cwfis: ${cwfisErr}; bc-wildfire: ${bcErr})`,
-    );
+    ), { nonRetryable: true });
   }
   if (!firmsOk) {
     // Distinguish the two failure shapes: a rejected fetch has a reason, a
@@ -669,6 +669,7 @@ export async function mergeWildfireSourcesWithBc({ fetchFirms, fetchCwfis, fetch
     _cwfisPrescribedCount: cwfisOk ? (cwfisResult.value?._cwfisPrescribedCount ?? null) : null,
     _cwfisState: cwfisState,
     _cwfisErrorCode: cwfisErrorCode,
+    _cwfisSnapshot: cwfisOk ? cwfisResult.value?._cwfisSnapshot : cwfisResult.reason?._cwfisSnapshot,
     _bcCount: bcDetections.length,
     _bcEnrichedCount: merged._bcEnrichedCount,
     _bcAppendedCount: merged._bcAppendedCount,
@@ -683,6 +684,11 @@ export function hasCompleteWorldwideWildfireCoverage(data) {
     && data.fireDetections.length > 0
     && data?._firmsState === 'ok'
     && data?._firmsPartial !== true;
+}
+
+export function wildfirePublishData(data) {
+  const { _cwfisSnapshot, ...publicData } = data;
+  return publicData;
 }
 
 function nextIdenticalSourceFailureCount(previousMeta, errorCode) {
@@ -749,11 +755,27 @@ export function canadianWildfireAfterPublish(data, { previousMeta = null } = {})
   } else if (failureCount === 1) {
     errorCode = 'BC_WILDFIRE_SOURCE_FAILED';
   }
+  const snapshot = data?._cwfisSnapshot;
+  const cwfisFailure = errorCode === 'CWFIS_SOURCE_FAILED' && !firmsPartial && snapshot
+    ? {
+        failedSources: ['cwfis'],
+        sourceHealth: {
+          cwfis: {
+            lastSuccessAt: snapshot.fetchedAt,
+            consecutiveFailures: snapshot.consecutiveFailures,
+            firstFailureAt: snapshot.firstFailureAt,
+            retainedUntil: snapshot.retainedUntil,
+          },
+        },
+        lastSourceAttemptAt: snapshot.lastAttemptAt,
+      }
+    : { failedSources: [], sourceHealth: {}, lastSourceAttemptAt: null };
   return {
     freshnessMetaPatch: {
       sourceState: 'degraded',
       errorCode,
       canadaSourceFailureCount: failureCount,
+      ...cwfisFailure,
     },
   };
 }

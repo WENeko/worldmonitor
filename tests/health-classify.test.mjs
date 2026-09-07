@@ -85,6 +85,53 @@ test('MND first-failure pending requires fresh last-good and expires without ano
   assert.equal(nearStale.sourceFailurePendingUntil, new Date(NOW + ONE_MIN_MS).toISOString());
 });
 
+test('NHC first-failure pending is bounded by its original complete snapshot', () => {
+  const name = 'naturalEvents';
+  const key = BOOTSTRAP_KEYS[name];
+  const meta = {
+    fetchedAt: NOW,
+    recordCount: 2,
+    sourceState: 'degraded',
+    errorCode: 'NHC_POINT_REQUEST_FAILED',
+    consecutiveSourceFailures: 1,
+    lastSourceFailureCode: 'NHC_POINT_REQUEST_FAILED',
+    firstSourceFailureAt: NOW,
+    lastSourceAttemptAt: NOW,
+    lastSourceSuccessAt: NOW - 539 * ONE_MIN_MS,
+  };
+  const classify = (over = {}, now = NOW) => classifyKey(name, key, { allowOnDemand: false }, {
+    ...makeCtx({ strens: { [key]: 1024 }, metaValues: { [SEED_META[name].key]: { ...meta, ...over } } }),
+    now,
+  });
+
+  const entry = classify();
+  assert.equal(entry.status, 'SEED_ERROR');
+  assert.equal(entry.sourceFailurePendingUntil, new Date(NOW + ONE_MIN_MS).toISOString());
+  assert.equal(__testing__.healthStatusBucket(entry, NOW), 'ok');
+  for (const over of [
+    { consecutiveSourceFailures: 2 },
+    { recordCount: 0 },
+    { lastSourceSuccessAt: null },
+    { lastSourceSuccessAt: NOW + 1 },
+    { firstSourceFailureAt: null },
+    { errorCode: 'NHC_UNRECOGNIZED_FAILURE', lastSourceFailureCode: 'NHC_UNRECOGNIZED_FAILURE' },
+  ]) {
+    const failed = classify(over);
+    assert.equal(failed.sourceFailurePendingUntil, undefined, JSON.stringify(over));
+    assert.notEqual(__testing__.healthStatusBucket(failed, NOW), 'ok', JSON.stringify(over));
+  }
+});
+
+test('natural events accepts a published complete empty aggregate but not a missing key', () => {
+  const name = 'naturalEvents';
+  const key = BOOTSTRAP_KEYS[name];
+  const metaValues = { [SEED_META[name].key]: { fetchedAt: NOW, recordCount: 0, sourceState: 'ok' } };
+  const present = classifyKey(name, key, { allowOnDemand: false }, makeCtx({ strens: { [key]: 100 }, metaValues }));
+  const missing = classifyKey(name, key, { allowOnDemand: false }, makeCtx({ strens: { [key]: 0 }, metaValues }));
+  assert.equal(present.status, 'OK');
+  assert.equal(missing.status, 'EMPTY');
+});
+
 // Build the same ctx shape the handler constructs: four Maps + now.
 //   strens:     { redisDataKey -> byteLen }
 //   errors:     { redisDataKey -> errMsg }

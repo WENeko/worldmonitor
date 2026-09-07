@@ -10,6 +10,7 @@ symptoms:
   - "Issues show status resolved and keep recurring, because the GitHub integration pinned them inRelease to a commit SHA that the stable browser semver release can never exceed"
   - "A commit message that only quoted the resolving marker while explaining the bug pinned a live issue inCommit, with no code-fence or quoting exemption"
   - "The repo's own sentry-triage skill taught the pin-creating commit convention as doctrine"
+  - "An issue pinned inRelease with an actor in statusDetails, from a Resolve in release click in the UI rather than from any commit, which no commit-message grep or integration setting can prevent"
 root_cause: config_error
 resolution_type: tooling_addition
 related_components: [tooling, documentation]
@@ -30,6 +31,8 @@ The server and edge surface does the opposite. `api/_sentry-common.js:104` sets 
 
 The integration invents a third thing. It creates a release object named after the commit SHA, and browser events never belong to it. A browser event can never outrank the pin, so the issue can never reopen. It reads resolved forever while the bug keeps firing.
 
+**The integration is not the only source of a pin.** Choosing "Resolve in release" in the Sentry UI pins the issue to whatever release Sentry considers current, which on this project is a SHA-named server release. The result is byte-identical in effect to the integration's pin and equally unsatisfiable for a browser issue. The two are told apart by `statusDetails.actor`: a UI resolve carries the resolving user, the integration's does not. Any statement that the dashboard toggle alone prevents this class is wrong.
+
 `sentry-build-metadata.ts` is not the bug. Release-plus-`dist` is a coherent, documented, deliberate choice, and the file comment at `sentry-build-metadata.ts:13` states the reason. The defect is that auto-resolve-on-commit assumes a release model the browser bundle does not use.
 
 There is a sharper sub-trap. A commit message that merely **quotes** the marker while explaining the defect still fires it. Sentry matches keyword-plus-short-ID anywhere in a commit message or a PR body. Backticks, code fences, and surrounding prose do not escape it. File content is not scanned, so the same characters are safe inside a source file or a markdown doc. Only commit messages and PR bodies are parsed.
@@ -40,6 +43,7 @@ There is a sharper sub-trap. A commit message that merely **quotes** the marker 
 - Two of the three had been re-pinned to SHAs newer than the ones the origin issue recorded. The defect recurs on every qualifying merge rather than sitting static.
 - A pinned issue shows as resolved in every Sentry view and in every triage sweep while new events keep arriving underneath it. Nothing surfaces the mute.
 - During this very fix, a commit body containing the pattern inside backticks, in a sentence describing the defect, pinned a live issue `inCommit` to that commit. The issue was an `Uncaught ConvexError: {"kind":"DODO_PORTAL_ERROR"}` with 4 events across 3 users, last seen 2026-08-21. It had previously been a clean plain resolve.
+- A second reading of the board later on 2026-09-07, after PR #7839 merged, found **two** pins rather than the three the origin issue recorded, and they had two different causes. WORLDMONITOR-122 was pinned `inRelease` to `6dc2b6324a` **with** an `actor`, and that commit's body contains no marker at all, so it came from a UI resolve. The `DODO_PORTAL_ERROR` issue was pinned `inCommit` to `6507787e7f` with **no** `actor`, and that SHA exists on no branch in the repo. The other two issues from the origin list were no longer pinned. The population moves between readings, so a pin list is only ever true at the moment it was read.
 
 ## What Didn't Work
 
@@ -95,13 +99,13 @@ SENTRY_AUTH_TOKEN=sntryu_... npm run audit:sentry-resolve-pins
 
 **Tests.** `tests/sentry-resolve-pins.test.mjs` holds 17 tests. Verified with `node --test tests/sentry-resolve-pins.test.mjs`, 17 pass, 0 fail.
 
-**A daily job.** `.github/workflows/sentry-resolve-pin-audit.yml` runs on cron `17 6 * * *` plus `workflow_dispatch`. The step at line 30 fails loudly when `SENTRY_AUTH_TOKEN` is absent instead of skipping. That secret did not exist in the repo as of 2026-09-07, so the workflow fails until it is added.
+**A daily job.** `.github/workflows/sentry-resolve-pin-audit.yml` runs on cron `17 6 * * *` plus `workflow_dispatch`. The step at line 30 fails loudly when `SENTRY_AUTH_TOKEN` is absent instead of skipping. That secret was added on 2026-09-07 and the workflow was confirmed green on demand in run 34131150896, so the daily job now reads the real board.
 
 **Doctrine correction.** `.agents/skills/sentry-triage/SKILL.md:40` now states plain resolve only and names all three pin kinds. Line 119 records that the integration currently resolves `inRelease: <commit-sha>` and that no browser event can outrank it.
 
 **Attribution.** `us.sentry.io` is now an `excluded` entry in `PROVIDER_OVERRIDES` at `scripts/source-attribution.mjs:764`, matching the `api.axiom.co` precedent above it, so the error-tracking vendor does not enter the published provider count.
 
-This work is PR #7839, which is unmerged as of 2026-09-07.
+This work is PR #7839, merged 2026-09-07.
 
 ## Why This Works
 
@@ -117,7 +121,7 @@ Only the short ID, permalink, pin kind, and sanitized pin value reach the report
 
 ## Prevention
 
-**Plain resolve only.** Never resolve into `inRelease`, `inNextRelease`, or `inCommit`. Read `statusDetails` back after every resolve and confirm it is `{}`. Do not trust the write response, because a resolved-to-resolved write returns 200 without changing anything.
+**Plain resolve only.** Never resolve into `inRelease`, `inNextRelease`, or `inCommit`. Read `statusDetails` back after every resolve and confirm it carries none of those three pin keys. Assert on the pin keys, not on the object being empty, for the reason given in What Didn't Work. Do not trust the write response, because a resolved-to-resolved write returns 200 without changing anything.
 
 **Scan commit messages before pushing.** A keyword adjacent to a `WORLDMONITOR-` token fires the integration anywhere in a commit message or a PR body, including inside backticks and code fences.
 
@@ -136,13 +140,15 @@ npm run audit:sentry-resolve-pins
 
 It exits non-zero and emits a `::error::` line per pinned issue. The daily workflow runs the same command.
 
-**This is a recurring failure mode, not a one-off.** Issue #6367 recorded the same class on 2026-08-09, when 21 issues sat muted behind `inNextRelease` pins and 6 were still firing, one of them at 357k events. That incident is why the triage skill's acceptance line named `inNextRelease` specifically. Naming one pin kind is what let three `inRelease` pins pass the same check a month later. Assert on the shape (`statusDetails` is empty) rather than on a blocklist of pin kinds.
+**This is a recurring failure mode, not a one-off.** Issue #6367 recorded the same class on 2026-08-09, when 21 issues sat muted behind `inNextRelease` pins and 6 were still firing, one of them at 357k events. That incident is why the triage skill's acceptance line named `inNextRelease` specifically. Naming one pin kind is what let three `inRelease` pins pass the same check a month later. The fix is to assert on the full set of pin keys, which is what `PIN_KINDS` now enumerates. Do not assert instead that `statusDetails` is empty: that is the proxy rejected in What Didn't Work, and an archived issue or a future `actor` on a clean resolve both defeat it.
 
-**One gap remains open.** Turning off resolve-on-commit in the Sentry GitHub integration dashboard is the only change that prevents rather than detects. It was not done as of 2026-09-07, and it is a dashboard setting, so no check in this repo can confirm its state. Until it is, the pre-commit grep catches a bad message before it lands and the daily audit catches a landed one within a day, but neither prevents the pin.
+**One gap remains open, and it only covers half the class.** Turning off resolve-on-commit in the Sentry GitHub integration dashboard is the only change that prevents rather than detects, and it prevents only the integration half. It was still not done as of 2026-09-07, and it is a dashboard setting, so no check in this repo can confirm its state.
+
+The other half has no preventive control at all. A human choosing "Resolve in release" in the Sentry UI pins the issue with no commit, no PR, and nothing for a pre-push grep to scan, and that is how the worst of the two 2026-09-07 pins was created. For that half the daily audit is the only control that exists, which makes it load-bearing rather than a backstop. Treat a red `audit:sentry-resolve-pins` as a real incident, and keep its credential alive.
 
 ## Related Issues
 
-- Origin issue #7838 and the fix PR #7839, unmerged as of 2026-09-07.
+- Origin issue #7838 and the fix PR #7839, merged 2026-09-07.
 - Issue #6367, the 2026-08-09 `inNextRelease` incident of the same class.
 - Issue #7833, the downstream code fix for WORLDMONITOR-122, which is the real bug that a permanent mute would have hidden.
 - [Sentry noise filtering with stack gating and signature matching](../best-practices/sentry-noise-filtering-with-stack-gating-and-signature-matching.md), one of the two canonical triage write-ups.

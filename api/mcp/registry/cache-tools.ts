@@ -2141,7 +2141,7 @@ export const CACHE_TOOLS: ToolDef[] = [
       { key: 'seed-meta:climate:disasters', maxStaleMin: 720 },
       { key: 'seed-meta:climate:co2-monitoring', maxStaleMin: 2880 },
       { key: 'seed-meta:health:air-quality', maxStaleMin: 180 },
-      { key: 'seed-meta:climate:ocean-ice', maxStaleMin: 1440 },
+      { key: 'seed-meta:climate:ocean-ice', maxStaleMin: 2880 },
       { key: 'seed-meta:climate:news-intelligence', maxStaleMin: 90 },
       { key: 'seed-meta:weather:alerts', maxStaleMin: 45 },
     ],

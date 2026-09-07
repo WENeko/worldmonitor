@@ -129,7 +129,7 @@ Need higher-volume scripted access? **API Starter** and **API Business** add a `
 
 Each authorization mints a separate row, so revoking Claude Desktop does not affect Cursor.
 
-- Manage connected clients in **[Settings → Connected MCP clients](https://www.worldmonitor.app/settings)**.
+- Sign in to the [dashboard](https://www.worldmonitor.app/dashboard). Select **Settings → MCP Clients** to manage connected clients.
 - See the live `clientName` (e.g. "Claude", "Cursor"), `lastUsedAt`, and `createdAt` per token.
 - A revoke takes effect on the next MCP request (no positive cache).
 - Up to **5 active tokens per user**. Authorizing beyond the cap silently revokes the **oldest-created** existing token (creation order, not recency of use; enforcement is eventually consistent under concurrent authorizations).

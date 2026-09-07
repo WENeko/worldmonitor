@@ -62,6 +62,10 @@ interface HarnessControls {
   fireSignInRetry: () => void;
   holdNextGet: () => HeldRequest;
   holdNextPost: () => HeldRequest;
+  /** Make the backing store REJECT writes to `key`, as a full disk does. */
+  rejectWritesTo: (key: string) => void;
+  /** Make the backing store THROW when `key` is read. */
+  rejectReadsOf: (key: string) => void;
   seedRow: (token: string, data: Record<string, string>, syncVersion: number, schemaVersion?: number) => void;
   setToken: (token: string) => void;
   stateHistory: string[];
@@ -97,6 +101,14 @@ async function getBundledSource(enabled = true): Promise<string> {
           loader: 'ts',
         }));
         buildApi.onResolve({ filter: /^@\// }, (args) => {
+          // safe-storage is bundled REAL, not stubbed. It is the accessor every
+          // storage call in cloud-prefs-sync now goes through (#7833), so a
+          // stub would quietly replace the exact code this harness exists to
+          // drive against its fake Storage — including safeStorageSetChecked,
+          // whose quota-rejection report the sync-version guard depends on.
+          if (args.path === '@/utils/safe-storage') {
+            return { path: resolve(root, 'src/utils/safe-storage.ts'), namespace: 'file' };
+          }
           if (!(args.path in stubs)) throw new Error(`unexpected alias import: ${args.path}`);
           return { path: args.path, namespace: 'stub' };
         });
@@ -139,8 +151,19 @@ async function runHarness(
   const originalSetTimeout = globalThis.setTimeout;
   const stateHistory: string[] = [];
   const events: Array<{ detail: unknown; type: string }> = [];
+  const rejectedWriteKeys = new Set<string>();
+  const rejectedReadKeys = new Set<string>();
   class TestStorage extends MiniStorage {
+    override getItem(key: string): string | null {
+      if (rejectedReadKeys.has(key)) throw new Error('SecurityError');
+      return super.getItem(key);
+    }
+
     override setItem(key: string, value: string): void {
+      // A full disk rejects the write for a large value while still accepting
+      // the small sync-version marker written straight afterwards — the exact
+      // asymmetry that let stale prefs overwrite cloud data (#7833 review).
+      if (rejectedWriteKeys.has(key)) throw new Error('QuotaExceededError');
       super.setItem(key, value);
       if (key === 'wm-cloud-sync-state') stateHistory.push(value);
     }
@@ -333,6 +356,8 @@ async function runHarness(
       for (const listener of documentListeners.get('visibilitychange') ?? []) listener();
     },
     events,
+    rejectWritesTo: (key: string) => { rejectedWriteKeys.add(key); },
+    rejectReadsOf: (key: string) => { rejectedReadKeys.add(key); },
     failNextGetTemporarily: () => {
       failNextGetTemporarily = true;
     },
@@ -381,6 +406,10 @@ async function runHarness(
   try {
     const cloudPrefs = await loadCloudPrefsModule(enabled);
     await invoke(cloudPrefs, controls);
+    // Rejections simulate a condition during the RUN, not during measurement —
+    // the result assembly below reads the same keys directly and would throw.
+    rejectedReadKeys.clear();
+    rejectedWriteKeys.clear();
     const activeToken = String(Reflect.get(globalThis, '__cloudPrefsToken'));
     const activeRow = rows.get(activeToken) ?? { data: {}, schemaVersion: 2, syncVersion: 0 };
     return {
@@ -826,5 +855,157 @@ describe('two-tab dirty-key persistence (#4746)', () => {
         'a settled upload must remove only the keys that tab durably synced',
       );
     });
+  });
+});
+
+describe('cloud prefs storage-rejection safety (#7833)', () => {
+  it('does not advance the sync version when a pref write is rejected', async () => {
+    // The data-loss shape review found: safeStorageSet swallowed a
+    // QuotaExceededError, so applyCloudBlob "succeeded", setSyncVersion
+    // advanced local to the cloud row's version, and the NEXT upload posted the
+    // stale local value back over good cloud data with no conflict to stop it.
+    // The pref value is what gets rejected; the small version marker would
+    // still fit, which is exactly why the version must not be written.
+    const result = await runHarness(async (cloudPrefs, controls) => {
+      controls.seedRow('test-token', { 'wm-market-watchlist-v1': 'cloud-value' }, 9);
+      controls.rejectWritesTo('wm-market-watchlist-v1');
+      await cloudPrefs.onSignIn('user-1', 'full');
+    });
+
+    assert.notEqual(
+      result.localSyncVersion,
+      9,
+      'local must not claim the cloud version after a write that never landed',
+    );
+    assert.equal(result.state, 'error', 'a rejected reconciliation must surface as error');
+  });
+
+  it('still reconciles normally when the same write is accepted', async () => {
+    // The control. Without it the assertions above would also pass if sign-in
+    // were broken outright, which is the failure mode a negative-only
+    // regression test cannot see.
+    const result = await runHarness(async (cloudPrefs, controls) => {
+      controls.seedRow('test-token', { 'wm-market-watchlist-v1': 'cloud-value' }, 9);
+      await cloudPrefs.onSignIn('user-1', 'full');
+    });
+
+    assert.equal(result.localSyncVersion, 9);
+    assert.equal(result.state, 'synced');
+  });
+});
+
+describe('cloud prefs read-failure safety (#7833 review)', () => {
+  it('does not upload a blob that omits a preference it could not read', () => {
+    // The deletion path: this blob REPLACES the server's, and an omitted key
+    // means "cleared". Degrading a throwing read to null therefore turned a
+    // transient read failure into a permanent cloud deletion of that
+    // preference. The raw read before #7833 threw and aborted the upload.
+    return runHarness(async (cloudPrefs, controls) => {
+      controls.seedRow('test-token', { 'wm-market-watchlist-v1': 'cloud-value' }, 1);
+      await cloudPrefs.onSignIn('user-1', 'full');
+      cloudPrefs.install('full');
+      localStorage.setItem('wm-market-watchlist-v1', 'local-edit');
+      controls.rejectReadsOf('wm-market-watchlist-v1');
+      await cloudPrefs.syncNow();
+    }).then((result) => {
+      // The assertion has to be that the key SURVIVES on the server. Accepting
+      // "absent from the posted blob" would accept the deletion itself, which
+      // is how the first version of this test passed against the bug.
+      const row = result.acceptedDataByToken['test-token'] ?? {};
+      assert.ok(
+        'wm-market-watchlist-v1' in row,
+        'an unreadable preference must not be deleted from the cloud row by an upload',
+      );
+    });
+  });
+});
+
+describe('cloud prefs sign-out cleanup (#7833 review)', () => {
+  it('completes sign-out cleanup even when the pending flush cannot be built', async () => {
+    // The flush is best-effort; the CLEANUP is not. Returning early from
+    // onSignOut on an unreadable preference left the auth generation un-bumped,
+    // the retry timers live, and _cachedToken holding the signed-out user's
+    // token — which a later unload handler could still post with.
+    const result = await runHarness(async (cloudPrefs, controls) => {
+      controls.seedRow('test-token', { 'wm-market-watchlist-v1': 'cloud-value' }, 1);
+      await cloudPrefs.onSignIn('user-1', 'full');
+      cloudPrefs.install('full');
+      localStorage.setItem('wm-market-watchlist-v1', 'local-edit');
+      controls.rejectReadsOf('wm-market-watchlist-v1');
+      cloudPrefs.onSignOut();
+    });
+
+    assert.equal(
+      result.state,
+      'signed-out',
+      'sign-out must reach its state cleanup even when the flush is skipped',
+    );
+    assert.equal(
+      result.localSyncVersion,
+      0,
+      'sign-out must clear the durable sync-version metadata',
+    );
+  });
+});
+
+describe('cloud prefs fail closed on undeterminable state (#7833 review)', () => {
+  it('does not apply the cloud blob when the local sync version cannot be read', async () => {
+    // Degrading this read to 0 means "never synced", which makes the cloud
+    // unconditionally look ahead — so the cloud blob is applied over local
+    // edits that were never uploaded.
+    // The local value has to be captured INSIDE the harness: it restores the
+    // globals on exit, so `localStorage` is gone by the time assertions run.
+    let watchlistAfter: string | null = null;
+    const result = await runHarness(async (cloudPrefs, controls) => {
+      controls.seedRow('test-token', { 'wm-market-watchlist-v1': 'cloud-value' }, 9);
+      localStorage.setItem('wm-market-watchlist-v1', 'local-edit');
+      controls.rejectReadsOf('wm-cloud-sync-version');
+      await cloudPrefs.onSignIn('user-1', 'full');
+      watchlistAfter = localStorage.getItem('wm-market-watchlist-v1');
+    });
+
+    assert.equal(
+      watchlistAfter,
+      'local-edit',
+      'an unreadable sync version must not let cloud overwrite local edits',
+    );
+    assert.equal(result.state, 'error');
+  });
+
+  it('does not sign in when prior-account ownership cannot be determined', async () => {
+    // Skipping the sidecar cleanup on an account transition leaves account A's
+    // ownership values in place for B, so tier reconciliation attributes A's
+    // gate decisions to B.
+    const result = await runHarness(async (cloudPrefs, controls) => {
+      controls.seedRow('test-token', {}, 1);
+      controls.rejectReadsOf('wm-last-signed-in-as');
+      await cloudPrefs.onSignIn('user-b', 'full');
+    });
+
+    assert.equal(result.state, 'error', 'undeterminable provenance must fail closed');
+    assert.equal(result.postCount, 0, 'nothing may be uploaded on a provenance failure');
+  });
+});
+
+
+describe('cloud prefs marker ordering (#7833 review)', () => {
+  it('does not advance the sync version when the schema marker is rejected', async () => {
+    // Both writes are checked, but ORDER decides what a partial failure leaves
+    // behind. Advancing the version first leaves a durable claim that this
+    // cloud generation was reconciled while the schema marker is still old, and
+    // the next sign-in then sees equal versions, takes the local-upload branch,
+    // and reruns one-shot migrations over already-migrated data.
+    const result = await runHarness(async (cloudPrefs, controls) => {
+      controls.seedRow('test-token', { 'wm-market-watchlist-v1': 'cloud-value' }, 9, 8);
+      controls.rejectWritesTo('wm-cloud-prefs-local-schema-version');
+      await cloudPrefs.onSignIn('user-1', 'full');
+    });
+
+    assert.notEqual(
+      result.localSyncVersion,
+      9,
+      'the sync version must not advance past a rejected schema marker',
+    );
+    assert.equal(result.state, 'error');
   });
 });
