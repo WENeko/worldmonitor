@@ -34,6 +34,25 @@ const NHC_FAILURE_CODES = new Set([
 ]);
 const NHC_POINT_GEOMETRY_TYPES = new Set(['Point']);
 const NHC_CONE_GEOMETRY_TYPES = new Set(['Polygon', 'MultiPolygon']);
+const NHC_ADVISORY_TIMEZONE_OFFSETS_MIN = {
+  UTC: 0,
+  GMT: 0,
+  AST: -4 * 60,
+  ADT: -3 * 60,
+  EST: -5 * 60,
+  EDT: -4 * 60,
+  CST: -6 * 60,
+  CDT: -5 * 60,
+  MST: -7 * 60,
+  MDT: -6 * 60,
+  PST: -8 * 60,
+  PDT: -7 * 60,
+  AKST: -9 * 60,
+  AKDT: -8 * 60,
+  HST: -10 * 60,
+};
+const NHC_ADVISORY_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const NHC_ADVISORY_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const DAYS = 30;
 const WILDFIRE_MAX_AGE_MS = 48 * 60 * 60 * 1000;
@@ -123,6 +142,30 @@ function classifyWind(kt) {
   if (kt >= 64) return { category: 1, classification: 'Category 1' };
   if (kt >= 34) return { category: 0, classification: 'Tropical Storm' };
   return { category: 0, classification: 'Tropical Depression' };
+}
+
+function parseNhcAdvisoryDate(value) {
+  if (typeof value !== 'string') return new Date(value).getTime();
+
+  const match = value.match(/^(\d{1,2})(\d{2}) (AM|PM) ([A-Z]{3,4}) (Sun|Mon|Tue|Wed|Thu|Fri|Sat) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2}) (\d{4})$/);
+  if (!match) return new Date(value).getTime();
+
+  const [, hourText, minuteText, meridiem, timezone, weekday, monthText, dayText, yearText] = match;
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const month = NHC_ADVISORY_MONTHS.indexOf(monthText);
+  const day = Number(dayText);
+  const year = Number(yearText);
+  const timezoneOffsetMin = NHC_ADVISORY_TIMEZONE_OFFSETS_MIN[timezone];
+  const calendarDate = new Date(Date.UTC(year, month, day));
+  if (hour < 1 || hour > 12 || minute > 59 || timezoneOffsetMin === undefined
+    || calendarDate.getUTCFullYear() !== year || calendarDate.getUTCMonth() !== month
+    || calendarDate.getUTCDate() !== day || calendarDate.getUTCDay() !== NHC_ADVISORY_WEEKDAYS.indexOf(weekday)) {
+    return Number.NaN;
+  }
+
+  const hour24 = hour % 12 + (meridiem === 'PM' ? 12 : 0);
+  return Date.UTC(year, month, day, hour24, minute) - timezoneOffsetMin * 60_000;
 }
 
 function parseGdacsTcFields(props) {
@@ -393,7 +436,7 @@ async function fetchNhc(fetchFn = globalThis.fetch) {
     }
 
     const p = currentPt.properties;
-    const advDate = p.advdate ? new Date(p.advdate).getTime() : Number.NaN;
+    const advDate = p.advdate ? parseNhcAdvisoryDate(p.advdate) : Number.NaN;
     if (typeof p.stormname !== 'string' || p.stormname.trim().length === 0
       || !Number.isInteger(p.stormnum) || p.stormnum < 1 || p.stormnum > 99
       || !['string', 'number'].includes(typeof p.advisnum) || String(p.advisnum).trim().length === 0

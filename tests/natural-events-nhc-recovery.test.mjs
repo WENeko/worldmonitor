@@ -290,6 +290,61 @@ test('optional cone and past-point failures do not remove a point-confirmed stor
   assert.equal(payload._nhcSnapshot.consecutiveFailures, 0);
 });
 
+test('accepts time-first advisory dates across NHC time zones', async () => {
+  for (const [advdate, expectedDate] of [
+    ['800 AM PDT Mon Sep 07 2026', '2026-09-07T15:00:00.000Z'],
+    ['800 AM AST Mon Sep 07 2026', '2026-09-07T12:00:00.000Z'],
+    ['800 AM HST Mon Sep 07 2026', '2026-09-07T18:00:00.000Z'],
+    ['1230 PM AST Mon Sep 07 2026', '2026-09-07T16:30:00.000Z'],
+  ]) {
+    const mariePoint = {
+      ...currentStormPoint,
+      geometry: { type: 'Point', coordinates: [-124.4, 24.7] },
+      properties: {
+        ...currentStormPoint.properties,
+        stormname: 'Marie',
+        stormnum: 13,
+        advisnum: '26',
+        maxwind: 55,
+        advdate,
+      },
+    };
+    const payload = await runNhc({
+      previous: null,
+      nhc: async (_input, id) => Response.json(collection(id === 188 ? [mariePoint] : [])),
+    });
+
+    const storm = payload.events.find(event => event.sourceName === 'NHC');
+    assert.ok(storm, advdate);
+    assert.equal(storm.id, 'nhc-EP13-26');
+    assert.equal(storm.date, Date.parse(expectedDate));
+    assert.equal(payload._nhcSnapshot.errorCode, null);
+  }
+});
+
+test('rejects malformed time-first NHC advisory dates', async () => {
+  for (const advdate of [
+    '1299 AM PDT Mon Sep 07 2026',
+    '0000 AM PDT Mon Sep 07 2026',
+    '1300 AM PDT Mon Sep 07 2026',
+    '800 AM XYZ Mon Sep 07 2026',
+    '800 AM PDT Mon Feb 31 2026',
+    '800 AM PDT Tue Sep 07 2026',
+  ]) {
+    const invalidPoint = {
+      ...currentStormPoint,
+      properties: { ...currentStormPoint.properties, advdate },
+    };
+    const payload = await runNhc({
+      now: NOW + MIN,
+      nhc: async (_input, id) => Response.json(collection(id === 6 ? [invalidPoint] : [])),
+    });
+
+    assert.deepEqual(payload.events.filter(event => event.sourceName === 'NHC'), [retainedStorm], advdate);
+    assert.equal(payload._nhcSnapshot.errorCode, 'NHC_POINT_RESPONSE_INVALID', advdate);
+  }
+});
+
 test('invalid optional past-point properties do not remove a point-confirmed storm', async () => {
   const payload = await runNhc({
     previous: null,
