@@ -138,6 +138,7 @@
     "audit:convex-string-calls": "node scripts/audit-convex-string-calls.cjs",
     "audit:dodo-catalog": "node scripts/audit-dodo-catalog.cjs",
     "audit:inventory-counts": "node scripts/check-inventory-count-contracts.mjs",
+    "audit:sentry-resolve-pins": "node scripts/audit-sentry-resolve-pins.mjs",
     "tauri": "tauri",
     "preview": "vite preview",
     "test:e2e:full": "npm run build:pro && cross-env VITE_VARIANT=full playwright test",

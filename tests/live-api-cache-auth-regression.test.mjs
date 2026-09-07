@@ -63,6 +63,8 @@ function bust(url) {
 }
 const USER_AGENT = 'WorldMonitor-Live-Cache-Auth-Sweep/1.0';
 const LIVE_API_CACHE_TIMEOUT_MS = positiveIntegerFromEnv(process.env.LIVE_API_CACHE_TIMEOUT_MS, 15_000);
+const LIVE_API_CACHE_TIMEOUT_RETRIES = 1;
+const LIVE_API_CACHE_RETRY_DELAY_MS = 250;
 
 function positiveIntegerFromEnv(value, fallback) {
   const parsed = Number(value);
@@ -118,18 +120,55 @@ function assertPublicCacheable(resp, name) {
   assert.match(cacheControl(resp), /\bpublic\b/i, `${name}: anonymous public request should remain public-cacheable`);
 }
 
+function fetchRequestDescription(pathOrUrl, method, headers) {
+  const representation = [];
+  if (headers.has('accept')) representation.push(`Accept: ${headers.get('accept')}`);
+  if (headers.has('rsc')) representation.push(`RSC: ${headers.get('rsc')}`);
+  return `${method} ${String(pathOrUrl)}${representation.length ? ` (${representation.join(', ')})` : ''}`;
+}
+
 async function fetchText(pathOrUrl, init = {}) {
   const headers = new Headers(init.headers || {});
   // A probe may impersonate a declared AI agent on purpose (#7804); everything
   // else identifies as the sweep.
   if (!headers.has('user-agent')) headers.set('User-Agent', USER_AGENT);
-  const timeoutSignal = AbortSignal.timeout(LIVE_API_CACHE_TIMEOUT_MS);
-  const signal = init.signal && typeof AbortSignal.any === 'function'
-    ? AbortSignal.any([init.signal, timeoutSignal])
-    : init.signal || timeoutSignal;
-  const resp = await fetch(pathOrUrl, { ...init, headers, signal });
-  const bodyText = await resp.text();
-  return { resp, bodyText };
+  const method = String(init.method || 'GET').toUpperCase();
+  const maxAttempts = method === 'GET' ? LIVE_API_CACHE_TIMEOUT_RETRIES + 1 : 1;
+  const description = fetchRequestDescription(pathOrUrl, method, headers);
+  const startedAt = Date.now();
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const timeoutSignal = AbortSignal.timeout(LIVE_API_CACHE_TIMEOUT_MS);
+    const signal = init.signal && typeof AbortSignal.any === 'function'
+      ? AbortSignal.any([init.signal, timeoutSignal])
+      : init.signal || timeoutSignal;
+    try {
+      const resp = await fetch(pathOrUrl, { ...init, headers, signal });
+      const bodyText = await resp.text();
+      return { resp, bodyText };
+    } catch (error) {
+      const timedOut = timeoutSignal.aborted
+        || (!init.signal && error && typeof error === 'object' && error.name === 'TimeoutError');
+      if (!timedOut) throw error;
+      if (attempt === maxAttempts) {
+        const attemptLabel = attempt === 1 ? 'attempt' : 'attempts';
+        throw new Error(
+          `${description} timed out after ${attempt} ${attemptLabel} `
+            + `(${Date.now() - startedAt} ms elapsed; ${LIVE_API_CACHE_TIMEOUT_MS} ms limit per attempt)`,
+          { cause: error },
+        );
+      }
+      console.warn(`LIVE_SWEEP_FETCH_RETRY ${JSON.stringify({
+        request: description,
+        attempt,
+        maxAttempts,
+        timeoutMs: LIVE_API_CACHE_TIMEOUT_MS,
+      })}`);
+      await new Promise((resolve) => setTimeout(resolve, LIVE_API_CACHE_RETRY_DELAY_MS));
+    }
+  }
+
+  throw new Error(`${description} exhausted its fetch attempts`);
 }
 
 async function assertRepeatedNeverCloudflareHit(url, { expectedStatus, label, init = {} }) {
@@ -200,7 +239,7 @@ async function waitForSharedCacheHit(url, name) {
 }
 
 describe(`live API cache/auth regression sweep (${LIVE ? 'ENABLED' : 'SKIPPED - set LIVE_API_CACHE_TESTS=1'})`, { skip: !LIVE }, () => {
-  it('documents the Cloudflare rule assumptions being validated', () => {
+  it('documents the Cloudflare rule assumptions and validates sweep guardrails', async () => {
     console.info([
       'Cloudflare/API cache assumptions under test:',
       'fake-auth responses are dynamic no-store and never cached 200s;',
@@ -220,6 +259,44 @@ describe(`live API cache/auth regression sweep (${LIVE ? 'ENABLED' : 'SKIPPED - 
       ),
       /shared-cache HIT/,
     );
+
+    const originalFetch = globalThis.fetch;
+    const originalWarn = console.warn;
+    const retryWarnings = [];
+    let fetchCalls = 0;
+    try {
+      console.warn = (message) => retryWarnings.push(String(message));
+      globalThis.fetch = async () => {
+        fetchCalls += 1;
+        if (fetchCalls === 1) throw new DOMException('', 'TimeoutError');
+        return new Response('recovered');
+      };
+      const recovered = await fetchText('https://retry.invalid/document');
+      assert.equal(recovered.bodyText, 'recovered');
+      assert.equal(fetchCalls, 2, 'a GET should retry one transient timeout');
+      assert.match(retryWarnings[0], /LIVE_SWEEP_FETCH_RETRY.*GET https:\/\/retry\.invalid\/document/);
+
+      fetchCalls = 0;
+      globalThis.fetch = async () => {
+        fetchCalls += 1;
+        throw new DOMException('', 'TimeoutError');
+      };
+      await assert.rejects(
+        fetchText('https://retry.invalid/document', { headers: { Accept: 'text/markdown' } }),
+        /GET https:\/\/retry\.invalid\/document \(Accept: text\/markdown\) timed out after 2 attempts/,
+      );
+      assert.equal(fetchCalls, 2, 'a persistent timeout should stop after one retry');
+
+      fetchCalls = 0;
+      await assert.rejects(
+        fetchText('https://retry.invalid/mcp', { method: 'POST' }),
+        /POST https:\/\/retry\.invalid\/mcp timed out after 1 attempt/,
+      );
+      assert.equal(fetchCalls, 1, 'a POST must not be retried');
+    } finally {
+      globalThis.fetch = originalFetch;
+      console.warn = originalWarn;
+    }
   });
 
   it('API User-Agent denials retain JSON 403s and nonblocked routes retain JSON 404s on both hosts', async () => {
