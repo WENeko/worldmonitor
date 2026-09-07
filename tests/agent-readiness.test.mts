@@ -6,7 +6,11 @@ import middleware from '../middleware';
 import agentRequestPolicy from '../shared/agent-request-policy.json';
 
 describe('public agent documents', () => {
-  const files = readdirSync(new URL('../public/', import.meta.url)).filter((file) => file.endsWith('.md'));
+  // auth.md is intentionally heading-led for scanner compatibility. Its title,
+  // description, and canonical identity are guarded in the dedicated auth suite.
+  const files = readdirSync(new URL('../public/', import.meta.url)).filter(
+    (file) => file.endsWith('.md') && file !== 'auth.md',
+  );
   files.push('api/download.md');
   for (const file of files) {
     it(`${file} opens with document metadata`, () => {

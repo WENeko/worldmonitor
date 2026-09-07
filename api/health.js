@@ -879,7 +879,15 @@ const SEED_META = {
   defensePatents:   { key: 'seed-meta:military:defense-patents',  maxStaleMin: 25200 },
   satellites:       { key: 'seed-meta:intelligence:satellites',    maxStaleMin: 240 }, // CelesTrak every 120min; 240min = absorbs one missed cycle
   temporalAnomalies:{ key: 'seed-meta:temporal:anomalies',          maxStaleMin: 45 }, // rebuild-stamped ONLY (TEMPORAL_ANOMALIES_REBUILD_AFTER_MS=20min in infrastructure/v1/_shared.ts) — only producer-route traffic can rebuild and refresh this request-driven stamp, so a traffic lull can age it past 45min; 45min leaves ~2.25x margin. Data TTL is 60min so health reaches STALE_SEED before EMPTY. Content freshness is a separate clock: the producer stamps newestItemAt/maxContentAgeMin from all five COUNT_SOURCE_KEYS payloads (news, FIRMS, military flights, theater-posture vessels, AIS gaps — TEMPORAL_ANOMALIES_MAX_CONTENT_AGE_MIN); a frozen-but-200 upstream keeps fetchedAt fresh and reads STALE_CONTENT.
-  weatherAlerts:    { key: 'seed-meta:weather:alerts',             maxStaleMin: 45 }, // relay loop every 15min; 45 = 3× interval (was 30 = 2×, too tight on relay hiccup)
+  weatherAlerts: {
+    key: 'seed-meta:weather:alerts', maxStaleMin: 45,
+    sourceFailure: {
+      warnAfterConsecutive: 2, maxPendingMin: 20,
+      successAtField: 'lastSourceSuccessAt',
+      failureCodePattern: /^WEATHER_ALERT_SOURCE_INCOMPLETE$/,
+      sources: ['nws', 'eccc', 'swic'],
+    },
+  },
   // Credential-gated seeder (#7005). This is an activation-marker cutover
   // rather than a 24h expiring acknowledgement.
   // Softening stays on-demand until the durable marker is written.
@@ -959,6 +967,7 @@ const SEED_META = {
     maxStaleMin: 45, // seed-alberta-emergency-alert cron */15; 45 = 3× interval
     cutover: { mode: 'expiring-ack', fromKey: null, issue: 6659, status: 'EMPTY' },
   },
+  // Event modification dates do not expire BC orders; fetchedAt ages active-list verification.
   canadaAlertsBcSource: {
     key: 'seed-meta:alerts:bc-emergency-info',
     maxStaleMin: 45,
@@ -2236,6 +2245,25 @@ function parseFiniteRecordCount(raw) {
 
 function projectSourceFailure(meta, policy, now, maxStaleMin) {
   if (!policy || meta?.sourceState !== 'degraded') return null;
+  let retainedUntil = Infinity;
+  if (policy.sources) {
+    const failed = meta.failedSources;
+    const states = Array.isArray(failed) && failed.length > 0 && failed.length < policy.sources.length
+      && new Set(failed).size === failed.length && failed.every((source) => policy.sources.includes(source))
+      ? failed.map((source) => meta.sourceHealth?.[source]) : [];
+    const valid = states.length > 0 && states.every((state) =>
+      Number.isSafeInteger(state?.consecutiveFailures) && state.consecutiveFailures >= 1
+      && [state.lastSuccessAt, state.firstFailureAt, state.retainedUntil].every((value) => Number.isSafeInteger(value) && value > 0)
+      && state.lastSuccessAt <= state.firstFailureAt && state.firstFailureAt <= meta.lastSourceAttemptAt);
+    retainedUntil = valid ? Math.min(...states.map((state) => state.retainedUntil)) : NaN;
+    meta = {
+      ...meta,
+      consecutiveSourceFailures: valid ? Math.max(...states.map((state) => state.consecutiveFailures)) : null,
+      firstSourceFailureAt: valid ? Math.min(...states.map((state) => state.firstFailureAt)) : null,
+      lastSourceSuccessAt: valid ? Math.min(...states.map((state) => state.lastSuccessAt)) : null,
+      lastSourceFailureCode: meta.errorCode,
+    };
+  }
   const errorCode = typeof meta?.errorCode === 'string'
     && policy.failureCodePattern.test(meta.errorCode)
     ? meta.errorCode
@@ -2261,7 +2289,7 @@ function projectSourceFailure(meta, policy, now, maxStaleMin) {
     const validEpisode = [first, attempt, success].every((value) => Number.isSafeInteger(value) && value > 0)
       && success <= first && first <= attempt && attempt <= now;
     const deadline = validEpisode
-      ? Math.min(first + policy.maxPendingMin * 60_000, success + maxStaleMin * 60_000)
+      ? Math.min(first + policy.maxPendingMin * 60_000, success + maxStaleMin * 60_000, retainedUntil)
       : NaN;
     pending = pending && parseFiniteRecordCount(meta.count ?? meta.recordCount) > 0
       && Number.isFinite(deadline) && now < deadline;
@@ -2718,7 +2746,7 @@ function classifyKey(name, redisKey, opts, ctx) {
     // A producer-failure warning describes degraded-BUT-SERVING — the LKG is
     // still on the page while generation retries.
     else if (synthesisFailure?.warning) fault = 'SEED_ERROR';
-    else if (seedError) fault = 'SEED_ERROR';
+    else if (seedError || (sourceFailure?.pendingUntil && !hasData)) fault = 'SEED_ERROR';
   }
 
   let status;

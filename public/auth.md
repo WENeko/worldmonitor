@@ -1,12 +1,7 @@
----
-title: "World Monitor agent authentication"
-description: "API key and OAuth authentication."
-canonical: "https://www.worldmonitor.app/auth.md"
----
-
 # WorldMonitor — Agent Authentication (auth.md)
 
-Authentication follows the WorkOS **auth.md** spec: <https://workos.com/auth-md>.
+Use API keys or OAuth 2.1 to authenticate with the WorldMonitor API and MCP server.
+This walkthrough follows the WorkOS **auth.md** spec: <https://workos.com/auth-md>.
 
 Discovery is open. `get_sources` alone is credential- and daily-quota-free
 (10 anonymous calls/minute/IP, fail closed). Other MCP data tools need

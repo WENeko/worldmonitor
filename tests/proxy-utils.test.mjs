@@ -138,6 +138,31 @@ describe('proxy utilities', () => {
     );
   });
 
+  it('rotates China sticky ports within their country range without changing the route', () => {
+    for (const host of ['cn.decodo.com', 'CN.DECODO.COM', 'Cn.Decodo.Com', 'cn.decodo.com.']) {
+      const raw = `${host}:30001:proxy-user:proxy-secret`;
+      const initial = parseProxyConfig(raw);
+      assert.deepEqual(parseProxyConfigForAttempt(raw, 0), initial);
+      assert.deepEqual(parseProxyConfigForAttempt(raw, 1), { ...initial, port: 30002 });
+      assert.equal(parseProxyConfigForAttempt(`${host}:39999:proxy-user:proxy-secret`, 1).port, 30001);
+      for (const port of [7000, 10000, 29999, 30000, 40000, 49999]) {
+        assert.equal(parseProxyConfigForAttempt(`${host}:${port}:proxy-user:proxy-secret`, 1).port, port);
+      }
+    }
+    for (const protocol of ['http', 'https']) {
+      const raw = `${protocol}://proxy-user:proxy-secret@cn.decodo.com:30001`;
+      assert.deepEqual(parseProxyConfigForAttempt(raw, 1), { ...parseProxyConfig(raw), port: 30002 });
+    }
+    for (const host of ['cn.decodo.com.proxy.test', 'cn.proxy.test', 'jp.decodo.com']) {
+      const raw = `${host}:30001:proxy-user:proxy-secret`;
+      assert.deepEqual(parseProxyConfigForAttempt(raw, 1), parseProxyConfig(raw));
+    }
+    assert.equal(
+      resolveProxyStringForAttempt(1, 'cn.decodo.com:30001:proxy-user:proxy-secret'),
+      'proxy-user:proxy-secret@cn.decodo.com:30002',
+    );
+  });
+
   it('rotates the curl proxy string onto a distinct Decodo sticky exit per attempt', () => {
     const decodo = 'gate.decodo.com:10001:proxy-user:proxy-secret';
 

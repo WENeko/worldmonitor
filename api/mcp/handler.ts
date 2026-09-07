@@ -44,7 +44,7 @@ import { buildUiResourceRead, isUiResourceUri, UI_RESOURCE_LIST_RESPONSE } from 
 import { emitTelemetry, principalIdForLog } from './telemetry';
 import { hashKeySync } from '../../server/_shared/usage-identity';
 import { createMcpUsage, emitMcpRequestEvent, setUsageContext, type McpUsage } from './usage';
-import { utf8ByteLength } from './utils';
+import { safeJsonRpcId, utf8ByteLength } from './utils';
 import type { McpAuthContext, McpHandlerDeps } from './types';
 import type { McpBudget } from './quota';
 
@@ -119,8 +119,7 @@ type JsonRpcRequest = {
 
 function validJsonRpcId(id: unknown): id is string | number | null | undefined {
   if (id === null || id === undefined) return true;
-  if (typeof id === 'number') return Number.isFinite(id);
-  return typeof id === 'string' && utf8ByteLength(id) <= MAX_JSON_RPC_ID_BYTES;
+  return safeJsonRpcId(id) !== null;
 }
 
 // Spec-correct 401 for the fail-closed guards on data methods. These guards are
@@ -165,7 +164,6 @@ const MCP_CACHE_CONTROL = 'no-store, no-transform';
 // JSON-RPC IDs are client-controlled and get echoed in every success/error
 // envelope. Keep ordinary scalar IDs correlatable, but reject IDs that could
 // turn an error path (and its optional SSE replay) into an amplification sink.
-const MAX_JSON_RPC_ID_BYTES = 256;
 // Replay is a best-effort convenience for a stateless edge route. A large
 // response still reaches the current SSE client; it is not retained for a
 // later Last-Event-ID replay.

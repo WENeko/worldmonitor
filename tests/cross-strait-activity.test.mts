@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { describe, it } from 'node:test';
+import { __testing__ as healthTesting } from '../api/health.js';
 
 import {
   DECISION_SIGNAL_PROVENANCE_FAMILY_REGISTRATIONS,
@@ -38,6 +39,7 @@ import {
   CROSS_STRAIT_ACTIVITY_TTL_SECONDS,
   crossStraitActivityContentMeta,
   fetchCrossStraitActivitySeedSnapshot,
+  projectCrossStraitActivityBootstrap,
   writeSourceHealth,
 } from '../scripts/seed-cross-strait-activity.mjs';
 import { isCrossStraitActivitySnapshot } from '../src/components/cross-strait-activity-summary';
@@ -2626,6 +2628,12 @@ describe('quantified cross-Strait activity (#5575)', () => {
 
     assert.equal(mnd?.transportStatus, 'error');
     assert.ok(mnd?.errorCodes.includes('MND_LIST_ROWS_MISSING'));
+    assert.deepEqual(mnd.requestDiagnostics.filter(row => row.purpose === 'list')
+      .map(({ elapsedMs, ...failure }) => failure), [{
+      path: '/en/news/plaactlist', purpose: 'list', attempt: 1,
+      stage: 'parse', httpStatus: 200, errorCode: 'MND_LIST_ROWS_MISSING',
+    }]);
+    assert.equal(mnd.lastSuccessAt, retrievedAt);
     assert.ok(mnd?.refreshErrorCodes.includes('MND_PUBLICATION_METADATA_MISSING'));
     assert.match(mndRequests[0] ?? '', /plaactlist/i);
     assert.equal(mndRequests.length, 1 + MND_REFRESH_DETAIL_REQUESTS_PER_RUN * 2);
@@ -2634,6 +2642,29 @@ describe('quantified cross-Strait activity (#5575)', () => {
       snapshot.observations.filter((row: { sourceId: string }) => row.sourceId === 'taiwan-mnd').length,
       MND_REQUIRED_REPORTING_DAYS,
     );
+  });
+
+  it('records empty MND backfill pages without retrying or stopping pagination', async () => {
+    const requested: string[] = [];
+    const snapshot = await fetchCrossStraitActivitySnapshot({
+      now: Date.parse(retrievedAt), proxyUrl: '', sleepFn: async () => {},
+      fetchFn: async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.includes('mod.go.jp')) return new Response(fixture('jmod-homepage.html'));
+        requested.push(url);
+        return new Response('<html><body>no activity rows</body></html>');
+      },
+    });
+    const mnd = snapshot.sources.find(source => source.id === 'taiwan-mnd');
+    assert.equal(requested.length, MND_MAX_LIST_PAGES_PER_BACKFILL_RUN);
+    assert.equal(new Set(requested).size, requested.length);
+    assert.equal(mnd.requestCount, requested.length);
+    assert.deepEqual(mnd.requestDiagnostics.map(row => row.path), requested.map(url => new URL(url).pathname));
+    assert.ok(mnd.requestDiagnostics.every(row => row.purpose === 'list' && row.attempt === 1
+      && row.stage === 'parse' && row.httpStatus === 200 && row.errorCode === 'MND_LIST_ROWS_MISSING'
+      && Number.isInteger(row.elapsedMs) && row.elapsedMs >= 0));
+    assert.equal(mnd.transportStatus, 'error');
+    assert.equal(mnd.lastSuccessAt, null);
   });
 
   it('separates the three index-presence claims by whether the index covers the series', () => {
@@ -2988,6 +3019,7 @@ describe('quantified cross-Strait activity (#5575)', () => {
     let listAttempts = 0;
     let detailAttempts = 0;
     const snapshot = await fetchCrossStraitActivitySnapshot({
+      mndListUrl: 'https://www.mnd.gov.tw/en/news/plaactlist?token=SECRET#SECRET',
       now: Date.parse(retrievedAt),
       proxyUrl: '',
       sleepFn: async () => {},
@@ -3008,7 +3040,12 @@ describe('quantified cross-Strait activity (#5575)', () => {
     assert.equal(mnd?.transportStatus, 'fresh');
     assert.deepEqual(mnd?.errorCodes, []);
     assert.equal(mnd?.requestCount, listAttempts + detailAttempts);
+    assert.deepEqual(mnd?.requestDiagnostics?.map(({ elapsedMs, ...failure }) => failure), [{
+      path: '/en/news/plaactlist', purpose: 'list', attempt: 1,
+      stage: 'response_headers', httpStatus: null, errorCode: 'TIMEOUT',
+    }]);
     assert.ok(detailAttempts <= MND_MAX_DETAIL_REQUESTS_PER_RUN);
+    assert.equal(JSON.stringify(mnd.requestDiagnostics).includes('SECRET'), false);
   });
 
   for (const [failure, expectedAttempts, expectedCode] of [
@@ -3032,6 +3069,8 @@ describe('quantified cross-Strait activity (#5575)', () => {
       assert.equal(mnd?.requestCount, attempts);
       assert.equal(mnd?.transportStatus, 'error');
       assert.ok(mnd?.errorCodes.includes(expectedCode));
+      assert.equal(mnd?.requestDiagnostics?.length, expectedAttempts);
+      assert.ok(mnd.requestDiagnostics.every(row => row.errorCode === expectedCode));
     });
   }
 
@@ -3058,7 +3097,84 @@ describe('quantified cross-Strait activity (#5575)', () => {
     assert.equal(total, MND_MAX_LIST_PAGES_PER_BACKFILL_RUN);
     assert.ok([...listAttempts.values()].every(count => count <= 2));
     assert.equal(mnd?.requestCount, total + detailAttempts);
+    assert.ok(mnd.requestDiagnostics.length <= MND_MAX_LIST_PAGES_PER_BACKFILL_RUN);
+    assert.equal(mnd.requestDiagnostics.at(-1).path, '/en/news/plaactlist/6');
   });
+
+  for (const purpose of ['detail', 'refresh'] as const) {
+    it(`identifies MND ${purpose} body timeouts without leaking response or error text`, async (t) => {
+      const previousSnapshot = buildCrossStraitActivitySnapshot({
+        generatedAt: retrievedAt,
+        mndOutcome: { ok: true, observations: [mndObservationForDay(1)] },
+        japanOutcome: { ok: true, availableDocumentUrls: [] },
+      });
+      let clock = 0;
+      const snapshot = await fetchCrossStraitActivitySnapshot({
+        now: Date.parse(retrievedAt) + 60_000, nowFn: () => clock,
+        previousSnapshot, proxyUrl: '', sleepFn: async () => {},
+        fetchFn: async (input: string | URL | Request) => {
+          const url = String(input);
+          if (url.includes('mod.go.jp')) return new Response(fixture('jmod-homepage.html'));
+          if (url.includes('plaactlist')) return new Response(mndListWithCount(20));
+          if (purpose === 'detail' ? url.endsWith('/90000') : url.includes('/86001')) {
+            return new Response(new ReadableStream({
+              pull(controller) {
+                clock += 20_000;
+                controller.error(new DOMException('timeout SECRET upstream body', 'TimeoutError'));
+              },
+            }), { status: 206 });
+          }
+          return new Response(fixture('mnd-detail.html'));
+        },
+      });
+      const mnd = snapshot.sources.find(source => source.id === 'taiwan-mnd');
+      const failures = mnd.requestDiagnostics.filter(row => row.stage === 'response_body');
+      assert.ok(failures.length > 0);
+      assert.ok(failures.every(row => row.purpose === purpose && row.httpStatus === 206
+        && row.errorCode === 'TIMEOUT' && Number.isInteger(row.elapsedMs) && row.elapsedMs >= 0));
+      assert.ok(failures.every(row => row.attempt <= 2));
+      assert.ok(mnd.requestDiagnostics.length <= mnd.requestCount);
+      assert.equal(JSON.stringify(mnd.requestDiagnostics).includes('SECRET'), false);
+      assert.ok(snapshot.observations.some(row => row.sourceUrl.endsWith('/86001')));
+      assert.equal(mnd.lastSuccessAt, purpose === 'detail' ? retrievedAt : snapshot.generatedAt);
+      assert.equal(mnd.transportStatus, purpose === 'detail' ? 'error' : 'fresh');
+      assert.ok((purpose === 'detail' ? mnd.errorCodes : mnd.refreshErrorCodes).includes('TIMEOUT'));
+      const stored = new Map();
+      const writer = async (key, value) => { stored.set(key, value); };
+      const reader = async key => stored.get(key) ?? null;
+      await writeSourceHealth(previousSnapshot, writer, reader);
+      await writeSourceHealth(snapshot, writer, reader);
+      const { classifyKey, SEED_META, STANDALONE_KEYS } = healthTesting;
+      const name = 'crossStraitActivityTaiwanMnd';
+      const dataKey = STANDALONE_KEYS[name];
+      const metaKey = SEED_META[name].key;
+      assert.deepEqual(stored.get(dataKey).requestDiagnostics, mnd.requestDiagnostics);
+      assert.equal(stored.get(metaKey).fetchedAt, Date.parse(mnd.lastSuccessAt));
+      const entry = classifyKey(name, dataKey, { allowOnDemand: true }, {
+        keyStrens: new Map([[dataKey, Buffer.byteLength(JSON.stringify(stored.get(dataKey)))]]),
+        keyErrors: new Map(), keyMetaErrors: new Map(),
+        keyMetaValues: new Map([[metaKey, JSON.stringify(stored.get(metaKey))]]),
+        now: Date.parse(snapshot.generatedAt),
+      });
+      assert.equal(entry.status, purpose === 'detail' ? 'SEED_ERROR' : 'OK');
+      assert.equal(projectCrossStraitActivityBootstrap(snapshot).sources
+        .some(source => 'requestDiagnostics' in source), false);
+      const logs: unknown[][] = [];
+      t.mock.method(console, 'warn', (...args: unknown[]) => { logs.push(args); });
+      await fetchCrossStraitActivitySeedSnapshot({
+        readSnapshot: async () => previousSnapshot,
+        fetchSnapshot: async () => snapshot,
+      });
+      assert.deepEqual(logs, [['[cross-strait] MND request failures', JSON.stringify({
+        attemptedAt: snapshot.generatedAt, failures: mnd.requestDiagnostics,
+      })]]);
+      await fetchCrossStraitActivitySeedSnapshot({
+        readSnapshot: async () => snapshot,
+        fetchSnapshot: async () => previousSnapshot,
+      });
+      assert.equal(logs.length, 1, 'a clean run does not log request failures');
+    });
+  }
 
   for (const failures of [['timeout', 'metadata'], ['metadata', 'timeout'], ['timeout', 'timeout']]) {
     it(`limits mixed MND detail failures ${failures.join('/')} to two attempts`, async () => {
@@ -3083,6 +3199,13 @@ describe('quantified cross-Strait activity (#5575)', () => {
       assert.equal(mnd?.transportStatus, 'error');
       assert.ok(mnd?.errorCodes.includes(failures[1] === 'timeout' ? 'TIMEOUT' : 'MND_PUBLICATION_METADATA_MISSING'));
       assert.ok(mnd?.requestCount <= 21);
+      assert.deepEqual(mnd?.requestDiagnostics?.filter(row => row.path.endsWith('/90000'))
+        .map(({ elapsedMs, ...failure }) => failure), failures.map((failure, index) => ({
+        path: '/en/News/PLAAct/90000', purpose: 'detail', attempt: index + 1,
+        stage: failure === 'timeout' ? 'response_headers' : 'parse',
+        httpStatus: failure === 'timeout' ? null : 200,
+        errorCode: failure === 'timeout' ? 'TIMEOUT' : 'MND_PUBLICATION_METADATA_MISSING',
+      })));
     });
   }
 

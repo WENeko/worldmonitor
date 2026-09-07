@@ -3579,6 +3579,15 @@ describe('agent readiness: MCP/OAuth origin alignment', () => {
 describe('agent readiness: auth.md walkthrough', () => {
   const authMd = readFileSync(resolve(__dirname, '../public/auth.md'), 'utf-8');
 
+  it('opens with its title and describes API key and OAuth authentication', () => {
+    assert.match(
+      authMd,
+      /^# WorldMonitor — Agent Authentication \(auth\.md\)\n/,
+      'auth.md must open directly with its H1 for scanner compatibility'
+    );
+    assert.match(authMd, /API keys?.*OAuth|OAuth.*API keys?/i);
+  });
+
   it('publishes /auth.md with the WorkOS-prescribed sections', () => {
     for (const heading of ['Discover', 'Pick a method', 'Register', 'Claim', 'Use the credential', 'Errors', 'Revocation']) {
       assert.match(

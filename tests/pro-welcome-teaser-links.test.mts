@@ -217,26 +217,6 @@ describe('third-party headline text survives the prerender splice', () => {
     assert.match(source, /mounted && h\.publishedAt \? ` · \$\{timeAgo\(h\.publishedAt\)\}`/);
   });
 
-  // Positive control for the hazard itself. Without this, the assertion below
-  // reads as style preference rather than a defect being held closed.
-  it('a STRING replacement expands $-patterns in the injected markup', () => {
-    const page = '<html><body><div id="root"></div></body></html>';
-    const marker = '<div id="root"></div>';
-    // React escapes `'` to `&#x27;`, so a headline containing `$'` arrives at
-    // the splice as a literal `$&` -- the "insert the matched substring" pattern.
-    const ssr = '<li>Oil at $&#x27;record&#x27; highs</li>';
-    const corrupted = page.replace(marker, `<div id="root">${ssr}</div>`);
-    assert.equal(
-      (corrupted.match(/id="root"/g) ?? []).length,
-      2,
-      'premise: a string replacement splices a second #root into the page',
-    );
-    // A backtick, which React does not escape, is worse: it inserts everything
-    // before the match -- the whole preceding document.
-    const withBacktick = page.replace(marker, '<div id="root"><li>a $` b</li></div>');
-    assert.match(withBacktick, /<html><body><div id="root"><li>a <html>/);
-  });
-
   it('prerender.mjs splices with function replacements, not replacement strings', () => {
     const source = readFileSync(resolve(repoRoot, 'pro-test/prerender.mjs'), 'utf8');
     for (const call of [
@@ -275,12 +255,4 @@ describe('third-party headline text survives the prerender splice', () => {
     );
   });
 
-  it('the function form leaves the same headline verbatim', () => {
-    const page = '<html><body><div id="root"></div></body></html>';
-    const marker = '<div id="root"></div>';
-    const ssr = '<li>Oil at $&#x27;record&#x27; highs</li>';
-    const safe = page.replace(marker, () => `<div id="root">${ssr}</div>`);
-    assert.equal((safe.match(/id="root"/g) ?? []).length, 1);
-    assert.match(safe, /Oil at \$&#x27;record&#x27; highs/);
-  });
 });

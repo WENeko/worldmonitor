@@ -50,7 +50,10 @@ test('cross-Strait bootstrap is a bounded current projection, not the durable re
     generatedAt: '2026-07-25T12:00:00.000Z',
     status: 'degraded',
     sources: [
-      { id: 'taiwan-mnd', transportStatus: 'error' },
+      { id: 'taiwan-mnd', transportStatus: 'error', requestDiagnostics: [{
+        path: '/en/News/PLAAct/87682', purpose: 'detail', attempt: 2,
+        stage: 'response_body', httpStatus: 200, errorCode: 'TIMEOUT', elapsedMs: 20_000,
+      }] },
       {
         id: 'japan-mod',
         transportStatus: 'error',
@@ -104,10 +107,12 @@ test('cross-Strait bootstrap is a bounded current projection, not the durable re
       proxyControlProbe: _proxyControlProbe,
       shadowIndexProbe: _shadowIndexProbe,
       candidates: _candidates,
+      requestDiagnostics: _requestDiagnostics,
       ...publicSource
     } = source;
     return publicSource;
   }));
+  assert.equal(projection.sources.some(source => 'requestDiagnostics' in source), false);
   assert.equal(
     projection.sources.some((source) => 'proxyFailureDetail' in source),
     false,

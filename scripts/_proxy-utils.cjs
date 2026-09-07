@@ -8,8 +8,11 @@ const zlib = require('node:zlib');
 const DECODO_GATE_HOST = 'gate.decodo.com';
 // Decodo's curl endpoint differs from its CONNECT endpoint.
 const DECODO_CURL_HOST = 'us.decodo.com';
-const DECODO_STICKY_PORT_MIN = 10_001;
-const DECODO_STICKY_PORT_MAX = 49_999;
+// Country endpoints have their own sticky ranges; never wrap into another pool.
+const DECODO_STICKY_PORT_RANGES = new Map([
+  [DECODO_GATE_HOST, [10_001, 49_999]],
+  ['cn.decodo.com', [30_001, 39_999]],
+]);
 
 function parseProxyConfig(raw) {
   if (!raw) return null;
@@ -55,7 +58,7 @@ function parseProxyConfig(raw) {
 }
 
 /**
- * Parse a proxy configuration and, for Decodo sticky gateway ports, advance
+ * Parse a proxy configuration and, for supported Decodo sticky ports, advance
  * each retry to a distinct sticky session. Other providers and Decodo rotating
  * ports retain their configured route exactly.
  */
@@ -67,20 +70,21 @@ function parseProxyConfigForAttempt(raw, attempt = 0) {
   // whatever casing the operator typed, while the URL form is lowercased by the
   // URL parser. config.host stays verbatim so the connection is unchanged.
   const host = String(config.host || '').toLowerCase().replace(/\.$/u, '');
+  const range = DECODO_STICKY_PORT_RANGES.get(host);
   if (
-    host !== DECODO_GATE_HOST
+    !range
     || !Number.isInteger(port)
-    || port < DECODO_STICKY_PORT_MIN
-    || port > DECODO_STICKY_PORT_MAX
+    || port < range[0]
+    || port > range[1]
   ) {
     return config;
   }
 
-  const stickyPortCount = DECODO_STICKY_PORT_MAX - DECODO_STICKY_PORT_MIN + 1;
+  const [minPort, maxPort] = range;
+  const stickyPortCount = maxPort - minPort + 1;
   return {
     ...config,
-    port: DECODO_STICKY_PORT_MIN
-      + ((port - DECODO_STICKY_PORT_MIN + attempt) % stickyPortCount),
+    port: minPort + ((port - minPort + attempt) % stickyPortCount),
   };
 }
 

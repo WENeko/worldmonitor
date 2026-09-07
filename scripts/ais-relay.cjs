@@ -6118,10 +6118,16 @@ async function seedWeatherAlerts() {
       maxBytes: SWIC_MAX_BYTES,
     });
 
+    const sourceSuccessAt = {};
+    const fetchSource = async (source, fetchFn) => {
+      const value = await fetchFn();
+      sourceSuccessAt[source] = Date.now();
+      return value;
+    };
     const [nwsResult, ecccResult, swicResult] = await Promise.allSettled([
-      fetchNwsFeatures(),
-      fetchEcccFeatures(),
-      fetchSwicCatalog(),
+      fetchSource('nws', fetchNwsFeatures),
+      fetchSource('eccc', fetchEcccFeatures),
+      fetchSource('swic', fetchSwicCatalog),
     ]);
     if (nwsResult.status === 'rejected') {
       console.warn(`[Weather] NWS fetch failed: ${nwsResult.reason?.message || nwsResult.reason}`);
@@ -6132,10 +6138,9 @@ async function seedWeatherAlerts() {
     if (swicResult.status === 'rejected') {
       console.warn(`[Weather] SWIC fetch failed: ${swicResult.reason?.message || swicResult.reason}`);
     }
-    if (nwsResult.status === 'rejected' && ecccResult.status === 'rejected' && swicResult.status === 'rejected') {
-      console.warn('[Weather] Seed failed: NWS, ECCC, and SWIC fetches all failed');
-      return;
-    }
+    const results = { nws: nwsResult, eccc: ecccResult, swic: swicResult };
+    const failedSources = Object.keys(results).filter((source) => results[source].status === 'rejected');
+    const attemptedAt = Date.now();
 
     const nwsFeatures = nwsResult.status === 'fulfilled' ? nwsResult.value : [];
     const nwsAlerts = nwsResult.status === 'fulfilled'
@@ -6158,9 +6163,21 @@ async function seedWeatherAlerts() {
     let carriedNws = [];
     let carriedEccc = [];
     let carriedSwic = [];
-    if (nwsResult.status === 'rejected' || ecccResult.status === 'rejected' || swicResult.status === 'rejected') {
-      const prev = await envelopeRead(WEATHER_REDIS_KEY, () => null);
-      const prevAlerts = Array.isArray(prev?.alerts) ? prev.alerts : [];
+    let previousMeta = null;
+    let previousPayloadAt = null;
+    if (failedSources.length > 0) {
+      const [raw, meta] = await Promise.all([
+        upstashGet(WEATHER_REDIS_KEY, () => null),
+        upstashGet('seed-meta:weather:alerts', () => null),
+      ]);
+      previousMeta = meta;
+      // Inspect the envelope clock as well as its data: the two writes can fail independently.
+      const enveloped = raw && typeof raw === 'object' && !Array.isArray(raw) && '_seed' in raw && 'data' in raw;
+      const prev = enveloped ? raw.data : raw;
+      previousPayloadAt = enveloped ? raw._seed?.fetchedAt : null;
+      // Failed providers cannot tell us which alerts ended since the last fetch.
+      const prevAlerts = (Array.isArray(prev?.alerts) ? prev.alerts : [])
+        .filter((alert) => Date.parse(alert?.expires) > attemptedAt);
       if (nwsResult.status === 'rejected') carriedNws = prevAlerts.filter((a) => a?.source === 'nws');
       if (ecccResult.status === 'rejected') carriedEccc = prevAlerts.filter((a) => a?.source === 'eccc');
       if (swicResult.status === 'rejected') carriedSwic = prevAlerts.filter((a) => a?.source === 'swic');
@@ -6174,32 +6191,55 @@ async function seedWeatherAlerts() {
       eccc: ecccResult.status === 'fulfilled' ? ecccAlerts : carriedEccc,
       swic: swicResult.status === 'fulfilled' ? swicAlerts : carriedSwic,
     });
+    const sourceHealth = Object.fromEntries(Object.keys(results).map((source) => {
+      if (results[source].status === 'fulfilled') {
+        return [source, { lastSuccessAt: sourceSuccessAt[source], consecutiveFailures: 0, firstFailureAt: null, retainedUntil: null }];
+      }
+      const previous = previousMeta?.sourceHealth?.[source];
+      const known = previousMeta?.status !== 'error'
+        && Number.isSafeInteger(previousPayloadAt) && previousPayloadAt > 0
+        && previousPayloadAt === previousMeta?.fetchedAt
+        && Number.isSafeInteger(previous?.consecutiveFailures) && previous.consecutiveFailures >= 0;
+      const retained = alerts.filter((alert) => alert.source === source);
+      return [source, {
+        lastSuccessAt: previous?.lastSuccessAt ?? null,
+        consecutiveFailures: known ? Math.min(previous.consecutiveFailures + 1, 100) : null,
+        firstFailureAt: known && previous.consecutiveFailures === 0 ? attemptedAt : (previous?.firstFailureAt ?? null),
+        retainedUntil: retained.length > 0 ? Math.min(...retained.map((alert) => Date.parse(alert.expires))) : null,
+      }];
+    }));
+    const sourceMeta = {
+      sourceHealth,
+      lastSourceAttemptAt: attemptedAt,
+      ...(failedSources.length > 0
+        ? { sourceState: 'degraded', errorCode: 'WEATHER_ALERT_SOURCE_INCOMPLETE', failedSources }
+        : { sourceState: 'ok' }),
+    };
+    if (failedSources.length === 3) {
+      await upstashSet('seed-meta:weather:alerts', {
+        fetchedAt: previousMeta?.fetchedAt ?? 0,
+        recordCount: previousMeta?.recordCount ?? 0,
+        ...sourceMeta,
+      }, 604800);
+      console.warn('[Weather] Seed failed: NWS, ECCC, and SWIC fetches all failed');
+      return;
+    }
 
     // Always write the merged active set (#6607 purge). Do not skip overwrite
     // when a live source returns 0 — that would leave ended CA alerts cached.
     const payload = { alerts };
+    const publishedAt = Date.now();
     const ok1 = await envelopeWrite(WEATHER_REDIS_KEY, payload, WEATHER_CACHE_TTL, {
+      fetchedAt: publishedAt,
       recordCount: alerts.length,
       sourceVersion: WEATHER_ALERTS_SOURCE_VERSION,
       zeroOk: true,
     });
-    // A permanently dead source must be visible to /api/health. Without a
-    // sourceState the seed-meta stays fresh forever and the outage is invisible.
-    const failedSources = [
-      nwsResult.status === 'rejected' ? 'nws' : null,
-      ecccResult.status === 'rejected' ? 'eccc' : null,
-      swicResult.status === 'rejected' ? 'swic' : null,
-    ].filter(Boolean);
     const ok2 = await upstashSet('seed-meta:weather:alerts', {
-      fetchedAt: Date.now(),
+      fetchedAt: publishedAt,
       recordCount: alerts.length,
-      ...(failedSources.length > 0
-        ? {
-          sourceState: 'degraded',
-          errorCode: 'WEATHER_ALERT_SOURCE_INCOMPLETE',
-          failedSources,
-        }
-        : { sourceState: 'ok' }),
+      ...sourceMeta,
+      ...(!ok1 ? { status: 'error' } : {}),
     }, 604800);
     console.log(`[Weather] Seeded ${alerts.length} alerts (nws=${nwsAlerts.length} eccc=${ecccAlerts.length} swic=${swicAlerts.length}, redis: ${ok1 && ok2 ? 'OK' : 'PARTIAL'}) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     // Which high-severity alerts this tick notifies on. Distinct families,

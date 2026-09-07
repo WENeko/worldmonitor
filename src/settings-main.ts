@@ -2,6 +2,7 @@ import './styles/main.css';
 import './styles/settings-window.css';
 import { SettingsManager } from '@/services/settings-manager';
 import { exportSettings, importSettings, type ImportResult } from '@/utils/settings-persistence';
+import { safeStorageRemove, safeStorageSet } from '@/utils/safe-storage';
 import {
   SETTINGS_CATEGORIES,
   HUMAN_LABELS,
@@ -953,7 +954,7 @@ async function initSettingsWindow(): Promise<void> {
   });
 }
 
-localStorage.setItem('wm-settings-open', '1');
-window.addEventListener('beforeunload', () => localStorage.removeItem('wm-settings-open'));
+safeStorageSet('wm-settings-open', '1');
+window.addEventListener('beforeunload', () => safeStorageRemove('wm-settings-open'));
 
 void initSettingsWindow();

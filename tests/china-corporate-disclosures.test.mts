@@ -4,6 +4,8 @@ import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
 
 import { validateDecisionSignalProvenance } from '../shared/decision-signal-provenance';
+import { composeChinaDecisionSignals } from '../shared/china-decision-signals';
+import { summarizeChinaDecisionGroups } from '../scripts/seed-china-decision-signals.mjs';
 import {
   CHINA_CORPORATE_DISCLOSURE_MAX_NETWORK_MS,
   CHINA_CORPORATE_DISCLOSURE_KEY,
@@ -1178,7 +1180,7 @@ describe('official China corporate disclosures (#5577)', () => {
 
     assert.equal(snapshot.status, 'healthy');
     assert.equal(proxyCalls.length, 4);
-    assert.deepEqual(proxyCalls.map((call) => call.port), [30001, 30001, 30001, 30001]);
+    assert.deepEqual(proxyCalls.map((call) => call.port), [30001, 30002, 30003, 30004]);
     assert.equal(
       proxyCalls.every((call) => call.url.startsWith('https://query.sse.com.cn/')),
       true,
@@ -1207,8 +1209,8 @@ describe('official China corporate disclosures (#5577)', () => {
         emptyResultCount: 0,
         transportPath: 'proxy',
         fallbackReason: 'ETIMEDOUT',
-        proxyExitPorts: [30001, 30001, 30001, 30001],
-        proxyExitRotated: false,
+        proxyExitPorts: [30001, 30002, 30003, 30004],
+        proxyExitRotated: true,
         reliabilityStatus: 'stable',
         requiredRecoverySuccesses: 1,
         consecutiveTransportSuccesses: 1,
@@ -1341,6 +1343,67 @@ describe('official China corporate disclosures (#5577)', () => {
     assert.equal(szse?.requestCount, 3);
     assert.equal(szse?.transportPath, 'proxy');
     assert.doesNotMatch(JSON.stringify(snapshot), /proxy-user|proxy-secret/);
+  });
+
+  it('recovers quiet coverage through China sticky retries only after two successful runs', async () => {
+    const ssePayload = fixture('sse.json');
+    ssePayload.result = ssePayload.result.map((row) => ({ ...row, TITLE: '关于召开业绩说明会的更正公告' }));
+    const szsePayload = fixture('szse.json');
+    szsePayload.data = szsePayload.data.map((row) => ({ ...row, title: '关于召开业绩说明会的更正公告' }));
+    let previousSnapshot = null;
+    const initialAt = Date.parse(retrievedAt);
+    for (let run = 0; run < 4; run += 1) {
+      const now = initialAt + run * 30 * 60_000;
+      const checkedAt = new Date(now).toISOString();
+      const ports: number[] = [];
+      const decisions: Array<Record<string, unknown>> = [];
+      const snapshot = await fetchChinaCorporateDisclosureSnapshot({
+        now,
+        previousSnapshot,
+        proxyUrl: 'cn.decodo.com:30001:proxy-user:proxy-secret',
+        onDecision: (entry) => decisions.push(entry),
+        fetchFn: async (input) => {
+          if (String(input).includes('query.sse.com.cn')) {
+            return new Response(JSON.stringify(ssePayload), { status: 200 });
+          }
+          throw Object.assign(new TypeError('fetch failed'), {
+            cause: Object.assign(new Error('connect timed out'), { code: 'ETIMEDOUT' }),
+          });
+        },
+        proxyRequestFn: async (_input, config, options) => {
+          ports.push(config.port);
+          assert.equal(config.host, 'cn.decodo.com');
+          assert.equal(config.auth, 'proxy-user:proxy-secret');
+          assert.equal(options.timeoutMs, 12_000);
+          assert.equal(options.method, 'POST');
+          assert.deepEqual(JSON.parse(options.body).stock, ['300750']);
+          if (run === 1 || (run > 1 && config.port === 30001)) {
+            throw new DOMException('upstream timed out', 'TimeoutError');
+          }
+          return { buffer: Buffer.from(JSON.stringify(szsePayload)), status: 200, contentType: 'application/json' };
+        },
+      });
+      const szse = snapshot.sources.find((source) => source.id === 'szse');
+      const decision = decisions.find((entry) => entry.sourceId === 'szse');
+      assert.deepEqual(ports, run === 0 ? [30001] : [30001, 30002]);
+      assert.equal(szse.requestCount, run === 0 ? 2 : 3);
+      assert.equal(decision?.proxyExitRotated, run !== 0);
+      assert.equal(szse.lastSuccessAt, run === 1 ? retrievedAt : checkedAt);
+      assert.equal(szse.transportReliability.status, ['stable', 'degraded', 'recovering', 'stable'][run]);
+      if (run > 0) {
+        assert.equal(szse.transportReliability.lastFailureAt, new Date(initialAt + 30 * 60_000).toISOString());
+        assert.equal(szse.transportReliability.lastFailureReason, 'TIMEOUT');
+      }
+      assert.equal(snapshot.events.length, 0);
+      assert.ok(snapshot.unclassifiedRevisions.length > 0);
+      const signals = composeChinaDecisionSignals({ generatedAt: checkedAt, corporate: snapshot });
+      const corporate = signals.groups.find((entry) => entry.id === 'corporate-disclosures');
+      assert.equal(corporate?.metadata.unavailableCause, run === 0 || run === 3 ? 'healthy_quiet_window' : 'upstream_unavailable');
+      assert.equal(corporate?.items.length, 0);
+      assert.equal(summarizeChinaDecisionGroups([corporate]).operationallyCovered, run === 0 || run === 3 ? 1 : 0);
+      assert.doesNotMatch(JSON.stringify(snapshot), /proxy-user|proxy-secret/);
+      previousSnapshot = snapshot;
+    }
   });
 
   it('rotates to a fresh sticky exit when the origin blocks the first one', async () => {
