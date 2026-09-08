@@ -2325,7 +2325,7 @@ async function probeJapanProxyControlTunnel(host, {
   tunnel?.destroy?.();
 }
 
-function rotatingRefreshCandidates(previousMnd, excludedUrls, now) {
+function rotatingRefreshCandidates(previousMnd, excludedUrls, now, limit) {
   const eligible = [...new Map(
     previousMnd
       .filter((row) => (
@@ -2344,8 +2344,8 @@ function rotatingRefreshCandidates(previousMnd, excludedUrls, now) {
   ).values()];
   if (eligible.length === 0) return [];
   const offset = (Math.floor(now / MND_REFRESH_ROTATION_INTERVAL_MS)
-    * MND_REFRESH_DETAIL_REQUESTS_PER_RUN) % eligible.length;
-  return Array.from({ length: Math.min(MND_REFRESH_DETAIL_REQUESTS_PER_RUN, eligible.length) },
+    * limit) % eligible.length;
+  return Array.from({ length: Math.min(limit, eligible.length) },
     (_, index) => eligible[(offset + index) % eligible.length]);
 }
 
@@ -2595,8 +2595,15 @@ export async function fetchCrossStraitActivitySnapshot({
 } = {}) {
   const generatedAt = new Date(now).toISOString();
   const previousMnd = (previousSnapshot?.observations ?? [])
-    .filter((row) => row?.sourceId === 'taiwan-mnd');
+    .filter((row) => safePreviousMndObservation(row)
+      && validMndObservation(row)
+      && MND_CATEGORY_KEYS.every((key) => Object.hasOwn(row.categories, key))
+      && typeof row.publicationTime === 'string'
+      && Number.isFinite(Date.parse(row.publicationTime)));
   const previousMndByUrl = new Map(previousMnd.map((row) => [row.sourceUrl, row]));
+  const hasRetainedCoverage = (row) => (
+    previousMndByUrl.get(row.sourceUrl)?.publicationTime.slice(0, 10) === row.publicationDay
+  );
   const needsBackfill = new Set(previousMnd.map((row) => row.reportingDay)).size
     < MND_REQUIRED_REPORTING_DAYS;
   const listPages = needsBackfill ? MND_MAX_LIST_PAGES_PER_BACKFILL_RUN : 1;
@@ -2717,7 +2724,8 @@ export async function fetchCrossStraitActivitySnapshot({
         }
       }
       if (
-        latestCandidates.size + unseenBackfillCandidates.size
+        [...latestCandidates.values()].filter((row) => !hasRetainedCoverage(row)).length
+          + unseenBackfillCandidates.size
         >= MND_MAX_DETAIL_REQUESTS_PER_RUN
       ) {
         break;
@@ -2728,26 +2736,30 @@ export async function fetchCrossStraitActivitySnapshot({
     }
   }
 
-  const primaryPool = [
-    ...latestCandidates.values(),
+  const unchangedCurrent = [...latestCandidates.values()].filter(hasRetainedCoverage);
+  const coveredCurrentUrls = new Set(unchangedCurrent.map((row) => row.sourceUrl));
+  const requiredCurrent = [...latestCandidates.values()]
+    .filter((row) => !coveredCurrentUrls.has(row.sourceUrl));
+  const unresolvedCurrentUrls = new Set(requiredCurrent.map((row) => row.sourceUrl));
+  const primaryCandidates = [
+    ...requiredCurrent,
     ...unseenBackfillCandidates.values(),
   ].slice(0, MND_MAX_DETAIL_REQUESTS_PER_RUN);
-  const refreshCandidates = rotatingRefreshCandidates(
+  const currentRefresh = unchangedCurrent.length === 0 ? [] : [{
+    ...unchangedCurrent[Math.floor(now / MND_REFRESH_ROTATION_INTERVAL_MS) % unchangedCurrent.length],
+    allowPublicationAdvance: true,
+  }];
+  const refreshCandidates = [...currentRefresh, ...rotatingRefreshCandidates(
     previousMnd,
-    new Set(primaryPool.map((row) => row.sourceUrl)),
+    new Set([...latestCandidates.keys(), ...unseenBackfillCandidates.keys()]),
     now,
-  );
-  const primaryCandidates = primaryPool.slice(
-    0,
-    MND_MAX_DETAIL_REQUESTS_PER_RUN - refreshCandidates.length,
-  );
-  const candidates = [...primaryCandidates, ...refreshCandidates]
-    .slice(0, MND_MAX_DETAIL_REQUESTS_PER_RUN);
+    MND_REFRESH_DETAIL_REQUESTS_PER_RUN - currentRefresh.length,
+  )];
   const candidateSchedule = [
     ...primaryCandidates.map((candidate) => ({
       candidate,
       isRefresh: false,
-      reservedRefreshAttempts: refreshCandidates.length,
+      reservedRefreshAttempts: 0,
     })),
     ...refreshCandidates.map((candidate, index) => ({
       candidate,
@@ -2762,7 +2774,11 @@ export async function fetchCrossStraitActivitySnapshot({
   for (const { candidate, isRefresh, reservedRefreshAttempts } of candidateSchedule) {
     const candidateErrors = isRefresh ? mndRefreshErrors : mndErrors;
     if (primaryBudgetExhausted && !isRefresh) continue;
-    const detailAttemptLimit = MND_MAX_DETAIL_REQUESTS_PER_RUN - reservedRefreshAttempts;
+    // Required rows consume capacity first; only optional retries reserve room
+    // for the remaining optional first attempts.
+    const detailAttemptLimit = MND_MAX_DETAIL_REQUESTS_PER_RUN
+      - (isRefresh ? Math.min(reservedRefreshAttempts,
+        Math.max(0, MND_MAX_DETAIL_REQUESTS_PER_RUN - detailRequestCount - 1)) : 0);
     let retryErrorCode = null;
     while (detailRequestCount < detailAttemptLimit) {
       if (!hasMndOutboundBudget({
@@ -2800,6 +2816,7 @@ export async function fetchCrossStraitActivitySnapshot({
           allowPublicationAdvance: candidate.allowPublicationAdvance === true,
           expectedReportingDay: candidate.expectedReportingDay ?? null,
         }));
+        unresolvedCurrentUrls.delete(candidate.sourceUrl);
         mndPreferredFetchFn = requestFetchFn;
         if (retryErrorCode && mndProxyFetchFn) {
           mndRequestDiagnostics.at(-1).recoveredVia = requestFetchFn === mndProxyFetchFn
@@ -2830,10 +2847,13 @@ export async function fetchCrossStraitActivitySnapshot({
   const hasHardMndError = mndErrors.some(
     (code) => code !== 'OUTBOUND_BUDGET_EXHAUSTED',
   );
+  if (unresolvedCurrentUrls.size > 0 && !hasHardMndError) {
+    mndErrors.push('MND_CURRENT_LIST_INCOMPLETE');
+  }
   const mndOutcome = {
     ok: discoveredCount > 0
       && !hasHardMndError
-      && (candidates.length === 0 || parsedMnd.length > 0),
+      && unresolvedCurrentUrls.size === 0,
     requestCount,
     observations: parsedMnd,
     errorCodes: [...new Set(mndErrors)],
@@ -2847,6 +2867,24 @@ export async function fetchCrossStraitActivitySnapshot({
     mndOutcome,
     japanOutcome,
   });
+}
+
+function validMndObservation(row) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(row.reportingDay)
+    && Number.isFinite(Date.parse(row.reportingPeriod?.start))
+    && Number.isFinite(Date.parse(row.reportingPeriod?.end))
+    && Date.parse(row.reportingPeriod.end) > Date.parse(row.reportingPeriod.start)
+    && isAllowedSourceUrl(row.sourceUrl, CROSS_STRAIT_SOURCE_CONTRACTS.taiwanMnd)
+    && Object.values(row.categories ?? {}).length === MND_CATEGORY_KEYS.length
+    && Object.values(row.categories).every(
+      (value) => value == null || (Number.isInteger(value) && value >= 0),
+    )
+    && Array.isArray(row.history)
+    && row.history.length <= MND_MAX_REVISION_VINTAGES_PER_DAY
+    && Number.isInteger(row.revision?.sequence)
+    && row.revision.sequence >= 1
+    && row.provenance?.contractVersion === 'decision-signal-provenance/v1'
+    && row.provenance?.familyId === 'operational_activity_record';
 }
 
 export function validateCrossStraitActivitySnapshot(snapshot) {
@@ -2866,21 +2904,5 @@ export function validateCrossStraitActivitySnapshot(snapshot) {
   ) return false;
   const mnd = snapshot.observations.filter((row) => row?.sourceId === 'taiwan-mnd');
   if (mnd.length === 0) return false;
-  return mnd.every((row) => (
-    /^\d{4}-\d{2}-\d{2}$/.test(row.reportingDay)
-    && Number.isFinite(Date.parse(row.reportingPeriod?.start))
-    && Number.isFinite(Date.parse(row.reportingPeriod?.end))
-    && Date.parse(row.reportingPeriod.end) > Date.parse(row.reportingPeriod.start)
-    && isAllowedSourceUrl(row.sourceUrl, CROSS_STRAIT_SOURCE_CONTRACTS.taiwanMnd)
-    && Object.values(row.categories ?? {}).length === MND_CATEGORY_KEYS.length
-    && Object.values(row.categories).every(
-      (value) => value == null || (Number.isInteger(value) && value >= 0),
-    )
-    && Array.isArray(row.history)
-    && row.history.length <= MND_MAX_REVISION_VINTAGES_PER_DAY
-    && Number.isInteger(row.revision?.sequence)
-    && row.revision.sequence >= 1
-    && row.provenance?.contractVersion === 'decision-signal-provenance/v1'
-    && row.provenance?.familyId === 'operational_activity_record'
-  ));
+  return mnd.every(validMndObservation);
 }

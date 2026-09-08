@@ -1,20 +1,16 @@
 #!/usr/bin/env node
 
 /**
- * Read-only audit for release-pinned Sentry resolutions.
+ * Read-only migration audit for release-pinned Sentry resolutions.
  *
- * WorldMonitor resolves by shipping: a commit body carrying `Fixes
- * WORLDMONITOR-XX` closes the issue. The Sentry GitHub integration acts on
- * that marker by resolving the issue `inRelease: <commit-sha>` rather than
- * issuing a plain resolve. Browser events all carry the static semver release
- * `worldmonitor@2.10.0`, so a browser event can never arrive in a release
- * NEWER than a SHA-named pin, and the issue can therefore never reopen. It
- * reads "resolved" forever while the bug keeps firing. Sentry triage policy is
- * plain resolve only, so any pin is a policy violation and this audit is the
- * backstop that finds one.
- *
- * Nothing here mutates Sentry. The repair is manual and is printed with the
- * findings.
+ * The old stable browser release could not advance past SHA-named pins.
+ * Browser and uploader release alignment addresses that mismatch for new
+ * builds, but does not prove deployed Sentry regression handling or migrate
+ * old tabs. Keep reporting every pin until the live acceptance procedure in
+ * docs/solutions/workflow-issues/sentry-resolve-by-shipping-permanently-mutes-issues.md
+ * passes and a compatibility-aware audit replaces this migration gate.
+ * A pin is a review candidate, not proof that an issue cannot reopen.
+ * Nothing here mutates Sentry or clears valid automatic resolutions.
  *
  * The API traps are encoded here rather than documented elsewhere:
  *
@@ -153,8 +149,8 @@ export function formatReport(result) {
     lines.push(`Sentry resolve pins clean: ${result.checked} resolved issues, all plain resolves.`);
   } else {
     lines.push(
-      `Sentry resolve pins violated: ${result.violations.length} of ${result.checked} `
-        + 'resolved issues are pinned to a release or commit and can never reopen.',
+      `Sentry resolve pins require review: ${result.violations.length} of ${result.checked} `
+        + 'resolved issues are pinned; verify deployed release compatibility before repair.',
     );
     for (const violation of result.violations) {
       lines.push(`  ${violation.shortId ?? violation.id ?? 'unknown issue'}`
@@ -170,11 +166,12 @@ export function formatReport(result) {
 
 export function formatRepairRecipe() {
   return [
-    'Repair each pinned issue by hand, one at a time:',
+    'Only repair a confirmed incompatible pin; preserve valid automatic resolutions.',
+    'Check deployed release identity and recurrence evidence before changing status.',
     '  1. PUT status=unresolved on the issue.',
     '  2. GET the issue and confirm status is unresolved.',
     '  3. PUT status=resolved with no statusDetails.',
-    '  4. GET the issue and confirm statusDetails is {}.',
+    '  4. GET the issue and confirm statusDetails has no release or commit pin keys.',
     'Step 1 is not optional. A resolved-to-resolved write silently no-ops and',
     'leaves the pin in place while reporting success.',
   ].join('\n');
@@ -280,7 +277,7 @@ async function main() {
     for (const violation of result.violations) {
       console.error(
         `::error::${violation.shortId ?? violation.id} is resolved and pinned to `
-          + `${violation.pinValue}, so new events can never reopen it.`,
+          + `${violation.pinValue}; deployed release compatibility needs verification.`,
       );
     }
     console.error(formatRepairRecipe());

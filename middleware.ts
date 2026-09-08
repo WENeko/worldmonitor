@@ -1,4 +1,4 @@
-import { isKnownPublicPagePath, originNotFoundResponse } from './src/config/agent-not-found';
+import { acceptQuality, isKnownPublicPagePath, originNotFoundResponse } from './src/config/agent-not-found';
 import {
   DOCS_PUBLIC_ORIGIN,
   DOCS_UPSTREAM_ORIGIN,
@@ -241,18 +241,23 @@ export default function middleware(request: Request) {
     return new Response(null, { status: 308, headers: uaConditionedRedirectHeaders(dashboardUrl) });
   }
 
+  const accept = request.headers.get('accept');
+  const markdownQuality = acceptQuality(accept, 'text/markdown') ?? 0;
+  const wantsHomepageMarkdown = /(?:^|,)\s*text\/markdown\s*(?:;|,|$)/i.test(accept ?? '') &&
+    markdownQuality > 0 && markdownQuality >= (acceptQuality(accept, 'text/html', true) ?? 0);
+
   if (
     path === '/' &&
     (host === 'www.worldmonitor.app' || host === 'worldmonitor.app') &&
     (request.method === 'GET' || request.method === 'HEAD') &&
     url.searchParams.get('mode') !== 'agent' &&
-    AGENT_UA.test(ua)
+    (AGENT_UA.test(ua) || wantsHomepageMarkdown)
   ) {
     return new Response(null, {
       headers: {
-        'x-middleware-rewrite': new URL('/home.md', url).toString(),
+        'x-middleware-rewrite': new URL('/pro/home.md', url).toString(),
         'Content-Type': 'text/markdown; charset=utf-8',
-        Vary: 'User-Agent',
+        Vary: 'User-Agent, Accept',
         'Cache-Control': 'private, no-store',
         'CDN-Cache-Control': 'no-store',
         'Vercel-CDN-Cache-Control': 'no-store',

@@ -29,6 +29,7 @@ function harness({ store = new Map() } = {}) {
   let failedWrites = [];
   let nwsDelay = 0;
   let writeDelay = 0;
+  let ecccFetch;
   let expires = new Date(START + 120 * MINUTE).toISOString();
   const logs = [];
   const requests = [];
@@ -54,10 +55,11 @@ function harness({ store = new Map() } = {}) {
         now += nwsDelay;
       }
       if (failed.includes(source)) throw new Error(source === 'nws' ? 'The operation was aborted due to timeout' : 'HTTP 503');
+      if (source === 'eccc' && ecccFetch) return ecccFetch(url, expires);
       if (url === weather.SWIC_MEMBERS_URL) return Response.json([{ members: [{ mid: '1', code: 'GBR' }] }]);
       const count = empty.includes(source) ? 0 : source === 'nws' ? 227 : source === 'eccc' ? (url.includes('continued') ? 0 : 207) : 946;
       const items = Array.from({ length: count }, (_, i) => fixture(source, i, expires));
-      return Response.json(source === 'swic' ? { items } : { features: items });
+      return Response.json(source === 'swic' ? { items } : { type: 'FeatureCollection', numberMatched: count, numberReturned: count, features: items });
     },
     upstashGet: async (key) => clone(store.get(key)),
     upstashSet: async (key, value, ttl) => {
@@ -71,8 +73,9 @@ function harness({ store = new Map() } = {}) {
   const seed = runInNewContext(`${envelopes}\n${weatherLoop}\nseedWeatherAlerts`, context);
   return {
     store, logs, requests, notifications, writes,
-    async run({ at = now, failures = [], emptySources = [], expiry = expires, writeFailures = [], nwsDelayMs = 0, writeDelayMs = 0 } = {}) {
+    async run({ at = now, failures = [], emptySources = [], expiry = expires, writeFailures = [], nwsDelayMs = 0, writeDelayMs = 0, ecccFetchFn } = {}) {
       now = at; failed = failures; empty = emptySources; expires = expiry; failedWrites = writeFailures; nwsDelay = nwsDelayMs; writeDelay = writeDelayMs;
+      ecccFetch = ecccFetchFn;
       await seed();
       assert.ok(!logs.some((line) => line.startsWith('[Weather] Seed error:')), logs.join('\n'));
       return { payload: clone(store.get(KEY)?.data), meta: clone(store.get(META)) };
@@ -319,4 +322,36 @@ test('provider success clocks precede a slower failed source and aggregate publi
   assert.equal(result.meta.sourceHealth.swic.lastSuccessAt, START + 15 * MINUTE);
   assert.equal(result.meta.sourceHealth.nws.firstFailureAt, START + 15 * MINUTE + 15_000);
   assert.equal(result.meta.fetchedAt, START + 15 * MINUTE + 15_000);
+});
+
+
+test('paged ECCC success, late-page failure, recovery and valid zero reach relay health', async () => {
+  const h = harness();
+  const ecccFetch = (fail = false) => async (url, expiry) => {
+    const p = new URL(url).searchParams;
+    const offset = Number(p.get('offset'));
+    const count = p.get('status_en') === 'issued' ? 300 : 0;
+    if (fail && offset > 0) throw new Error('late-page failure');
+    const features = Array.from({ length: Math.min(250, count - offset) }, (_, i) => ({
+      ...fixture('eccc', offset + i, expiry), padding: 'x'.repeat(15_000),
+    }));
+    return Response.json({ type: 'FeatureCollection', numberMatched: count, numberReturned: features.length, features });
+  };
+  const good = await h.run({ ecccFetchFn: ecccFetch() });
+  const ids = (payload) => payload.alerts.filter((a) => a.source === 'eccc').map((a) => a.id);
+  assert.ok(ids(good.payload).length > 0);
+  assert.equal(h.classify().status, 'OK');
+  const failed = await h.run({ at: START + 15 * MINUTE, ecccFetchFn: ecccFetch(true) });
+  assert.deepEqual(ids(failed.payload), ids(good.payload));
+  assert.equal(failed.meta.sourceHealth.eccc.lastSuccessAt, good.meta.sourceHealth.eccc.lastSuccessAt);
+  assert.equal(failed.meta.sourceHealth.nws.lastSuccessAt, START + 15 * MINUTE);
+  assert.equal(failed.meta.sourceState, 'degraded');
+  assert.equal(h.classify().status, 'SEED_ERROR');
+  const recovered = await h.run({ at: START + 30 * MINUTE, ecccFetchFn: ecccFetch() });
+  assert.equal(recovered.meta.sourceHealth.eccc.lastSuccessAt, START + 30 * MINUTE);
+  assert.equal(h.classify().status, 'OK');
+  const zero = await h.run({ at: START + 45 * MINUTE, emptySources: ['eccc'] });
+  assert.deepEqual(ids(zero.payload), []);
+  assert.equal(zero.meta.sourceHealth.eccc.lastSuccessAt, START + 45 * MINUTE);
+  assert.equal(h.classify().status, 'OK');
 });

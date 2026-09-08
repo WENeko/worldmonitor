@@ -508,6 +508,15 @@ describe('validateNoHallucinatedProperNouns — May 19 regression + class', () =
     assert.equal(r.ok, true);
   });
 
+  it('recognizes Unicode capitals, including non-decomposing Latin initials', () => {
+    for (const name of ['Ørsted', 'Łódź', 'ΔΕΗ', 'Роскосмос', '3M', '7-Eleven', 'eBay', 'iPhone']) {
+      assert.deepEqual(extractProperNounSequences(`${name} resumes operations.`), [[name.toLowerCase()]]);
+      assert.equal(validateNoHallucinatedProperNouns(`${name} faces disruption.`, 'Talks resume.').ok, false);
+      assert.equal(validateNoHallucinatedProperNouns(`${name} faces disruption.`, `${name} resumes operations.`).ok, true);
+    }
+    assert.equal(validateNoHallucinatedProperNouns('3M faces disruption.', 'a 3m barrier was installed.').ok, false);
+  });
+
   it('out-of-scope: headline already contains a wrong name → validator does NOT fact-check', () => {
     // Source-level errors are explicitly out of scope (see plan Scope Boundaries).
     // The validator catches LLM invention only — if the headline ships the
@@ -516,6 +525,13 @@ describe('validateNoHallucinatedProperNouns — May 19 regression + class', () =
     const summary = "Michel Aoun pledged action today.";
     const r = validateNoHallucinatedProperNouns(summary, headline);
     assert.equal(r.ok, true);
+  });
+
+  it('fails closed on missing evidence when used for public citations', () => {
+    for (const headline of [null, undefined, '', '   ', 42]) {
+      assert.equal(validateNoHallucinatedProperNouns('Tamar closed.', headline, { failClosed: true }).ok, false);
+      assert.equal(validateNoHallucinatedProperNouns('Tamar closed.', headline).ok, headline !== '   ');
+    }
   });
 
   it('headline has "Trump", summary adds "Mar-a-Lago" not in headline → flagged', () => {

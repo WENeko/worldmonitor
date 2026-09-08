@@ -238,6 +238,8 @@ describe('Sentry resolve-pin audit', () => {
     assert.match(run.stdout, /4 of 6/u);
     assert.match(run.stderr, /PUT status=unresolved/u);
     assert.match(run.stderr, /silently no-ops/u);
+    assert.match(run.stderr, /Only repair a confirmed incompatible pin/u);
+    assert.doesNotMatch(`${run.stdout}${run.stderr}`, /can never reopen/u);
   });
 
   it('never prints the resolver identity Sentry attaches to a pin', () => {

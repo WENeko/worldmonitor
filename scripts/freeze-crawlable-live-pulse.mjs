@@ -32,6 +32,7 @@ import {
 } from './crawlable-live-tools.mjs';
 import { loadEnvFile } from './_seed-utils.mjs';
 import {
+  briefCitationGroundingGap,
   briefGroundingGap,
   COUNTRY_INDEX_ORIGIN,
   developmentsHasDatedItem,
@@ -522,6 +523,7 @@ function timelineRecord(record) {
 }
 
 // `briefSkipped` states, published as-is in the corpus dataset download:
+//   'unsupported-citation' a claim names entities absent from its cited source
 //   null              a brief was requested and captured
 //   'no-service-key'  keyless run; tier-gated routes not attempted
 //   'no-grounding'    no digest or index headline named the country
@@ -1049,8 +1051,10 @@ export async function freezeCrawlableLivePulse({
       developmentsErrors.push({
         code,
         stage: 'brief',
-        message: `response carried ${developments.brief.sources.length} grounding source(s) from fewer than `
-          + `${MIN_BRIEF_GROUNDING_PUBLISHERS} distinct publishers; the publish floor withholds it`,
+        message: normalized.briefSkipped === 'unsupported-citation'
+          ? `brief withheld: ${briefCitationGroundingGap(developments.brief)}`
+          : `brief withheld: ${normalized.briefSkipped} (${developments.brief.sources.length} grounding sources; `
+            + `requires ${MIN_BRIEF_GROUNDING_PUBLISHERS} distinct publishers and a curated source)`,
       });
     }
     countries[code].developments = normalized;
@@ -1102,10 +1106,12 @@ export async function freezeCrawlableLivePulse({
         .filter((row) => (row.developments?.headlines?.length || 0) > 0).length,
       briefCountryCount: Object.values(countries)
         .filter((row) => row.developments?.brief != null).length,
+      briefUnsupportedCitationCount: Object.values(countries)
+        .filter((row) => row.developments?.briefSkipped === 'unsupported-citation').length,
       // Countries a brief was requested for: keyed, and grounded on at least
       // MIN_BRIEF_GROUNDING_PUBLISHERS distinct publishers. The gate below is
-      // measured against this request-time set, so a brief withheld after the
-      // response still counts against the capture.
+      // measured against this request-time set. Only explicit citation
+      // suppression is counted as completed validation rather than an outage.
       briefMatchedCount: briefAttemptedCodes.size,
       // Countries whose grounding was too thin to request a brief at all.
       briefThinGroundingCount: Object.values(countries)
@@ -1185,16 +1191,21 @@ export async function freezeCrawlableLivePulse({
   // Without a key there is nothing to gate: briefSkipped=no-service-key is
   // the documented degraded state, not a failure.
   if (keyed && snapshot.coverage.briefMatchedCount > 0) {
-    if (snapshot.coverage.briefCountryCount === 0) {
+    // A valid response withheld for unsupported names is a completed check,
+    // not an upstream outage. Publish its headlines and explicit gap without
+    // making the other pulse datasets age out. Empty/failed/thin responses
+    // still count against the existing capture floor.
+    const checkedBriefs = snapshot.coverage.briefCountryCount + snapshot.coverage.briefUnsupportedCitationCount;
+    if (checkedBriefs === 0) {
       throw new Error(
         `Pulse freeze captured briefs for 0 of ${snapshot.coverage.briefMatchedCount} headline-matched countries`
         + firstCaptureCause(developmentsErrors),
       );
     }
     const minBriefs = minimumBriefCaptures(snapshot.coverage.briefMatchedCount);
-    if (snapshot.coverage.briefCountryCount < minBriefs) {
+    if (checkedBriefs < minBriefs) {
       throw new Error(
-        `Pulse freeze captured briefs for only ${snapshot.coverage.briefCountryCount} of ${snapshot.coverage.briefMatchedCount} headline-matched countries; `
+        `Pulse freeze captured or withheld unsupported briefs for only ${checkedBriefs} of ${snapshot.coverage.briefMatchedCount} headline-matched countries; `
         + `expected at least ${minBriefs}`
         + firstCaptureCause(developmentsErrors),
       );
@@ -1220,6 +1231,7 @@ if (isMain) {
         + `quotes=${snapshot.coverage.quoteCount} `
         + `headlineCountries=${snapshot.coverage.headlineCountryCount} `
         + `briefCountries=${snapshot.coverage.briefCountryCount} `
+        + `briefUnsupportedCitations=${snapshot.coverage.briefUnsupportedCitationCount} `
         + `briefThinGrounding=${snapshot.coverage.briefThinGroundingCount} `
         + `timelineCountries=${snapshot.coverage.timelineCountryCount} `
         + `developmentsCountries=${snapshot.coverage.developmentsCountryCount} `

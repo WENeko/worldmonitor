@@ -19,6 +19,69 @@ tags: [sentry, resolve-by-shipping, inrelease-pin, github-integration, commit-me
 
 # Resolve-by-shipping silently mutes browser Sentry issues forever
 
+## Release alignment update — 2026-09-08
+
+The owner chose to preserve GitHub/Sentry automation. The older recommendation
+below to disable commit resolution is superseded. No such control was found in
+the installed integration settings; GitHub issue-status synchronization is a
+separate setting. Do not disable the integration or replace it with manual triage.
+
+`shared/sentry-build-metadata.ts` now supplies the deployment SHA as `release`
+for production dashboard and marketing events, matching `api/_sentry-common.js`.
+Both Vite uploaders use that same release and `dist`. `app_version` retains the
+semantic version for searches across deployments; release health is now per SHA.
+Missing or malformed production build markers retain the semver fallback.
+
+Preview and development browser events retain build/version tags but omit release
+and dist, and use environment-specific fingerprints even for custom groups.
+This keeps them out of production release ordering and issue regression state.
+Both uploaders disable automatic release injection; the SDK sets production
+release metadata explicitly. Build-time `create: false` alone is insufficient
+because an event carrying a release can create that release during ingestion.
+
+The marketing build only uploads artifacts. The production root build owns
+release creation, finalization, and automatic commit association. Preview and
+local builds do not perform those release lifecycle writes. Source-map matching
+still uses debug IDs, and the existing public-map cleanup remains in place.
+Production build finalization is not proof of a successful deployment: a failed
+deployment after the build can still leave a Sentry release behind. This change
+does not introduce a post-deployment finalization service.
+
+### Live acceptance after deployment
+
+Local tests prove identity propagation, not Sentry's hosted regression behavior.
+The release owner must record the following evidence before calling #7838 closed:
+
+1. Read the production build SHA and inspect a new dashboard event and marketing
+   event. Both must carry that SHA as `release` and `dist`, and the expected
+   `app_version` and `build_sha` tags. Inspect each event's full stack to confirm
+   that uploaded source maps still produce original file names and lines.
+2. In an explicitly authorized isolated Sentry test project, reproduce the same
+   error fingerprint in release A, then associate its fixing commit with release
+   B using the GitHub integration. Confirm the resulting resolution from an
+   independent issue read. Use the same configuration and release lifecycle as
+   production; a direct status write does not prove commit resolution works.
+3. Send an event from A after resolution and record whether it stays resolved.
+   Then send the same fingerprint from a later release C and confirm the issue
+   reopens. Include a client still running the old semver bundle in the old-build
+   check. Do not infer release ordering from the lexical order of SHA strings.
+4. Verify preview events have no release and group separately from production,
+   and preview builds do not associate resolving commits. Audit any historical
+   pin against actual deployed releases; alignment does not repair existing pins
+   or issues with missing release metadata by itself.
+
+Keep the daily pin audit as a strict migration review alarm until these checks
+pass. Its nonzero result means compatibility needs review, not that every pin is
+invalid. Do not automatically clear valid commit/release resolutions. After live
+acceptance, replace the blanket pin gate and old plain-only triage guidance with
+an evidence-based compatibility policy; do not silently disable the audit.
+
+If new events lose build attribution or mapped frames, stop rollout and restore
+the prior build configuration. A rollback restores the old release mismatch, so
+the audit and explicit repair of confirmed incompatible pins remain necessary.
+
+The remaining sections record the original incident and remediation.
+
 ## Problem
 
 WorldMonitor's documented triage doctrine was resolve by shipping. Put a `Fixes` marker naming a Sentry short ID in the commit message or the PR body and let the Sentry GitHub integration close the issue. The integration does not issue a plain resolve. It resolves the issue `inRelease: <commit-sha>`.

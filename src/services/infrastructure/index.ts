@@ -27,6 +27,22 @@ const emptyStatusFallback: ListServiceStatusesResponse = { statuses: [] };
 const emptyDdosFallback: ListInternetDdosAttacksResponse = { protocol: [], vector: [], dateRangeStart: '', dateRangeEnd: '', topTargetLocations: [] };
 const emptyAnomaliesFallback: ListInternetTrafficAnomaliesResponse = { anomalies: [], totalCount: 0 };
 
+function isDdosResponse(value: unknown): value is ListInternetDdosAttacksResponse {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const response = value as Partial<ListInternetDdosAttacksResponse>;
+  return Array.isArray(response.protocol)
+    && Array.isArray(response.vector)
+    && typeof response.dateRangeStart === 'string'
+    && typeof response.dateRangeEnd === 'string'
+    && Array.isArray(response.topTargetLocations);
+}
+
+function isTrafficAnomaliesResponse(value: unknown): value is ListInternetTrafficAnomaliesResponse {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const response = value as Partial<ListInternetTrafficAnomaliesResponse>;
+  return Array.isArray(response.anomalies) && typeof response.totalCount === 'number';
+}
+
 // ---- Proto enum -> legacy string adapters ----
 
 const SEVERITY_REVERSE: Record<string, 'partial' | 'major' | 'total'> = {
@@ -117,14 +133,16 @@ export function getOutagesStatus(): string {
 
 export async function fetchDdosAttacks(): Promise<ListInternetDdosAttacksResponse> {
   const hydrated = getHydratedData('ddosAttacks') as ListInternetDdosAttacksResponse | undefined;
-  if (hydrated?.protocol?.length || hydrated?.vector?.length) {
+  if (isDdosResponse(hydrated)) {
     ddosBreaker.recordSuccess(hydrated);
     return hydrated;
   }
 
   return ddosBreaker.execute(async () => {
-    return client.listInternetDdosAttacks({});
-  }, emptyDdosFallback, { shouldCache: (r) => r.protocol.length > 0 || r.vector.length > 0 });
+    const response = await client.listInternetDdosAttacks({});
+    if (!isDdosResponse(response)) throw new Error('Invalid DDoS attacks response');
+    return response;
+  }, emptyDdosFallback, { shouldCache: isDdosResponse });
 }
 
 // ========================================================================
@@ -133,16 +151,21 @@ export async function fetchDdosAttacks(): Promise<ListInternetDdosAttacksRespons
 
 export async function fetchTrafficAnomalies(country?: string): Promise<ListInternetTrafficAnomaliesResponse> {
   const hydrated = getHydratedData('trafficAnomalies') as ListInternetTrafficAnomaliesResponse | undefined;
-  if (hydrated?.anomalies !== undefined && !country) {
-    if (hydrated.anomalies.length > 0) trafficAnomaliesBreaker.recordSuccess(hydrated);
+  if (!country && isTrafficAnomaliesResponse(hydrated)) {
+    trafficAnomaliesBreaker.recordSuccess(hydrated);
     return hydrated;
   }
 
   return trafficAnomaliesBreaker.execute(async () => {
-    return client.listInternetTrafficAnomalies({ country: country || '' });
+    const response = await client.listInternetTrafficAnomalies({ country: country || '' });
+    if (!isTrafficAnomaliesResponse(response)) throw new Error('Invalid traffic anomalies response');
+    return response;
   }, emptyAnomaliesFallback, {
     cacheKey: country,
-    shouldCache: (r) => r.anomalies.length > 0,
+    // Global empty data is authoritative, but preserve the existing
+    // country-specific retry behavior for an empty filtered result.
+    shouldCache: (response) => isTrafficAnomaliesResponse(response)
+      && (!country || response.anomalies.length > 0),
   });
 }
 

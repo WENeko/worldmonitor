@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { loadEnvFile, CHROME_UA, runSeed, writeExtraKeyWithMeta, writeSeedMeta } from './_seed-utils.mjs';
+import { loadEnvFile, CHROME_UA, runSeed, writeExtraKeyWithMetaAtomically } from './_seed-utils.mjs';
 
 loadEnvFile(import.meta.url);
 
@@ -66,6 +66,36 @@ function toEpochMs(value) {
   return Number.isNaN(d.getTime()) ? 0 : d.getTime();
 }
 
+function requireRadarResult(data, source) {
+  if (
+    !data
+    || data.configured === false
+    || data.success !== true
+    || (data.errors != null && (!Array.isArray(data.errors) || data.errors.length > 0))
+    || !data.result
+    || typeof data.result !== 'object'
+    || Array.isArray(data.result)
+  ) {
+    throw new Error(`Cloudflare Radar ${source} returned an invalid success envelope`);
+  }
+  return data.result;
+}
+
+function requireRadarArray(result, field, source) {
+  if (!Array.isArray(result[field])) {
+    throw new Error(`Cloudflare Radar ${source} response is missing result.${field}`);
+  }
+  return result[field];
+}
+
+function requireRadarObject(result, field, source) {
+  const value = result[field];
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`Cloudflare Radar ${source} response is missing result.${field}`);
+  }
+  return value;
+}
+
 async function fetchOutages() {
   const token = process.env.CLOUDFLARE_API_TOKEN;
   if (!token) {
@@ -82,13 +112,11 @@ async function fetchOutages() {
   });
   if (!resp.ok) throw new Error(`Cloudflare Radar API error: ${resp.status}`);
 
-  const data = await resp.json();
-  if (data.configured === false || !data.success || data.errors?.length) {
-    throw new Error(`Cloudflare Radar error: ${JSON.stringify(data.errors || [])}`);
-  }
+  const result = requireRadarResult(await resp.json(), 'outage annotations');
+  const annotations = requireRadarArray(result, 'annotations', 'outage annotations');
 
   const outages = [];
-  for (const raw of data.result?.annotations || []) {
+  for (const raw of annotations) {
     if (!raw.locations?.length) continue;
     const countryCode = raw.locations[0];
     if (!countryCode) continue;
@@ -131,25 +159,45 @@ async function fetchDdosData(token) {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 
-  const [protocolResp, vectorResp, targetResp] = await Promise.all([
+  const fetchOptionalTargets = async () => {
+    try {
+      const resp = await fetch(`${CF_RADAR_BASE}/radar/attacks/layer3/top/locations/target?dateRange=7d`, { headers, signal: AbortSignal.timeout(15_000) });
+      if (!resp.ok) {
+        console.warn(`  CF Radar DDoS target locations fetch failed: HTTP ${resp.status}`);
+        return [];
+      }
+      const result = requireRadarResult(await resp.json(), 'DDoS target locations');
+      return requireRadarArray(result, 'top_0', 'DDoS target locations')
+        .filter((item) => item && typeof item === 'object' && !Array.isArray(item));
+    } catch (error) {
+      console.warn(`  CF Radar DDoS target locations fetch failed: ${error?.message || error}`);
+      return [];
+    }
+  };
+
+  const [protocolResp, vectorResp, targetLocations] = await Promise.all([
     fetch(`${CF_RADAR_BASE}/radar/attacks/layer3/summary/protocol?dateRange=7d`, { headers, signal: AbortSignal.timeout(15_000) }),
     fetch(`${CF_RADAR_BASE}/radar/attacks/layer3/summary/vector?dateRange=7d`, { headers, signal: AbortSignal.timeout(15_000) }),
-    fetch(`${CF_RADAR_BASE}/radar/attacks/layer3/top/locations/target?dateRange=7d`, { headers, signal: AbortSignal.timeout(15_000) }),
+    fetchOptionalTargets(),
   ]);
 
   if (!protocolResp.ok || !vectorResp.ok) {
     throw new Error(`CF Radar DDoS API error: protocol=${protocolResp.status} vector=${vectorResp.status}`);
   }
 
-  const [protocolData, vectorData] = await Promise.all([protocolResp.json(), vectorResp.json()]);
-  const targetData = targetResp.ok ? await targetResp.json() : null;
+  const [protocolResult, vectorResult] = await Promise.all([
+    protocolResp.json().then((data) => requireRadarResult(data, 'DDoS protocol')),
+    vectorResp.json().then((data) => requireRadarResult(data, 'DDoS vector')),
+  ]);
 
   function toEntries(summary) {
-    return Object.entries(summary || {}).map(([label, pct]) => ({ label, percentage: parseFloat(pct) || 0 }))
+    return Object.entries(summary).map(([label, pct]) => ({ label, percentage: parseFloat(pct) || 0 }))
       .sort((a, b) => b.percentage - a.percentage);
   }
 
-  const topTargetLocations = (targetData?.result?.top_0 || []).map((item) => {
+  // Protocol and vector are required summaries. Target locations are an
+  // optional detail slice: a failure there leaves a valid summary publishable.
+  const topTargetLocations = targetLocations.map((item) => {
     const code = item.clientCountryAlpha2 || '';
     const coords = COUNTRY_COORDS[code] || null;
     return {
@@ -161,10 +209,10 @@ async function fetchDdosData(token) {
     };
   }).filter((item) => item.latitude !== 0 || item.longitude !== 0);
 
-  const meta = protocolData.result?.meta;
+  const meta = protocolResult.meta;
   return {
-    protocol: toEntries(protocolData.result?.summary_0),
-    vector: toEntries(vectorData.result?.summary_0),
+    protocol: toEntries(requireRadarObject(protocolResult, 'summary_0', 'DDoS protocol')),
+    vector: toEntries(requireRadarObject(vectorResult, 'summary_0', 'DDoS vector')),
     dateRangeStart: meta?.dateRange?.[0]?.startTime || '',
     dateRangeEnd: meta?.dateRange?.[0]?.endTime || '',
     topTargetLocations,
@@ -184,8 +232,8 @@ async function fetchTrafficAnomalies(token) {
   });
   if (!resp.ok) throw new Error(`CF Radar traffic anomalies API error: ${resp.status}`);
 
-  const data = await resp.json();
-  const raw = data.result?.trafficAnomalies || [];
+  const result = requireRadarResult(await resp.json(), 'traffic anomalies');
+  const raw = requireRadarArray(result, 'trafficAnomalies', 'traffic anomalies');
 
   const anomalies = raw.map((item) => {
     const coords = COUNTRY_COORDS[item.locationDetails?.code] || null;
@@ -218,22 +266,41 @@ async function fetchAll() {
     fetchTrafficAnomalies(token),
   ]);
 
-  if (outagesResult.status === 'rejected') throw outagesResult.reason;
-  if (ddosResult.status === 'rejected') console.warn(`  CF Radar DDoS fetch failed: ${ddosResult.reason?.message || ddosResult.reason}`);
-  if (anomaliesResult.status === 'rejected') console.warn(`  CF Radar traffic anomalies fetch failed: ${anomaliesResult.reason?.message || anomaliesResult.reason}`);
-
-  const ddos = ddosResult.status === 'fulfilled' ? ddosResult.value : null;
-  const anomalies = anomaliesResult.status === 'fulfilled' ? anomaliesResult.value : null;
-
-  if (ddos && (ddos.protocol.length > 0 || ddos.vector.length > 0)) {
-    await writeExtraKeyWithMeta(DDOS_KEY, ddos, DDOS_TTL, ddos.protocol.length + ddos.vector.length);
-  } else if (ddos) {
-    await writeSeedMeta(DDOS_KEY, 0);
+  const companionPublishes = [];
+  if (ddosResult.status === 'fulfilled') {
+    companionPublishes.push(
+      writeExtraKeyWithMetaAtomically({
+        key: DDOS_KEY,
+        data: ddosResult.value,
+        ttlSeconds: DDOS_TTL,
+        recordCount: ddosResult.value.protocol.length + ddosResult.value.vector.length,
+      }),
+    );
   }
-  if (anomalies && anomalies.anomalies.length > 0) {
-    await writeExtraKeyWithMeta(TRAFFIC_ANOMALIES_KEY, anomalies, ANOMALIES_TTL, anomalies.totalCount);
-  } else if (anomalies) {
-    await writeSeedMeta(TRAFFIC_ANOMALIES_KEY, 0);
+  if (anomaliesResult.status === 'fulfilled') {
+    companionPublishes.push(
+      writeExtraKeyWithMetaAtomically({
+        key: TRAFFIC_ANOMALIES_KEY,
+        data: anomaliesResult.value,
+        ttlSeconds: ANOMALIES_TTL,
+        recordCount: anomaliesResult.value.totalCount,
+      }),
+    );
+  }
+  const publicationResults = await Promise.allSettled(companionPublishes);
+
+  const failures = [
+    outagesResult,
+    ddosResult,
+    anomaliesResult,
+    ...publicationResults,
+  ].filter((result) => result.status === 'rejected');
+  if (failures.length > 0) {
+    const error = new Error(`Cloudflare Radar update failed: ${failures.map((result) => result.reason?.message || result.reason).join('; ')}`);
+    // All provider work settled above. Retrying fetchAll would replay healthy
+    // Radar requests after their companion publication has already completed.
+    error.nonRetryable = true;
+    throw error;
   }
 
   return outagesResult.value;
@@ -253,6 +320,10 @@ runSeed('infra', 'outages', CANONICAL_KEY, fetchAll, {
   sourceVersion: 'cloudflare-radar-28d',
 
   declareRecords,
+  preserveKeyTtls: [
+    { key: DDOS_KEY, ttlSeconds: DDOS_TTL },
+    { key: TRAFFIC_ANOMALIES_KEY, ttlSeconds: ANOMALIES_TTL },
+  ],
   // CF Radar curated outage annotations are sparse (~1-2/wk, clustered, with
   // multi-day gaps). Zero mappable outages is the NORMAL state, not a fetch
   // failure — without this, runSeed takes the contract RETRY path on every

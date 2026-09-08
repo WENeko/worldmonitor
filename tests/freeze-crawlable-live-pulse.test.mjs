@@ -291,7 +291,7 @@ function countryPayload() {
         return jsonResponse({
           countryCode: code,
           countryName: code,
-          brief: override.brief || 'SITUATION NOW\nCalm seas and steady traffic [1].',
+          brief: override.brief || `SITUATION NOW\n${contextSources[0]?.title || 'No report'} [1].`,
           model: 'test-model',
           generatedAt: Object.hasOwn(override, 'generatedAt') ? override.generatedAt : Date.now(),
           sources,
@@ -1229,10 +1229,10 @@ describe('freeze per-country developments capture', () => {
             '**CLASSIFICATION:** CONFIDENTIAL',
             '',
             '**SITUATION NOW**',
-            'Convoys move under escort [1].',
+            'Sudan aid convoys move under escort [1].',
             '',
             'WHAT THIS MEANS FOR SD',
-            '• **Port Sudan**: closed to traffic [2].',
+            '• **Jeddah**: could host further talks [2].',
           ].join('\n'),
         },
       },
@@ -1245,7 +1245,29 @@ describe('freeze per-country developments capture', () => {
     // The coded heading is the corpus build's to repair with the page's own
     // display name; the freeze has no source for "DR Congo"-style names.
     assert.ok(text.includes('WHAT THIS MEANS FOR SD'));
-    assert.ok(text.includes('• Port Sudan: closed to traffic [2].'));
+    assert.ok(text.includes('• Jeddah: could host further talks [2].'));
+  });
+
+  it('withholds unsupported citations without discarding the dated pulse capture (#7865)', async () => {
+    stubFetch({
+      digestItems: countryDigestItems(),
+      briefOverrides: {
+        SD: { brief: 'SITUATION NOW\nCerrejón faces disruption [1].' },
+        NO: { brief: 'SITUATION NOW\nEl Guri faces disruption [1].' },
+      },
+    });
+    const { snapshot } = await runFreeze({ serviceKey: 'test-key' });
+    assert.equal(snapshot.coverage.briefMatchedCount, 2);
+    assert.equal(snapshot.coverage.briefCountryCount, 0);
+    assert.equal(snapshot.coverage.briefUnsupportedCitationCount, 2);
+    for (const code of ['SD', 'NO']) {
+      const row = snapshot.countries[code].developments;
+      assert.equal(row.brief, null);
+      assert.equal(row.briefSkipped, 'unsupported-citation');
+      assert.ok(row.headlines.length > 0);
+      assert.ok(snapshot.errors.developments.some((error) => error.code === code
+        && /source \[1\] does not ground/.test(error.message)));
+    }
   });
 
   it('records a failed sibling digest variant as a state and keeps the strip and the gate intact', async () => {
@@ -1302,7 +1324,7 @@ describe('freeze per-country developments capture', () => {
     assert.equal(snapshot.coverage.briefMatchedCount, 2, 'the withheld attempt is still a requested brief');
     assert.equal(snapshot.coverage.briefThinGroundingCount, 0, 'Sudan had enough headlines to request; it is not pre-request thin');
     assert.ok(snapshot.errors.developments.some((entry) => (
-      entry.code === 'SD' && entry.stage === 'brief' && entry.message.includes('publish floor withholds')
+      entry.code === 'SD' && entry.stage === 'brief' && entry.message.includes('thin-grounding')
     )));
     // With every attempted brief withheld the gate must fire, not be skipped.
     stubFetch({
@@ -1469,7 +1491,7 @@ describe('freeze per-country developments capture', () => {
     stubFetch({ digestItems: many, briefFailCodes: ['SD', 'NO', 'RO', 'BR', 'BT', 'PW'] });
     await assert.rejects(
       runFreeze({ serviceKey: 'test-key' }),
-      /captured briefs for only 1 of 7 headline-matched countries/,
+      /captured or withheld unsupported briefs for only 1 of 7 headline-matched countries/,
       'a majority brief collapse must fail even when one brief survives',
     );
   });

@@ -7,6 +7,7 @@ import { mkdir, readFile, writeFile } from 'fs/promises';
 import { brotliCompress } from 'zlib';
 import { promisify } from 'util';
 import pkg from './package.json';
+import { getSentryBuildMetadata } from './shared/sentry-build-metadata';
 import { VARIANT_META, type VariantMeta } from './src/config/variant-meta';
 import {
   WEB_DASHBOARD_VARIANTS,
@@ -929,10 +930,10 @@ export default defineConfig(({ mode }) => {
     || process.env.VERCEL_ENV === 'preview';
   // Sentry source-map upload. Gated on the token so a build without it (local,
   // fork, CI) behaves exactly as before rather than failing. Matching is by
-  // debug ID — the plugin stamps the same id into the bundle and its map — so
-  // it does not depend on the browser SDK's static `worldmonitor@x.y.z`
-  // release name, which would otherwise collide across deploys.
+  // debug ID — the plugin stamps the same id into the bundle and its map.
   const uploadSourceMapsToSentry = Boolean(process.env.SENTRY_AUTH_TOKEN);
+  const sentryBuild = getSentryBuildMetadata(pkg.version, process.env.VERCEL_GIT_COMMIT_SHA ?? 'dev');
+  const publishSentryRelease = process.env.VERCEL_ENV === 'production' && Boolean(sentryBuild.dist);
 
   return {
     html: {
@@ -959,6 +960,17 @@ export default defineConfig(({ mode }) => {
             project: 'worldmonitor',
             authToken: process.env.SENTRY_AUTH_TOKEN,
             telemetry: false,
+            release: {
+              name: sentryBuild.release,
+              inject: false,
+              dist: sentryBuild.dist,
+              // Preview/local uploads must not resolve shared production issues.
+              create: publishSentryRelease,
+              finalize: publishSentryRelease,
+              // Preserve the plugin's Vercel-aware commit detection in production.
+              setCommits: publishSentryRelease ? undefined : false,
+              deploy: publishSentryRelease ? undefined : false,
+            },
             sourcemaps: {
               // Previews deliberately serve public maps (emitPublicSourceMaps);
               // leave those in place and only sweep them when production built

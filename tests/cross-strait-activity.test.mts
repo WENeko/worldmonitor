@@ -2902,7 +2902,7 @@ describe('quantified cross-Strait activity (#5575)', () => {
     assert.equal(snapshot.sources[0].requestCount, mndCalls.length);
   });
 
-  it('uses remaining time for correction first attempts after slow list discovery', async () => {
+  it('uses remaining time for required details after slow list discovery', async () => {
     const correctionDetails = new Map([21, 22, 23].map((day) => [
       `https://www.mnd.gov.tw/en/News/PLAAct/${99_000 + day}`,
       fixture('mnd-detail.html')
@@ -2954,16 +2954,16 @@ describe('quantified cross-Strait activity (#5575)', () => {
 
       assert.equal(listCalls, MND_MAX_LIST_PAGES_PER_BACKFILL_RUN);
       assert.equal(detailCalls.length, expectedDetails);
-      assert.ok(detailCalls.every((url) => correctionDetails.has(url)));
+      assert.ok(detailCalls.every((url) => !correctionDetails.has(url)));
       assert.ok(clock <= MND_OUTBOUND_BUDGET_MS);
       assert.equal(mnd?.requestCount, listCalls + detailCalls.length);
-      assert.equal(mnd?.transportStatus, 'fresh');
-      assert.equal(mnd?.lastSuccessAt, retrievedAt);
-      assert.deepEqual(mnd?.errorCodes, ['OUTBOUND_BUDGET_EXHAUSTED']);
+      assert.equal(mnd?.transportStatus, 'error');
+      assert.equal(mnd?.lastSuccessAt, previousSnapshot.sources[0].lastSuccessAt);
+      assert.ok(mnd?.errorCodes.includes('OUTBOUND_BUDGET_EXHAUSTED'));
     }
   });
 
-  it('keeps a partial MND collection fresh when only the outbound budget stops more work', async () => {
+  it('keeps incomplete current-list coverage hard when the outbound budget stops required work', async () => {
     let budgetCheck = 0;
     const list = mndListWithCount(MND_MAX_DETAIL_REQUESTS_PER_RUN);
     const fetchFn = async (input: string | URL | Request) => {
@@ -2984,8 +2984,8 @@ describe('quantified cross-Strait activity (#5575)', () => {
     });
     const mnd = snapshot.sources.find((source: { id: string }) => source.id === 'taiwan-mnd');
 
-    assert.equal(mnd?.transportStatus, 'fresh');
-    assert.ok(mnd?.errorCodes.includes('OUTBOUND_BUDGET_EXHAUSTED'));
+    assert.equal(mnd?.transportStatus, 'error');
+    assert.deepEqual(mnd?.errorCodes, ['OUTBOUND_BUDGET_EXHAUSTED', 'MND_CURRENT_LIST_INCOMPLETE']);
     assert.equal(
       snapshot.observations.filter((row: { sourceId: string }) => row.sourceId === 'taiwan-mnd').length,
       1,
@@ -3025,9 +3025,9 @@ describe('quantified cross-Strait activity (#5575)', () => {
         proxied.length = 0;
         const snapshot = await fetchCrossStraitActivitySnapshot(options);
         const mnd = snapshot.sources.find(source => source.id === 'taiwan-mnd');
-        assert.equal(mnd.transportStatus, 'fresh');
-        assert.deepEqual(mnd.errorCodes, []);
-        assert.equal(mnd.lastSuccessAt, retrievedAt);
+        assert.equal(mnd.transportStatus, failure === 'detail' ? 'error' : 'fresh');
+        assert.deepEqual(mnd.errorCodes, failure === 'detail' ? ['MND_CURRENT_LIST_INCOMPLETE'] : []);
+        assert.equal(mnd.lastSuccessAt, failure === 'detail' ? null : retrievedAt);
         assert.equal(mnd.requestCount, direct.length + proxied.length);
         assert.equal(direct.length, failure === 'none' ? 21 : failure === 'list' ? 1 : 2);
         assert.equal(proxied.length, failure === 'none' ? 0 : failure === 'list' ? 21 : 19);
@@ -3112,7 +3112,8 @@ describe('quantified cross-Strait activity (#5575)', () => {
       'direct:/en/News/PLAAct/90001',
       'direct:/en/News/PLAAct/90002',
     ]);
-    assert.equal(mnd.transportStatus, 'fresh');
+    assert.equal(mnd.transportStatus, 'error');
+    assert.deepEqual(mnd.errorCodes, ['MND_CURRENT_LIST_INCOMPLETE']);
     assert.equal(mnd.requestDiagnostics[1].recoveredVia, 'direct');
   });
 
@@ -3410,8 +3411,8 @@ describe('quantified cross-Strait activity (#5575)', () => {
     assert.equal(firstUrlAttempts, 2);
     assert.ok(detailCalls.length <= MND_MAX_DETAIL_REQUESTS_PER_RUN);
     assert.equal(mnd?.requestCount, detailCalls.length + 1);
-    assert.equal(mnd?.transportStatus, 'fresh');
-    assert.deepEqual(mnd?.errorCodes, []);
+    assert.equal(mnd?.transportStatus, 'error');
+    assert.deepEqual(mnd?.errorCodes, ['MND_CURRENT_LIST_INCOMPLETE']);
   });
 
   it('retries an MND list timeout once and counts the actual requests', async () => {
@@ -3514,7 +3515,7 @@ describe('quantified cross-Strait activity (#5575)', () => {
         fetchFn: async (input: string | URL | Request) => {
           const url = String(input);
           if (url.includes('mod.go.jp')) return new Response(fixture('jmod-homepage.html'));
-          if (url.includes('plaactlist')) return new Response(mndListWithCount(20));
+          if (url.includes('plaactlist')) return new Response(mndListWithCount(purpose === 'refresh' ? 1 : 20));
           if (purpose === 'detail' ? url.endsWith('/90000') : url.includes('/86001')) {
             return new Response(new ReadableStream({
               pull(controller) {
@@ -3619,7 +3620,7 @@ describe('quantified cross-Strait activity (#5575)', () => {
   }
 
   for (const failure of ['metadata', 'timeout']) {
-  it(`preserves reserved correction refreshes when a primary detail needs a ${failure} retry`, async () => {
+  it(`spends the detail cap on required rows before corrections after a ${failure} retry`, async () => {
     const previousSnapshot = buildCrossStraitActivitySnapshot({
       generatedAt: retrievedAt,
       previousSnapshot: null,
@@ -3658,12 +3659,12 @@ describe('quantified cross-Strait activity (#5575)', () => {
 
     const correctionRefreshes = detailCalls.filter((url) => /\/PLAAct\/860\d{2}$/.test(url));
     assert.equal(firstPrimaryAttempts, 2);
-    assert.equal(correctionRefreshes.length, MND_REFRESH_DETAIL_REQUESTS_PER_RUN);
+    assert.equal(correctionRefreshes.length, 0);
     assert.equal(detailCalls.length, MND_MAX_DETAIL_REQUESTS_PER_RUN);
   });
   }
 
-  for (const route of ['direct', 'proxy'] as const) it(`preserves correction refresh wall-clock headroom with a ${route} retry`, async () => {
+  for (const route of ['direct', 'proxy'] as const) it(`spends wall-clock headroom on required rows with a ${route} retry`, async () => {
     const previousSnapshot = buildCrossStraitActivitySnapshot({
       generatedAt: retrievedAt,
       previousSnapshot: null,
@@ -3712,7 +3713,7 @@ describe('quantified cross-Strait activity (#5575)', () => {
     const correctionRefreshes = detailCalls.filter((url) => /\/PLAAct\/860\d{2}$/.test(url));
     assert.equal(firstPrimaryAttempts, 2);
     assert.equal(proxyCalls > 0, route === 'proxy');
-    assert.equal(correctionRefreshes.length, MND_REFRESH_DETAIL_REQUESTS_PER_RUN);
+    assert.equal(correctionRefreshes.length, 0);
     assert.ok(detailCalls.length <= MND_MAX_DETAIL_REQUESTS_PER_RUN);
     assert.ok(clock <= MND_OUTBOUND_BUDGET_MS);
   });
@@ -3724,11 +3725,11 @@ describe('quantified cross-Strait activity (#5575)', () => {
       mndOutcome: {
         ok: true,
         requestCount: 0,
-        observations: Array.from({ length: 28 }, (_, index) => mndObservationForDay(index + 1)),
+        observations: Array.from({ length: MND_REQUIRED_REPORTING_DAYS }, (_, index) => mndObservationForDay(index + 1)),
       },
       japanOutcome: { ok: true, requestCount: 0, availableDocumentUrls: [] },
     });
-    const list = mndListWithCount(MND_MAX_DETAIL_REQUESTS_PER_RUN);
+    const list = mndListWithCount(1);
     const detailCalls: string[] = [];
     let firstCorrectionUrl = '';
     let clock = 0;
@@ -3739,7 +3740,7 @@ describe('quantified cross-Strait activity (#5575)', () => {
       detailCalls.push(url);
       const isCorrection = /\/PLAAct\/860\d{2}$/.test(url);
       if (isCorrection && firstCorrectionUrl === '') firstCorrectionUrl = url;
-      clock += url === firstCorrectionUrl ? 15_000 : 13_000;
+      clock += isCorrection ? (url === firstCorrectionUrl ? 15_000 : 13_000) : 130_000;
       return new Response(
         url === firstCorrectionUrl
           ? mndDetailWithoutPublicationMetadata()
@@ -3762,10 +3763,212 @@ describe('quantified cross-Strait activity (#5575)', () => {
     assert.ok(detailCalls.length <= MND_MAX_DETAIL_REQUESTS_PER_RUN);
     assert.ok(clock <= MND_OUTBOUND_BUDGET_MS);
     assert.equal(mnd?.transportStatus, 'fresh');
-    assert.deepEqual(mnd?.errorCodes, ['OUTBOUND_BUDGET_EXHAUSTED']);
+    assert.deepEqual(mnd?.errorCodes, []);
     assert.ok(mnd?.refreshErrorCodes.includes('MND_PUBLICATION_METADATA_MISSING'));
     assert.ok(mnd?.refreshErrorCodes.includes('OUTBOUND_BUDGET_EXHAUSTED'));
   });
+
+  for (const failure of ['timeout', 'budget'] as const) {
+  it(`keeps complete retained current-list coverage through optional refresh ${failure}`, async () => {
+    const original = parseTaiwanMndDetail(fixture('mnd-detail.html'), {
+      sourceUrl: 'https://www.mnd.gov.tw/en/News/PLAAct/90000',
+      retrievedAt,
+      expectedPublicationDay: '2026-07-25',
+    });
+    const previousSnapshot = buildCrossStraitActivitySnapshot({
+      generatedAt: retrievedAt, previousSnapshot: null,
+      mndOutcome: { ok: true, observations: [original, ...Array.from(
+        { length: MND_REQUIRED_REPORTING_DAYS }, (_, index) => mndObservationForDay(index + 1),
+      )] },
+      japanOutcome: { ok: true, availableDocumentUrls: [] },
+    });
+    const detailCalls: string[] = [];
+    const nextRun = '2026-07-25T11:30:00.000Z';
+    let clock = 0;
+    const snapshot = await fetchCrossStraitActivitySnapshot({
+      previousSnapshot, now: Date.parse(nextRun), nowFn: () => clock, sleepFn: async () => {},
+      fetchFn: async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.includes('mod.go.jp')) return new Response(fixture('jmod-homepage.html'));
+        if (url.includes('plaactlist')) {
+          if (failure === 'budget') clock = MND_OUTBOUND_BUDGET_MS;
+          return new Response(mndListWithCount(1));
+        }
+        detailCalls.push(url);
+        throw new Error('request timeout');
+      },
+    });
+    const mnd = snapshot.sources[0];
+    assert.equal(mnd.transportStatus, 'fresh');
+    assert.equal(mnd.lastSuccessAt, nextRun);
+    assert.deepEqual(mnd.errorCodes, []);
+    assert.deepEqual(mnd.refreshErrorCodes, [failure === 'timeout' ? 'TIMEOUT' : 'OUTBOUND_BUDGET_EXHAUSTED']);
+    if (failure === 'timeout') assert.equal(detailCalls[0], original.sourceUrl);
+    assert.equal(new Set(detailCalls).size, failure === 'timeout' ? MND_REFRESH_DETAIL_REQUESTS_PER_RUN : 0);
+    assert.ok(mnd.requestDiagnostics.every((row: { purpose: string }) => row.purpose === 'refresh'));
+    assert.deepEqual(snapshot.observations, previousSnapshot.observations);
+  });
+  }
+
+  for (const invalid of ['changed-date', 'different-url', 'period', 'counts', 'category-keys', 'revision', 'provenance', 'publication'] as const) {
+    it(`requires current detail work for retained ${invalid} evidence`, async () => {
+      const original = parseTaiwanMndDetail(fixture('mnd-detail.html'), {
+        sourceUrl: 'https://www.mnd.gov.tw/en/News/PLAAct/90000',
+        retrievedAt, expectedPublicationDay: '2026-07-25',
+      });
+      const previousSnapshot = buildCrossStraitActivitySnapshot({
+        generatedAt: retrievedAt, previousSnapshot: null,
+        mndOutcome: { ok: true, observations: [original] },
+        japanOutcome: { ok: true, availableDocumentUrls: [] },
+      });
+      const row = previousSnapshot.observations[0];
+      if (invalid === 'different-url') row.sourceUrl += '1';
+      if (invalid === 'period') row.reportingPeriod.end = row.reportingPeriod.start;
+      if (invalid === 'counts') row.categories.planShips = -1;
+      if (invalid === 'category-keys') {
+        delete row.categories.planShips;
+        row.categories.unknown = 1;
+      }
+      if (invalid === 'revision') row.revision.sequence = 0;
+      if (invalid === 'provenance') row.provenance.familyId = 'unknown';
+      if (invalid === 'publication') row.publicationTime = 'invalid';
+      const snapshot = await fetchCrossStraitActivitySnapshot({
+        previousSnapshot, now: Date.parse('2026-07-26T08:30:00.000Z'), sleepFn: async () => {},
+        fetchFn: async (input: string | URL | Request) => {
+          const url = String(input);
+          if (url.includes('mod.go.jp')) return new Response(fixture('jmod-homepage.html'));
+          if (url.includes('plaactlist')) return new Response(invalid === 'changed-date'
+            ? mndListWithCount(1).replaceAll('2026.07.25', '2026.07.26') : mndListWithCount(1));
+          throw new Error('request timeout');
+        },
+      });
+      assert.equal(snapshot.sources[0].transportStatus, 'error');
+      assert.equal(snapshot.sources[0].lastSuccessAt, retrievedAt);
+      assert.ok(snapshot.sources[0].errorCodes.includes('TIMEOUT'));
+      assert.ok(snapshot.sources[0].requestDiagnostics.some(d => d.purpose === 'detail' && d.path.endsWith('/90000')));
+    });
+  }
+
+  it('fetches a required row beyond twenty covered list entries before deterministic current corrections', async () => {
+    const retained = Array.from({ length: MND_REQUIRED_REPORTING_DAYS }, (_, index) => mndObservationForDay(index + 1));
+    const current = retained.slice(0, 21);
+    const knownList = current.map(row => `<a class="news_list" href="${row.sourceUrl}">
+      <h5 class="date">${row.publicationTime.slice(0, 10).replaceAll('-', '.')}</h5></a>`).join('');
+    const previousSnapshot = buildCrossStraitActivitySnapshot({
+      generatedAt: retrievedAt, previousSnapshot: null,
+      mndOutcome: { ok: true, observations: retained },
+      japanOutcome: { ok: true, availableDocumentUrls: [] },
+    });
+    const run = async (now: number) => {
+      const calls: string[] = [];
+      const snapshot = await fetchCrossStraitActivitySnapshot({
+        now, previousSnapshot, sleepFn: async () => {},
+        fetchFn: async (input: string | URL | Request) => {
+          const url = String(input);
+          if (url.includes('mod.go.jp')) return new Response(fixture('jmod-homepage.html'));
+          if (url.includes('plaactlist')) return new Response(`<div class="wrap-page3">${knownList}</div>${mndListWithCount(1)}`);
+          calls.push(url);
+          if (url.endsWith('/90000')) return new Response(fixture('mnd-detail.html'));
+          throw new Error('request timeout');
+        },
+      });
+      assert.equal(calls[0], 'https://www.mnd.gov.tw/en/News/PLAAct/90000');
+      assert.equal(new Set(calls).size, 1 + MND_REFRESH_DETAIL_REQUESTS_PER_RUN);
+      assert.equal(snapshot.sources[0].transportStatus, 'fresh');
+      assert.deepEqual(snapshot.sources[0].errorCodes, []);
+      const expected = current[Math.floor(now / (3 * 60 * 60_000)) % current.length].sourceUrl;
+      assert.equal(calls[1], expected);
+      return calls;
+    };
+    const now = Date.parse(retrievedAt);
+    assert.deepEqual(await run(now), await run(now));
+    assert.notEqual((await run(now + 3 * 60 * 60_000))[1], (await run(now))[1]);
+  });
+
+  it('continues staged backfill discovery when twenty current rows already have retained coverage', async () => {
+    const retained = Array.from({ length: 20 }, (_, index) => mndObservationForDay(index + 1));
+    const knownList = `<div class="wrap-page3">${retained.map(row => `<a href="${row.sourceUrl}">
+      <h5 class="date">${row.publicationTime.slice(0, 10).replaceAll('-', '.')}</h5></a>`).join('')}</div>`;
+    const previousSnapshot = buildCrossStraitActivitySnapshot({
+      generatedAt: retrievedAt, previousSnapshot: null,
+      mndOutcome: { ok: true, observations: retained },
+      japanOutcome: { ok: true, availableDocumentUrls: [] },
+    });
+    const details: string[] = [];
+    await fetchCrossStraitActivitySnapshot({
+      previousSnapshot, now: Date.parse(retrievedAt), sleepFn: async () => {},
+      fetchFn: async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.includes('mod.go.jp')) return new Response(fixture('jmod-homepage.html'));
+        if (url.endsWith('/plaactlist')) return new Response(knownList);
+        if (url.includes('plaactlist')) return new Response(mndListWithCount(20));
+        details.push(url);
+        return new Response(fixture('mnd-detail.html'));
+      },
+    });
+    assert.equal(details.length, MND_MAX_DETAIL_REQUESTS_PER_RUN);
+    assert.ok(details.every(url => /\/900\d{2}$/.test(url)));
+  });
+
+  it('rotates through every historical report when a current correction uses one of three slots', async () => {
+    const currentUrl = 'https://www.mnd.gov.tw/en/News/PLAAct/90000';
+    const current = parseTaiwanMndDetail(fixture('mnd-detail.html'), {
+      sourceUrl: currentUrl, retrievedAt, expectedPublicationDay: '2026-07-25',
+    });
+    const historical = [1, 2, 3].map(day => mndObservationForDay(day));
+    const previousSnapshot = buildCrossStraitActivitySnapshot({
+      generatedAt: retrievedAt, previousSnapshot: null,
+      mndOutcome: { ok: true, observations: [current, ...historical] },
+      japanOutcome: { ok: true, availableDocumentUrls: [] },
+    });
+    const refreshed = new Set<string>();
+    for (let run = 0; run < 3; run += 1) {
+      await fetchCrossStraitActivitySnapshot({
+        previousSnapshot, now: Date.parse(retrievedAt) + run * 3 * 60 * 60_000, sleepFn: async () => {},
+        fetchFn: async (input: string | URL | Request) => {
+          const url = String(input);
+          if (url.includes('mod.go.jp')) return new Response(fixture('jmod-homepage.html'));
+          if (url.includes('plaactlist')) return new Response(mndListWithCount(1));
+          if (url !== currentUrl) refreshed.add(url);
+          throw new Error('request timeout');
+        },
+      });
+    }
+    assert.deepEqual(refreshed, new Set(historical.map(row => row.sourceUrl)));
+  });
+
+  for (const correction of ['unchanged-day', 'advanced-day'] as const) {
+    it(`merges a successful current correction with ${correction} through the existing revision path`, async () => {
+      const sourceUrl = 'https://www.mnd.gov.tw/en/News/PLAAct/90000';
+      const original = parseTaiwanMndDetail(fixture('mnd-detail.html'), {
+        sourceUrl, retrievedAt, expectedPublicationDay: '2026-07-25',
+      });
+      const previousSnapshot = buildCrossStraitActivitySnapshot({
+        generatedAt: retrievedAt, previousSnapshot: null,
+        mndOutcome: { ok: true, observations: [original] },
+        japanOutcome: { ok: true, availableDocumentUrls: [] },
+      });
+      const corrected = fixture('mnd-detail-corrected.html');
+      const snapshot = await fetchCrossStraitActivitySnapshot({
+        previousSnapshot, now: Date.parse('2026-07-26T09:00:00.000Z'), sleepFn: async () => {},
+        fetchFn: async (input: string | URL | Request) => {
+          const url = String(input);
+          if (url.includes('mod.go.jp')) return new Response(fixture('jmod-homepage.html'));
+          if (url.includes('plaactlist')) return new Response(correction === 'advanced-day'
+            ? mndListWithCount(1).replaceAll('2026.07.25', '2026.07.26') : mndListWithCount(1));
+          return new Response(correction === 'advanced-day' ? corrected : corrected.replace('2026.07.26', '2026.07.25'));
+        },
+      });
+      const row = snapshot.observations[0];
+      assert.equal(snapshot.sources[0].transportStatus, 'fresh');
+      assert.equal(row.categories.plaAircraftSorties, 30);
+      assert.equal(row.reportingDay, original.reportingDay);
+      assert.equal(row.revision.sequence, 2);
+      assert.equal(row.history.length, 1);
+      assert.equal(row.history[0].revision.vintageId, original.revision.vintageId);
+      assert.equal(row.provenance.familyId, original.provenance.familyId);
+    });
+  }
 
   it('keeps current MND health fresh when an optional correction stays malformed after retry', async () => {
     const previousSnapshot = buildCrossStraitActivitySnapshot({
@@ -4097,7 +4300,7 @@ describe('quantified cross-Strait activity (#5575)', () => {
     );
     assert.equal(knownUrlRows.length, 1);
     assert.equal(knownUrlRows[0].reportingDay, '2026-07-25');
-    assert.ok(snapshot.sources[0].errorCodes.includes('MND_REPORTING_DAY_MISMATCH'));
+    assert.ok(snapshot.sources[0].refreshErrorCodes.includes('MND_REPORTING_DAY_MISMATCH'));
   });
 
   it('publishes long-lived history with freshness anchored to the latest reporting window', () => {

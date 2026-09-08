@@ -1170,25 +1170,47 @@ export async function writeExtraKeyWithMetaAtomically({
     ['SET', key, JSON.stringify(data), 'EX', dataTtl],
     ['SET', metaKey, JSON.stringify(buildSeedMeta(recordCount, coverage, extra, fetchedAt)), 'EX', metaTtl],
   ];
-  const resp = await fetch(`${url}/multi-exec`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'User-Agent': CHROME_UA },
-    body: JSON.stringify(commands),
-    signal: AbortSignal.timeout(5_000),
-  });
-  if (!resp.ok) {
-    throw new Error(`Atomic extra-key publish failed: HTTP ${resp.status}`);
-  }
+  // This runs after the provider fetches have settled. Retrying this bounded
+  // Redis transaction therefore recovers a transient publication failure
+  // without replaying the provider requests or exposing half the pair.
+  return withRetry(async () => {
+    const resp = await fetch(`${url}/multi-exec`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'User-Agent': CHROME_UA },
+      body: JSON.stringify(commands),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!resp.ok) {
+      const err = httpRetryError(resp);
+      err.message = `Atomic extra-key publish failed: HTTP ${resp.status}`;
+      err.httpStatus = resp.status;
+      throw err;
+    }
 
-  const results = await resp.json();
-  if (!Array.isArray(results)) {
-    throw new Error(`Atomic extra-key publish failed: ${results?.error || 'invalid transaction response'}`);
-  }
-  const failures = results.filter((result) => result?.error || result?.result === 'ERR');
-  if (failures.length > 0 || results.length !== commands.length) {
-    throw new Error(`Atomic extra-key publish failed: ${failures.length || 'missing'} command result(s)`);
-  }
-  return true;
+    let results;
+    try {
+      results = await resp.json();
+    } catch (cause) {
+      throw Object.assign(new Error('Atomic extra-key publish failed: invalid transaction response'), {
+        cause,
+        nonRetryable: true,
+      });
+    }
+    if (!Array.isArray(results)) {
+      throw Object.assign(
+        new Error(`Atomic extra-key publish failed: ${results?.error || 'invalid transaction response'}`),
+        { nonRetryable: true },
+      );
+    }
+    const failures = results.filter((result) => result?.error || result?.result === 'ERR');
+    if (failures.length > 0 || results.length !== commands.length) {
+      throw Object.assign(
+        new Error(`Atomic extra-key publish failed: ${failures.length || 'missing'} command result(s)`),
+        { nonRetryable: true },
+      );
+    }
+    return true;
+  }, SEED_REDIS_RETRY_ATTEMPTS - 1, SEED_REDIS_RETRY_BASE_MS);
 }
 
 // Detailed counterpart to extendExistingTtl. Results stay aligned to the input

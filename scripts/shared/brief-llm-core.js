@@ -524,7 +524,7 @@ function normalizeDottedAcronyms(text) {
 }
 
 function properNounTokenValue(token) {
-  if (typeof token !== 'string' || token.length < 2 || !/^[A-Z]/.test(token)) return null;
+  if (typeof token !== 'string' || token.length < 2 || !/[\p{Lu}\p{Lt}]/u.test(token)) return null;
   const stripped = token.replace(/[.,;:'’]+$/g, '').replace(/['’]s$/i, '');
   return (stripped || token).toLowerCase();
 }
@@ -609,13 +609,14 @@ function extractProperNounSequencesWithMeta(text) {
       const tokenForLookup = stripped || token;
       const isTitlePrefix = TITLE_PREFIX_STOP.has(stripped);
       const isJoiner = PROPER_NOUN_JOINER.has(token.toLowerCase());
-      // Capitalized: at least 2 chars long. Single-letter capitalized
+      // Name casing can occur after a digit or lowercase prefix (3M, eBay).
+      // Require at least 2 chars. Single-letter capitalized
       // tokens are sentence-final initials ("...J.D. Vance was met by Smith
       // and J."), middle initials in names, or "I" (the pronoun, already
       // handled by SENTENCE_START_AMBIGUOUS). None should register as
       // a standalone proper noun.
-      const isCapitalized = token.length >= 2 && /^[A-Z]/.test(token);
-      const isAllCapsAcronym = /^[A-Z]{2,6}$/.test(token);
+      const isCapitalized = token.length >= 2 && /[\p{Lu}\p{Lt}]/u.test(token);
+      const isAllCapsAcronym = /^(?=.*\p{Lu})[\p{Lu}\p{N}]{2,6}$/u.test(token);
       const isAmbiguousSentenceStart = firstToken
         && !isAllCapsAcronym
         && SENTENCE_START_AMBIGUOUS.has(token.toLowerCase());
@@ -828,8 +829,8 @@ function normalizeSequence(sequence) {
  * normalization). The validator catches LLM-introduced invention.
  *
  * Returns `{ ok: true }` when every summary proper-noun sequence is
- * grounded in the headline, OR when either input is malformed (defensive
- * default — ship the LLM output rather than fall back on confusion).
+ * grounded in the headline. Malformed inputs fail open by default;
+ * public citation callers opt into failClosed to withhold unvalidated text.
  *
  * Returns `{ ok: false, hallucinated: [...] }` when at least one
  * summary sequence has no matching contiguous subsequence in the
@@ -838,14 +839,15 @@ function normalizeSequence(sequence) {
  *
  * @param {string} summary - the LLM-rewritten brief paragraph
  * @param {string} headline - the source headline the LLM was given
+ * @param {{ failClosed?: boolean }} [options] - Reject unavailable validation on public citation surfaces.
  * @returns {{ ok: boolean, hallucinated?: string[] }}
  */
-export function validateNoHallucinatedProperNouns(summary, headline) {
-  // Defensive: malformed inputs return ok (ship the LLM output rather
-  // than fall back on confusion). Catches null, undefined, empty
-  // string, non-string, and weird unicode.
-  if (typeof summary !== 'string' || summary.length === 0) return { ok: true };
-  if (typeof headline !== 'string' || headline.length === 0) return { ok: true };
+export function validateNoHallucinatedProperNouns(summary, headline, { failClosed = false } = {}) {
+  // Preserve the legacy default; citation publication must opt into rejection.
+  const unavailable = () => failClosed ? { ok: false, hallucinated: [] } : { ok: true };
+  if (typeof summary !== 'string' || summary.length === 0) return unavailable();
+  if (typeof headline !== 'string' || headline.length === 0) return unavailable();
+  if (failClosed && (!summary.trim() || !headline.trim())) return unavailable();
 
   let summaryEntries, headlineSequences, headlineTokens;
   try {
@@ -867,8 +869,8 @@ export function validateNoHallucinatedProperNouns(summary, headline) {
     // included, with nothing in the log. A dead gate and a healthy gate looked
     // identical. Warn so the difference is visible, matching the pattern used
     // by checkLeadGrounding below.
-    console.warn(`[brief_grounding] proper-noun extraction threw (${err?.message ?? err}) — accepting unvalidated`);
-    return { ok: true };
+    console.warn(`[brief_grounding] proper-noun extraction threw (${err?.message ?? err}) — ${failClosed ? 'rejecting unvalidated' : 'accepting unvalidated'}`);
+    return unavailable();
   }
 
   if (summaryEntries.length === 0) return { ok: true };
