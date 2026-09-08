@@ -206,7 +206,7 @@ describe('China decision-signal access tiers (#5580)', () => {
     assert.deepEqual(await response.json(), { error: 'Operator API key required' });
   });
 
-  it('keeps China source freshness out of the anonymous compact health projection', () => {
+  it('keeps the China verdict but removes source freshness from anonymous compact health', () => {
     const compact = healthTesting.healthResponseBody({
       status: 'WARNING',
       summary: { ok: 1, warning: 2 },
@@ -224,7 +224,7 @@ describe('China decision-signal access tiers (#5580)', () => {
       },
     }, true);
 
-    assert.equal(compact.problems?.chinaDecisionSignals, undefined);
+    assert.deepEqual(compact.problems?.chinaDecisionSignals, { status: 'STALE_SEED' });
     assert.equal(compact.problems?.publicExample?.status, 'STALE_SEED');
   });
 

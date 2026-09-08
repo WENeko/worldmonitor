@@ -32,6 +32,28 @@ import {
 const fixtureRoot = resolve(import.meta.dirname, 'fixtures/china-corporate-disclosures');
 const fixture = (name: string) => JSON.parse(readFileSync(resolve(fixtureRoot, name), 'utf8'));
 const retrievedAt = '2026-07-25T10:00:00.000Z';
+const szsePage = (
+  total: number,
+  pageNum: number,
+  options: { announceCount?: number; data?: Array<Record<string, unknown>> } = {},
+) => {
+  const start = (pageNum - 1) * 50;
+  const rowCount = Math.max(0, Math.min(50, total - start));
+  const template = fixture('szse.json').data[0];
+  return {
+    announceCount: options.announceCount ?? total,
+    data: options.data ?? Array.from({ length: rowCount }, (_, offset) => {
+      const sequence = start + offset + 1;
+      return {
+        ...template,
+        id: `8b${String(sequence).padStart(6, '0')}-0000-0000-0000-000000000000`,
+        annId: 1_225_400_000 + sequence,
+        title: `宁德时代：第 ${sequence} 份股票停牌公告`,
+        attachPath: `/disc/disk03/finalpage/2026-07-24/szse-${sequence}.PDF`,
+      };
+    }),
+  };
+};
 
 describe('official China corporate disclosures (#5577)', () => {
   it('maps only the reviewed A/H basket and keeps HKEX blocked', () => {
@@ -67,7 +89,10 @@ describe('official China corporate disclosures (#5577)', () => {
       assert.ok(contract.maxResponseBytes >= 32_000 && contract.maxResponseBytes <= 262_144);
       assert.equal(contract.redirectPolicy, 'error');
       assert.equal(contract.documentRetrieval, 'lazy-link-only');
-      assert.equal(contract.paginationPolicy, 'bounded_first_page');
+      assert.equal(
+        contract.paginationPolicy,
+        id === 'szse' ? 'bounded_two_pages' : 'bounded_first_page',
+      );
       assert.equal(contract.saturationBehavior, 'degraded_on_page_limit');
       assert.deepEqual(contract.emptyResultPolicy, {
         degradeAfterConsecutive: EMPTY_RESULT_DEGRADE_AFTER,
@@ -105,7 +130,7 @@ describe('official China corporate disclosures (#5577)', () => {
     assert.ok(timeoutMatch, 'China disclosure bundle section must declare timeoutMs');
     const sectionTimeoutMs = Number(timeoutMatch[1].replaceAll('_', ''));
 
-    assert.equal(CHINA_CORPORATE_DISCLOSURE_MAX_NETWORK_MS, 103_250);
+    assert.equal(CHINA_CORPORATE_DISCLOSURE_MAX_NETWORK_MS, 106_000);
     assert.ok(
       sectionTimeoutMs - CHINA_CORPORATE_DISCLOSURE_MAX_NETWORK_MS >= 20_000,
       'network attempts must leave at least 20s for startup, parsing, publication, and shutdown',
@@ -183,15 +208,27 @@ describe('official China corporate disclosures (#5577)', () => {
     });
 
     assert.equal(snapshot.status, 'healthy');
-    assert.equal(
+    assert.deepEqual(
       snapshot.sourceDecisions
         .filter((decision) => decision.launchStatus === 'launched')
-        .every(
-          (decision) => decision.paginationPolicy === 'bounded_first_page'
-            && decision.saturationBehavior === 'degraded_on_page_limit',
-        ),
-      true,
-      'the persisted source decision documents the intentional saturation behavior',
+        .map((decision) => ({
+          id: decision.id,
+          paginationPolicy: decision.paginationPolicy,
+          saturationBehavior: decision.saturationBehavior,
+        })),
+      [
+        {
+          id: 'sse',
+          paginationPolicy: 'bounded_first_page',
+          saturationBehavior: 'degraded_on_page_limit',
+        },
+        {
+          id: 'szse',
+          paginationPolicy: 'bounded_two_pages',
+          saturationBehavior: 'degraded_on_page_limit',
+        },
+      ],
+      'the persisted source decision documents each bounded saturation policy',
     );
     assert.deepEqual(
       [...new Set(snapshot.events.map((event) => event.disclosureType))].sort(),
@@ -992,15 +1029,15 @@ describe('official China corporate disclosures (#5577)', () => {
     );
     assert.equal(partial.events.some((event) => event.exchange === 'SSE'), true);
 
-    const saturatedCalls: Array<string> = [];
+    const saturatedCalls: Array<{ url: string; init?: RequestInit }> = [];
     const saturatedDecisions: Array<{ sourceId: string; reason?: string }> = [];
     const saturated = await fetchChinaCorporateDisclosureSnapshot({
       now: Date.parse('2026-07-25T12:00:00.000Z'),
       previousSnapshot: snapshot,
       onDecision: (decision) => saturatedDecisions.push(decision),
-      fetchFn: async (input) => {
+      fetchFn: async (input, init) => {
         const url = String(input);
-        saturatedCalls.push(url);
+        saturatedCalls.push({ url, init });
         if (url.includes('query.sse.com.cn')) {
           const productId = new URL(url).searchParams.get('productId');
           const payload = productId === '600519'
@@ -1008,12 +1045,14 @@ describe('official China corporate disclosures (#5577)', () => {
             : { pageHelp: { pageNo: 1, pageSize: 100, total: 0 }, result: [] };
           return new Response(JSON.stringify(payload), { status: 200 });
         }
-        return new Response(JSON.stringify({ ...fixture('szse.json'), announceCount: 51 }), {
+        const pageNum = JSON.parse(String(init?.body)).pageNum;
+        const payload = szsePage(51, pageNum);
+        return new Response(JSON.stringify(payload), {
           status: 200,
         });
       },
     });
-    assert.equal(saturatedCalls.length, 5);
+    assert.equal(saturatedCalls.length, 6);
     assert.equal(saturated.status, 'degraded');
     assert.equal(saturated.sources.find((source) => source.id === 'sse')?.transportStatus, 'fresh');
     assert.equal(saturated.sources.find((source) => source.id === 'sse')?.contentStatus, 'partial');
@@ -1022,11 +1061,166 @@ describe('official China corporate disclosures (#5577)', () => {
       '2026-07-25T12:00:00.000Z',
       'a complete transport that reaches the bounded page limit is still a successful collection',
     );
-    assert.equal(saturated.sources.find((source) => source.id === 'szse')?.contentStatus, 'partial');
+    assert.equal(saturated.sources.find((source) => source.id === 'szse')?.contentStatus, 'current');
+    assert.deepEqual(
+      saturatedCalls
+        .filter((call) => call.url.includes('www.szse.cn'))
+        .map((call) => JSON.parse(String(call.init?.body)).pageNum),
+      [1, 2],
+    );
     assert.equal(
       saturatedDecisions.filter((decision) => decision.reason === 'PAGE_LIMIT_REACHED').length,
-      2,
+      1,
     );
+  });
+
+  it('fails closed when the bounded second SZSE page cannot be fetched', async () => {
+    const snapshot = await fetchChinaCorporateDisclosureSnapshot({
+      now: Date.parse('2026-07-25T12:00:00.000Z'),
+      previousSnapshot: null,
+      onDecision: () => {},
+      fetchFn: async (input, init) => {
+        const url = String(input);
+        if (url.includes('query.sse.com.cn')) {
+          return new Response(JSON.stringify({ pageHelp: { total: 0 }, result: [] }), {
+            status: 200,
+          });
+        }
+        const pageNum = JSON.parse(String(init?.body)).pageNum;
+        if (pageNum === 2) throw Object.assign(new Error('page 2 timed out'), { name: 'TimeoutError' });
+        return new Response(JSON.stringify(szsePage(51, 1)), {
+          status: 200,
+        });
+      },
+    });
+
+    const szse = snapshot.sources.find((source) => source.id === 'szse');
+    assert.equal(snapshot.status, 'degraded');
+    assert.equal(szse?.transportStatus, 'error');
+    assert.equal(szse?.contentStatus, 'unavailable');
+    assert.equal(szse?.errorCode, 'TIMEOUT');
+  });
+
+  it('keeps SZSE partial when more than two pages are available', async () => {
+    const requestedPages: number[] = [];
+    const snapshot = await fetchChinaCorporateDisclosureSnapshot({
+      now: Date.parse('2026-07-25T12:00:00.000Z'),
+      previousSnapshot: null,
+      onDecision: () => {},
+      fetchFn: async (input, init) => {
+        const url = String(input);
+        if (url.includes('query.sse.com.cn')) {
+          return new Response(JSON.stringify({ pageHelp: { total: 0 }, result: [] }), {
+            status: 200,
+          });
+        }
+        const pageNum = JSON.parse(String(init?.body)).pageNum;
+        requestedPages.push(pageNum);
+        return new Response(JSON.stringify(szsePage(101, pageNum)), { status: 200 });
+      },
+    });
+
+    const szse = snapshot.sources.find((source) => source.id === 'szse');
+    assert.deepEqual(requestedPages, [1, 2]);
+    assert.equal(snapshot.status, 'degraded');
+    assert.equal(szse?.transportStatus, 'fresh');
+    assert.equal(szse?.contentStatus, 'partial');
+    assert.equal(szse?.requestCount, 2);
+    assert.equal(szse?.errorCode, 'PAGE_LIMIT_REACHED');
+  });
+
+  it('rejects incomplete or inconsistent bounded SZSE pages', async () => {
+    const pageOne = szsePage(51, 1);
+    const cases = [
+      {
+        name: 'empty first page',
+        response: (pageNum: number) => pageNum === 1
+          ? szsePage(51, 1, { data: [] })
+          : szsePage(51, 2),
+      },
+      {
+        name: 'duplicate announcement across pages',
+        response: (pageNum: number) => pageNum === 1
+          ? pageOne
+          : szsePage(51, 2, { data: [pageOne.data[0]] }),
+      },
+      {
+        name: 'changed total on second page',
+        response: (pageNum: number) => pageNum === 1
+          ? pageOne
+          : szsePage(51, 2, { announceCount: 52 }),
+      },
+    ];
+
+    for (const testCase of cases) {
+      const snapshot = await fetchChinaCorporateDisclosureSnapshot({
+        now: Date.parse('2026-07-25T12:00:00.000Z'),
+        previousSnapshot: null,
+        onDecision: () => {},
+        fetchFn: async (input, init) => {
+          const url = String(input);
+          if (url.includes('query.sse.com.cn')) {
+            return new Response(JSON.stringify({ pageHelp: { total: 0 }, result: [] }), {
+              status: 200,
+            });
+          }
+          const pageNum = JSON.parse(String(init?.body)).pageNum;
+          return new Response(JSON.stringify(testCase.response(pageNum)), { status: 200 });
+        },
+      });
+
+      const szse = snapshot.sources.find((source) => source.id === 'szse');
+      assert.equal(snapshot.status, 'degraded', testCase.name);
+      assert.equal(szse?.transportStatus, 'error', testCase.name);
+      assert.equal(szse?.contentStatus, 'unavailable', testCase.name);
+      assert.equal(szse?.requestCount, 2, testCase.name);
+      assert.equal(szse?.errorCode, 'MALFORMED_RESPONSE', testCase.name);
+    }
+  });
+
+  it('recovers a failed direct second SZSE page through the proxy', async () => {
+    const directPages: number[] = [];
+    const proxyPages: number[] = [];
+    const snapshot = await fetchChinaCorporateDisclosureSnapshot({
+      now: Date.parse(retrievedAt),
+      previousSnapshot: null,
+      proxyUrl: 'https://proxy-user:proxy-secret@proxy.test:443',
+      onDecision: () => {},
+      fetchFn: async (input, init) => {
+        const url = String(input);
+        if (url.includes('query.sse.com.cn')) {
+          return new Response(JSON.stringify({ pageHelp: { total: 0 }, result: [] }), {
+            status: 200,
+          });
+        }
+        const pageNum = JSON.parse(String(init?.body)).pageNum;
+        directPages.push(pageNum);
+        if (pageNum === 2) {
+          throw Object.assign(new TypeError('fetch failed'), {
+            cause: Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }),
+          });
+        }
+        return new Response(JSON.stringify(szsePage(51, pageNum)), { status: 200 });
+      },
+      proxyRequestFn: async (_input, _proxyConfig, options) => {
+        const pageNum = JSON.parse(String(options.body)).pageNum;
+        proxyPages.push(pageNum);
+        return {
+          buffer: Buffer.from(JSON.stringify(szsePage(51, pageNum))),
+          status: 200,
+          contentType: 'application/json',
+        };
+      },
+    });
+
+    const szse = snapshot.sources.find((source) => source.id === 'szse');
+    assert.deepEqual(directPages, [1, 2]);
+    assert.deepEqual(proxyPages, [2]);
+    assert.equal(snapshot.status, 'healthy');
+    assert.equal(szse?.transportStatus, 'fresh');
+    assert.equal(szse?.contentStatus, 'current');
+    assert.equal(szse?.requestCount, 3);
+    assert.equal(szse?.transportPath, 'proxy');
   });
 
   it('falls back to a bounded proxy request when the direct SZSE transport fails', async () => {
@@ -1070,8 +1264,10 @@ describe('official China corporate disclosures (#5577)', () => {
           proxyConfig,
           options,
         });
+        const pageNum = JSON.parse(String(options.body)).pageNum;
+        const payload = szsePage(51, pageNum);
         return {
-          buffer: Buffer.from(JSON.stringify(fixture('szse.json'))),
+          buffer: Buffer.from(JSON.stringify(payload)),
           status: 200,
           contentType: 'application/json',
         };
@@ -1080,43 +1276,60 @@ describe('official China corporate disclosures (#5577)', () => {
 
     assert.equal(snapshot.status, 'healthy');
     assert.equal(directCalls.filter((call) => call.url.includes('www.szse.cn')).length, 1);
-    assert.equal(proxyCalls.length, 1);
+    assert.equal(proxyCalls.length, 2);
     assert.match(proxyCalls[0].url, /^https:\/\/www\.szse\.cn\/api\/disc\/announcement\/annList/);
-    assert.deepEqual(proxyCalls[0].proxyConfig, {
-      host: 'proxy.test',
-      port: 443,
-      auth: 'proxy-user:proxy-secret',
-      tls: true,
-    });
-    assert.equal(proxyCalls[0].options.method, 'POST');
     assert.equal(
-      proxyCalls[0].options.maxResponseBytes,
-      OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxResponseBytes,
+      proxyCalls.every((call) => call.url === proxyCalls[0].url),
+      true,
     );
-    assert.deepEqual(
-      JSON.parse(String(proxyCalls[0].options.body)),
+    assert.equal(proxyCalls.every((call) => call.options.method === 'POST'), true);
+    assert.equal(
+      proxyCalls.every(
+        (call) => call.options.maxResponseBytes
+          === OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxResponseBytes,
+      ),
+      true,
+    );
+    assert.deepEqual(proxyCalls.map((call) => call.proxyConfig), [
       {
+        host: 'proxy.test',
+        port: 443,
+        auth: 'proxy-user:proxy-secret',
+        tls: true,
+      },
+      {
+        host: 'proxy.test',
+        port: 443,
+        auth: 'proxy-user:proxy-secret',
+        tls: true,
+      },
+    ]);
+    assert.deepEqual(
+      proxyCalls.map((call) => JSON.parse(String(call.options.body))),
+      [1, 2].map((pageNum) => ({
         seDate: ['2026-04-26', '2026-07-25'],
         channelCode: ['listedNotice_disc'],
         stock: ['300750'],
         pageSize: 50,
-        pageNum: 1,
-      },
+        pageNum,
+      })),
     );
 
     const szse = snapshot.sources.find((source) => source.id === 'szse');
     assert.equal(szse?.transportStatus, 'fresh');
     assert.equal(szse?.contentStatus, 'current');
-    assert.equal(szse?.requestCount, 2);
+    assert.equal(szse?.requestCount, 3);
     assert.equal(szse?.transportPath, 'proxy');
     assert.equal(szse?.fallbackReason, 'UND_ERR_CONNECT_TIMEOUT');
     assert.equal(OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxRequestsPerRun, 3);
-    assert.equal(OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxDirectRequestsPerRun, 1);
+    assert.equal(OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxDirectRequestsPerRun, 2);
     assert.equal(OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxProxyRequestsPerRun, 2);
-    assert.equal(
-      OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxRequestsPerRun,
+    assert.ok(
+      OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxRequestsPerRun
+        <
       OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxDirectRequestsPerRun
         + OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxProxyRequestsPerRun,
+      'the shared total ceiling prevents both route-specific maxima in one run',
     );
     assert.equal(
       OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.fallbackPolicy,
@@ -1127,11 +1340,11 @@ describe('official China corporate disclosures (#5577)', () => {
     assert.deepEqual(szseDecision, {
       sourceId: 'szse',
       status: 'accepted',
-      requestCount: 2,
+      requestCount: 3,
       emptyResultCount: 0,
       transportPath: 'proxy',
       fallbackReason: 'UND_ERR_CONNECT_TIMEOUT',
-      proxyExitPorts: [443],
+      proxyExitPorts: [443, 443],
       proxyExitRotated: false,
       reliabilityStatus: 'stable',
       requiredRecoverySuccesses: 2,

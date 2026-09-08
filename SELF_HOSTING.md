@@ -82,6 +82,8 @@ These must be set before `docker compose up -d`, or one of the containers will e
 
 Docker mode (`LOCAL_API_MODE=docker`) has no Clerk or Convex entitlement backend. The dashboard still mints an anonymous `wms_` session signed with `WM_SESSION_SECRET`.
 
+Native administration routes under `/api/local-` return `403` in Docker mode, including configuration updates, secret validation, and local status/debug controls. The internal sidecar token does not grant administrator access through nginx. Change operator settings through Compose environment variables or Docker secrets, then recreate the app container. Desktop administration remains available through the native app.
+
 - Only `GET /api/intelligence/v1/get-country-intel-brief` accepts that session as the authentication boundary. The handler still returns the shared (non-premium) brief.
 - Direct-LLM spend on that route is capped at 50 calls per UTC day per client IP. nginx stamps `X-Real-IP` from `$remote_addr`, so a caller cannot rotate the header to reset the cap. Rotating the session token also does not reset spend.
 - Every other premium route still requires an API key or a Clerk entitlement. Cloud deployments do not set `LOCAL_API_MODE=docker` and keep key plus entitlement enforcement on this route too.

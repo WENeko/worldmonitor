@@ -3745,6 +3745,30 @@ describe('agent readiness: generic markdown URL-fallback rewrite', () => {
     assert.equal(sourceToRegExp(SPA_HTML_CACHE_SOURCE).test('/dashboard.md'), false);
     assert.equal(sourceToRegExp(SPA_HTML_CACHE_SOURCE).test('/dashboard'), true);
   });
+
+  it('never declares a static canonical over the unbounded generated .md space', () => {
+    // The curated twins (pricing.md, developers.md, …) are standalone documents
+    // with no HTML sibling, so their literal self-canonical header rules are
+    // correct. The generated space is unbounded — /countries/iran.md and an
+    // invented /countries/does-not-exist-xyz.md both land on /api/md-twin — so a
+    // canonical rule that reached them would mint a self-canonical soft-404 that
+    // no handler change can retract (#7860). Only the handler may set a
+    // canonical there, and it points at the sibling HTML page.
+    const generatedTwins = ['/countries/iran.md', '/countries/does-not-exist-xyz.md', '/stocks/AAPL.md'];
+    for (const rule of vercelConfig.headers ?? []) {
+      const declaresCanonical = (rule.headers ?? []).some(
+        (h) => h.key?.toLowerCase() === 'link' && /rel="?canonical"?/.test(h.value ?? ''),
+      );
+      if (!declaresCanonical) continue;
+      for (const path of generatedTwins) {
+        assert.equal(
+          sourceToRegExp(rule.source).test(path),
+          false,
+          `header rule "${rule.source}" declares a canonical over generated twin ${path}`,
+        );
+      }
+    }
+  });
 });
 
 describe('agent readiness: remaining markdown twins', () => {

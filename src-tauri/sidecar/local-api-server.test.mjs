@@ -10,6 +10,7 @@ import net from 'node:net';
 import { brotliDecompressSync, gunzipSync } from 'node:zlib';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { createLocalApiServer, __testing__ } from './local-api-server.mjs';
@@ -1616,7 +1617,106 @@ test('resolves packaged tauri resource layout under _up_/api', async () => {
 
 // ── Ollama env key allowlist + validation tests ──
 
-test('accepts OLLAMA_API_URL via /api/local-env-update', async () => {
+test('Docker rejects native administration without changing configuration, caches, or relay transport', async (t) => {
+  const originalEnv = { ...process.env };
+  const originalFetch = globalThis.fetch;
+  const relayCalls = [];
+  const operatorRelay = 'https://operator-relay.example';
+  const otherRelay = 'https://untrusted-relay.example';
+  process.env.WS_RELAY_URL = operatorRelay;
+  process.env.RELAY_SHARED_SECRET = 'synthetic-relay-secret';
+  delete process.env.RELAY_AUTH_HEADER;
+  globalThis.fetch = (input, options) => {
+    const url = String(input);
+    if (url.startsWith(operatorRelay) || url.startsWith(otherRelay)) {
+      relayCalls.push({ url, headers: new Headers(options?.headers) });
+      return Promise.resolve(new Response('[]', { headers: { 'content-type': 'application/json' } }));
+    }
+    return originalFetch(input, options);
+  };
+  let privateProbeHits = 0;
+  const privateProvider = createServer((_req, res) => {
+    privateProbeHits++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{"data":[{"id":"fixture-model"}]}');
+  });
+  const privatePort = await listen(privateProvider);
+  const relayModule = pathToFileURL(path.resolve(import.meta.dirname, '../../api/oref-alerts.js')).href;
+  const localApi = await setupApiDir({
+    'oref-alerts.js': `export { default } from ${JSON.stringify(relayModule)};`,
+    'missing.js': `import './absent.js'; export default () => new Response('unreachable');`,
+  });
+  const verboseStatePath = path.join(localApi.apiDir, 'verbose-mode.json');
+  await writeFile(verboseStatePath, '{"verboseMode":false}');
+  const app = await createLocalApiServer({
+    port: 0, apiDir: localApi.apiDir, dataDir: localApi.apiDir, mode: 'docker',
+    logger: { log() {}, warn() {}, error() {} },
+  });
+  const { port } = await app.start();
+  const base = `http://127.0.0.1:${port}`;
+  // This is the authority nginx grants even when the outside caller is anonymous.
+  const proxyHeaders = { 'X-WorldMonitor-Local-Token': TEST_LOCAL_API_TOKEN, Origin: 'http://localhost' };
+  try {
+    await authFetch(`${base}/api/missing`);
+    const requests = [
+      ['local-env-update', 'POST', { key: 'WS_RELAY_URL', value: otherRelay }],
+      ['local-env-update-batch', 'POST', { entries: [{ key: 'WS_RELAY_URL', value: otherRelay }] }],
+      ['local-validate-secret', 'POST', { key: 'OLLAMA_API_URL', value: `http://127.0.0.1:${privatePort}` }],
+      ['local-status', 'GET'],
+      ['local-traffic-log', 'GET'],
+      ['local-traffic-log', 'DELETE'],
+      ['local-debug-toggle', 'GET'],
+      ['local-debug-toggle', 'POST'],
+      ['local-env-update', 'OPTIONS'],
+    ];
+    for (const [route, method, body] of requests) {
+      await t.test(`${method} ${route}`, async () => {
+        const response = await fetch(`${base}/api/${route}`, {
+          method, headers: { ...proxyHeaders, 'Content-Type': 'application/json' },
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        assert.equal(response.status, 403);
+      });
+    }
+    await t.test('spoofed and native credentials cannot override Docker mode', async () => {
+      for (const headers of [{}, { Authorization: `Bearer ${TEST_LOCAL_API_TOKEN}` }, {
+        Authorization: 'Bearer caller-oauth', Origin: 'https://tauri.localhost',
+        'X-WorldMonitor-Local-Token': 'spoofed-token',
+      }]) {
+        const response = await fetch(`${base}/api/local-status`, { headers });
+        assert.equal(response.status, 403);
+      }
+    });
+    await t.test('rejections leave validation transport and debug state untouched', () => {
+      assert.equal(privateProbeHits, 0);
+      assert.equal(readFileSync(verboseStatePath, 'utf8'), '{"verboseMode":false}');
+    });
+    await t.test('rejections preserve environment, failed-import cache, and outbound destination', async () => {
+      const relay = await fetch(`${base}/api/oref-alerts`, { headers: proxyHeaders });
+      assert.equal(relay.status, 200);
+      assert.equal(relayCalls.length, 1);
+      assert.equal(relayCalls[0].url, `${operatorRelay}/oref/alerts`);
+      assert.equal(relayCalls[0].headers.get('x-relay-key'), 'synthetic-relay-secret');
+      assert.equal(relayCalls[0].headers.get('authorization'), 'Bearer synthetic-relay-secret');
+      assert.equal(process.env.WS_RELAY_URL, operatorRelay);
+      const missing = await authFetch(`${base}/api/missing`);
+      assert.match((await missing.json()).reason, /cached-failure/);
+      const health = await fetch(`${base}/api/sidecar-health`);
+      assert.equal(health.status, 200);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const key of ['WS_RELAY_URL', 'RELAY_SHARED_SECRET', 'RELAY_AUTH_HEADER']) {
+      if (originalEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = originalEnv[key];
+    }
+    await app.close();
+    await localApi.cleanup();
+    await new Promise(resolve => privateProvider.close(resolve));
+  }
+});
+
+test('accepts OLLAMA_API_URL through desktop single and batch env updates', async () => {
   const localApi = await setupApiDir({});
 
   const app = await createLocalApiServer({
@@ -1637,6 +1737,13 @@ test('accepts OLLAMA_API_URL via /api/local-env-update', async () => {
     assert.equal(body.ok, true);
     assert.equal(body.key, 'OLLAMA_API_URL');
     assert.equal(process.env.OLLAMA_API_URL, 'http://127.0.0.1:11434');
+    const batchResponse = await authFetch(`http://127.0.0.1:${port}/api/local-env-update-batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries: [{ key: 'OLLAMA_API_URL', value: 'http://127.0.0.1:11435' }] }),
+    });
+    assert.equal(batchResponse.status, 200);
+    assert.equal(process.env.OLLAMA_API_URL, 'http://127.0.0.1:11435');
   } finally {
     delete process.env.OLLAMA_API_URL;
     await app.close();

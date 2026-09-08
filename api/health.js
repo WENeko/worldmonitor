@@ -3486,7 +3486,7 @@ function healthResponseBody(snapshot, compact) {
 
   const entries = snapshot.checks
     ? Object.entries(snapshot.checks).filter(
-      ([name, check]) => name !== 'chinaDecisionSignals' && (
+      ([name, check]) => (
         isProblemStatus(check.status)
         || (
           name === 'chinaCoverage'
@@ -3500,19 +3500,28 @@ function healthResponseBody(snapshot, compact) {
   const problems = Object.fromEntries(entries.filter(([, check]) => !isPendingHealthEntry(check, evaluatedAt)));
   const pending = Object.fromEntries(entries.filter(([, check]) => isPendingHealthEntry(check, evaluatedAt)));
   // Older compact snapshots may predate the operator-only China health
-  // projection. Strip it again at the response boundary so a cached value
-  // cannot leak source freshness details to anonymous status readers.
+  // projection. Reduce it to the public verdict again at the response boundary
+  // so a cached value cannot leak source freshness details to anonymous status
+  // readers while its warning still reconciles with summary.warn.
   // Same rule, applied per field rather than per check (#6060): a check's
   // STATUS is public, but its named entities are operator-only. `staleCountries`
   // and the decision-group breakdown identify WHICH source is degraded, which
-  // is exactly what the chinaDecisionSignals carve-out above exists to
+  // is exactly what the per-entry chinaDecisionSignals projection below exists to
   // withhold. `chinaRow` (#6395) names a country and says which part of a JODI
   // source is unusable, so it falls under the same rule. Runs on both shapes so
   // a cached compact snapshot written before this rule is scrubbed on the way
   // out too.
   for (const collection of [problems, pending]) {
-    delete collection.chinaDecisionSignals;
     for (const [name, check] of Object.entries(collection)) {
+      if (name === 'chinaDecisionSignals') {
+        collection[name] = { status: check?.status };
+        for (const { field } of ENTRY_SOFTENING_DEADLINES) {
+          if (Object.prototype.hasOwnProperty.call(check ?? {}, field)) {
+            collection[name][field] = check[field];
+          }
+        }
+        continue;
+      }
       if (check?.contentFreshness === undefined
         && check?.decisionGroups === undefined
         && check?.chinaRow === undefined) continue;

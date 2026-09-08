@@ -1367,6 +1367,11 @@ async function validateSecretAgainstProvider(key, rawValue, context = {}) {
 }
 
 async function dispatch(requestUrl, req, routes, context) {
+  // Docker's public proxy supplies transport auth, not native administration authority.
+  if (context.mode === 'docker' && requestUrl.pathname.startsWith('/api/local-')) {
+    return json({ error: 'Native administration is unavailable in Docker mode' }, 403);
+  }
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: makeCorsHeaders(req) });
   }
