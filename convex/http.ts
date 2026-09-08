@@ -1,6 +1,7 @@
 import { anyApi, httpRouter } from "convex/server";
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { lookupVerifiedAccountEmail, requireVerifiedAccountEmail } from "./lib/notificationEmail";
 import { TOUCH_DEBOUNCE_MS } from "./apiKeys";
 import {
   CHECKOUT_RATE_LIMITED,
@@ -651,12 +652,16 @@ http.route({
         if (!body.channelType) {
           return new Response(JSON.stringify({ error: "channelType required" }), { status: 400, headers: { "Content-Type": "application/json" } });
         }
+        const verifiedAccountEmail = body.channelType === "email"
+          ? requireVerifiedAccountEmail(body.email, await lookupVerifiedAccountEmail(userId))
+          : undefined;
         const setResult = await ctx.runMutation((internal as any).notificationChannels.setChannelForUser, {
           userId,
           channelType: body.channelType as "telegram" | "slack" | "email" | "webhook",
           chatId: body.chatId,
           webhookEnvelope: body.webhookEnvelope,
           email: body.email,
+          verifiedAccountEmail,
           webhookLabel: body.webhookLabel,
           scheduleWelcome: body.scheduleWelcome === true,
         });
@@ -884,6 +889,10 @@ http.route({
 
       return new Response(JSON.stringify({ error: "Unknown action" }), { status: 400, headers: { "Content-Type": "application/json" } });
     } catch (err: unknown) {
+      const code = extractConvexErrorCode(err);
+      if (code === "EMAIL_OWNERSHIP_REQUIRED" || code === "PRO_REQUIRED") {
+        return new Response(JSON.stringify({ error: code }), { status: code === "PRO_REQUIRED" ? 402 : 400, headers: { "Content-Type": "application/json" } });
+      }
       const msg = err instanceof Error ? err.message : String(err);
       return new Response(JSON.stringify({ error: msg }), { status: 500, headers: { "Content-Type": "application/json" } });
     }

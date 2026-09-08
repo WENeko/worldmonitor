@@ -510,6 +510,12 @@ export default async function handler(req: Request, ctx: { waitUntil: (p: Promis
       const resp = relay.response;
       if (!resp.ok) {
         console.error(`[notification-channels] POST ${relayAction} relay error:`, resp.status);
+        if (welcomeChannelType === 'email' && resp.status === 400) {
+          const failure = await resp.json().catch(() => null);
+          if (failure?.error === 'EMAIL_OWNERSHIP_REQUIRED') {
+            return finish(json({ error: 'EMAIL_OWNERSHIP_REQUIRED' }, 400, corsHeaders));
+          }
+        }
         if (resp.status === 503) {
           return finish(json({ error: 'Service unavailable' }, 503, corsHeaders));
         }

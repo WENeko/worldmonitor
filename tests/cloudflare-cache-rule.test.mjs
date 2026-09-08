@@ -304,6 +304,27 @@ describe('cloudflare corpus cache rule', () => {
     assert.ok(!rule.expression.includes('path.extension in {"" "html"}'), 'the exemption is an allowlist of files, not a denylist of documents');
   });
 
+  it('claims both sitemaps, with the origin TTL header to match (#7869)', () => {
+    // Round 7 of the GEO audit measured /sitemap.xml and /sitemap-main.xml
+    // `cf-cache-status: DYNAMIC` under a GET while every other corpus route hit.
+    // The bypass rule names /sitemap.xml outright and .xml is outside
+    // Cloudflare's default-cacheable extensions, so neither half alone moves
+    // them: the claim below grants eligibility, the vercel.json header supplies
+    // the TTL. The generic surface-equality test above catches one half going
+    // missing; this one names the URLs so dropping BOTH still fails.
+    const advertised = vercelEdgeCacheSurface();
+    for (const file of ['sitemap.xml', 'sitemap-main.xml']) {
+      assert.ok(
+        AGENT_TEXT_FILES.includes(file),
+        `${file} must be claimed by the cache rule or Cloudflare's bypass keeps it DYNAMIC`,
+      );
+      assert.ok(
+        advertised.files.has(file),
+        `vercel.json must advertise /${file} with the shared CDN-Cache-Control, or the claim caches at Vercel's static default`,
+      );
+    }
+  });
+
   it('leaves the blog asset prefixes to the zone\'s older "Blog" rule', () => {
     // That rule gives /blog/_astro/, /blog/og/ and /blog/images/ a month-long
     // override TTL. Cloudflare lets the last matching rule write edge_ttl, so

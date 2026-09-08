@@ -23,7 +23,7 @@ A seeder's failure path retains last-good data by extending the payload key's TT
 
 Found while reviewing [PR #7862](https://github.com/koala73/worldmonitor/pull/7862) (issue [#7845](https://github.com/koala73/worldmonitor/issues/7845)), in the fix's own first draft, before merge.
 
-> **Status: the fix is open in [#7862](https://github.com/koala73/worldmonitor/pull/7862), not yet merged.** Every code and test excerpt below is quoted from that branch, so `COMPANIONS`, `companionMetaKey`, the `preserveKeyTtls` declaration and `tests/cloudflare-radar-companion-publication.test.mjs` do **not** exist on `main` until it lands. The *lesson* holds regardless of that PR's fate; the *citations* resolve only once it merges.
+> **History worth knowing, because it is the same lesson twice.** Two independent fixes for [#7845](https://github.com/koala73/worldmonitor/issues/7845) were open at once. [#7876](https://github.com/koala73/worldmonitor/pull/7876) merged first and shipped the retention path *without* the marker extension — so the failure described on this page went live on `main` before the page describing it did. [#7862](https://github.com/koala73/worldmonitor/pull/7862) adds the marker extension on top. If you are reading this before #7862 lands, `COMPANIONS`, `companionMetaKey` and the `preserveKeyTtls` meta entries are not yet on `main`, and the seven-day decay to `OK` is live.
 
 ## Symptoms
 

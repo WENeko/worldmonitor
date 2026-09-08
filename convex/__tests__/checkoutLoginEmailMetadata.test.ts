@@ -67,6 +67,8 @@ describe("checkout stamps a signed login email (#6335)", () => {
       .action(api.payments.checkout.createCheckout, { productId: PRODUCT_ID });
 
     const metadata = capturedMetadata();
+    // Billing email remains a provider input; signed login identity is separate.
+    expect(vi.mocked(createDodoCheckoutSession).mock.calls[0][0]).not.toHaveProperty("customer");
     // Case is preserved: the signature covers the exact bytes, and the local
     // part of an address is case-sensitive per RFC 5321.
     expect(metadata.wm_login_email).toBe("Fresh.Login@Example.com");

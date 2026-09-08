@@ -2391,7 +2391,7 @@ async function main() {
     }
 
     const ruleChannelSet = new Set(rule.channels ?? []);
-    const deliverableChannels = channels.filter(ch => ruleChannelSet.has(ch.channelType) && ch.verified);
+    const deliverableChannels = channels.filter(ch => ruleChannelSet.has(ch.channelType) && ch.verified && (ch.channelType !== 'email' || ch.emailOwnership === 'verified_account'));
     if (deliverableChannels.length === 0) {
       console.log(`[digest] No deliverable channels for ${rule.userId} — skipping`);
       continue;

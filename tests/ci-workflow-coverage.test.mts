@@ -687,13 +687,18 @@ describe('deployment_status triggers — npm cache scope hygiene (#7593)', () =>
 });
 
 describe('CI workflow coverage', () => {
-  it('stages the regenerated main sitemap in the weekly pulse PR', () => {
+  it('stages the regenerated sitemap and software dates in the weekly pulse PR', () => {
     const pulseWorkflow = read(resolve(workflowsDir, 'crawlable-pulse-refresh.yml'));
     const openPrStep = workflowStepBlock(pulseWorkflow, 'Open the weekly pulse PR');
     assert.match(
       openPrStep,
-      /git\s+add\s+"\$snapshot_path"\s+public\/sitemap\.xml\s+public\/sitemap-main\.xml\s+pro-test\/src\/generated\/teasers\.json/,
-      'weekly pulse PRs must include the regenerated main sitemap artifact',
+      /git\s+add\s+"\$snapshot_path"\s+public\/sitemap\.xml\s+public\/sitemap-main\.xml\s+pro-test\/src\/generated\/teasers\.json\s+pro-test\/welcome\.html\s+pro-test\/index\.html/,
+      'weekly pulse PRs must include the sitemap and both shared software dates',
+    );
+    assert.match(
+      openPrStep,
+      /git commit -m "chore\(corpus\): refresh[^\n]+\n[\s\S]*npm run build:sitemap\n\s+git add public\/sitemap\.xml public\/sitemap-main\.xml\n[\s\S]*git commit -m "chore\(corpus\): align[^\n]+\n[\s\S]*node scripts\/build-sitemap\.mjs --check\n\s+git push/,
+      'publish the sitemap only after regenerating its dates from committed material sources',
     );
   });
 

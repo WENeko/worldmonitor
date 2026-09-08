@@ -2,6 +2,8 @@
 // This stays separate from the shared corpus generator so the large page-specific
 // template does not obscure the corpus orchestration and other page families.
 
+import { createHash } from 'node:crypto';
+
 import {
   catalogCoverageCountryOptions,
   catalogCountryOptions,
@@ -694,9 +696,96 @@ export function buildSourceCatalog(entries, { logicalProviders = [] } = {}) {
   return catalog.sort((left, right) => left.displayName.localeCompare(right.displayName, 'en', { sensitivity: 'base' }));
 }
 
+/**
+ * Stable per-provider fragment ids for the catalog cards (#7869).
+ *
+ * Round 7 of the GEO audit found the page's `ItemList` announcing 748 elements
+ * as bare strings, 43 of the names repeated. The repeats are not duplicates:
+ * they are one publisher reached through several hosts (Yahoo Finance through
+ * three, Euronews through eight language editions), each its own catalog entry.
+ * A name alone cannot tell them apart, so every card gets an id and every
+ * `ListItem` a url pointing at it — which is also what makes the count
+ * `numberOfItems` publishes a count of things a reader can go and look at.
+ *
+ * Keyed on `provider`, the catalog's own unique key, not on the display name,
+ * and every anchor carries a digest of that key. The digest is unconditional on
+ * purpose. Two earlier shapes were tried and both leak the rest of the catalog
+ * into an individual anchor:
+ *
+ *   - An arrival-ordered counter (`-2`, `-3`) depends on iteration order, and
+ *     the catalog is sorted by displayName, so renaming any provider could
+ *     reshuffle which collider owned the bare id.
+ *   - Suffixing only when a base has more than one claimant still depends on
+ *     catalog membership: publish `a.b` alone and it gets the bare
+ *     `provider-a-b`; add `a-b` later and the first one's anchor changes.
+ *
+ * Both silently repoint a citation that has already been crawled and stored.
+ * These fragments are published data — one per ListItem url — so an anchor has
+ * to be a pure function of its own provider key and nothing else.
+ *
+ * A third shape got most of the way there and kept one channel open: it fell
+ * back to an arrival-ordered `-2` when two keys produced the same anchor, so a
+ * digest collision reintroduced the ordering dependence it existed to remove.
+ * That was reachable, not theoretical — `a-b-c-d-e-f.g.h-i-j-k-l-m-n-o-p-com`
+ * and `a.b-c.d-e-f-g-h.i.j.k-l-m-n-o-p-com` share both a slug and a 24-bit
+ * SHA-1 prefix, and reversing them swapped which one owned the bare anchor.
+ * So there is no fallback here any more: the digest is 64 bits, and a genuine
+ * collision between two DIFFERENT catalog keys throws instead of renumbering. A
+ * loud build failure is the right answer to a 2^-64 event; silently handing one
+ * provider's published citation to another is not. `seen` below only detects
+ * that case — it is never an input to the anchor's value — and it compares the
+ * RAW catalog key, not the normalised one, so two entries that normalise alike
+ * (`null` and `undefined` both coerce to the empty string) are caught rather
+ * than quietly rendering one id on two cards.
+ *
+ * The character class reduces every key to `[a-z0-9-]`, which is what lets the
+ * caller interpolate the id into the card markup and the JSON-LD url without
+ * escaping either; tests/crawlable-corpus.test.mjs pins that class so a future
+ * relaxation cannot quietly remove the guarantee.
+ *
+ * An anchor that resolves is not yet an anchor a reader can see, which is why
+ * `.provider-card` carries `scroll-margin-top`. Two sticky bars sit above the
+ * grid — the page header (top: 0, 146px) and .catalog-controls (top: 68px,
+ * bottom 167px) — and a card is 180px tall, so without the offset a
+ * `#provider-*` fragment parks 167 of those 180px under chrome. Measured in
+ * Chromium against the generated page before the offset landed: the card
+ * arrived at viewport y = -0.06. Below 720px .catalog-controls goes static and
+ * only the header stickies, so 176px is generous there rather than wrong.
+ *
+ * The slug transform is spelled out here rather than imported from
+ * build-crawlable-corpus.mjs's exported `slugify`: that module imports THIS one,
+ * so the import would close a cycle. A local slug helper is also what the other
+ * generators in scripts/ do.
+ */
+export function sourceCardAnchors(sourceCatalog) {
+  const slugBase = (key) => String(key ?? '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/&/g, ' and ')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase() || 'source';
+
+  const anchors = new Map();
+  const seen = new Map();
+  for (const provider of sourceCatalog) {
+    const key = String(provider.provider ?? '');
+    const anchor = `provider-${slugBase(key)}-${createHash('sha1').update(key).digest('hex').slice(0, 16)}`;
+    if (seen.has(anchor) && seen.get(anchor) !== provider.provider) {
+      throw new Error(
+        `Source card anchor collision: ${JSON.stringify(seen.get(anchor))} and ${JSON.stringify(provider.provider)} both map to #${anchor}`,
+      );
+    }
+    seen.set(anchor, provider.provider);
+    anchors.set(provider.provider, anchor);
+  }
+  return anchors;
+}
+
 export function renderSourcesIndex({ sourceStats, sourceCatalog, catalogDatasets = [], baseUrl, lastmod, helpers }) {
   const { absoluteUrl, breadcrumbLd, dataCatalogLd, escapeHtml, pageDocument, withUtmSource } = helpers;
   const path = '/sources/';
+  const pageUrl = absoluteUrl(baseUrl, path);
   const description = `Explore ${sourceStats.providerCount} active providers and ${sourceStats.activeHosts} source hosts across World Monitor's global intelligence, markets, energy, cyber, aviation, climate and news coverage.`;
   // Query precedes the fragment — withUtmSource() would append after the
   // anchor and push the query into the fragment, so build these by hand.
@@ -723,6 +812,7 @@ export function renderSourcesIndex({ sourceStats, sourceCatalog, catalogDatasets
         </article>`).join('\n');
   const countryOptions = catalogCountryOptions(sourceCatalog);
   const coverageOptions = catalogCoverageCountryOptions(sourceCatalog);
+  const cardAnchors = sourceCardAnchors(sourceCatalog);
   const providerCards = sourceCatalog.map((provider) => {
     const domain = domainById.get(provider.domainId);
     const countryLabel = sourceOriginLabel(provider.originCountry);
@@ -736,7 +826,7 @@ export function renderSourcesIndex({ sourceStats, sourceCatalog, catalogDatasets
     const kindBadges = provider.kinds.map((kind) => (
       `<span class="kind-badge">${escapeHtml(kindLabels[kind] || kind)}</span>`
     )).join('');
-    return `        <article class="provider-card" data-provider="${escapeHtml(provider.provider)}" data-provider-name="${escapeHtml(provider.displayName)}" data-source-domain="${provider.domainId}" data-source-kind="${provider.kinds.join(' ')}" data-source-country="${countryFilter}" data-source-coverage="${escapeHtml(coverageFilter)}">
+    return `        <article class="provider-card" id="${cardAnchors.get(provider.provider)}" data-provider="${escapeHtml(provider.provider)}" data-provider-name="${escapeHtml(provider.displayName)}" data-source-domain="${provider.domainId}" data-source-kind="${provider.kinds.join(' ')}" data-source-country="${countryFilter}" data-source-coverage="${escapeHtml(coverageFilter)}">
           <div class="provider-heading">
             <span class="provider-domain">${escapeHtml(domain.name)}</span>
             <h3>${escapeHtml(provider.displayName)}</h3>
@@ -928,7 +1018,7 @@ ${providerCards}
       .catalog-meta a { font-size: 12px; }
       .catalog-country-note { margin: 0 2px 15px; color: var(--muted); font-size: 13px; line-height: 1.6; }
       .provider-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-left: 1px solid var(--line); border-top: 1px solid var(--line); }
-      .provider-card { min-width: 0; min-height: 180px; padding: 18px; display: flex; flex-direction: column; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: rgba(9,13,11,.48); }
+      .provider-card { min-width: 0; min-height: 180px; padding: 18px; scroll-margin-top: 176px; display: flex; flex-direction: column; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: rgba(9,13,11,.48); }
       .provider-card:hover { background: var(--panel-2); }
       .provider-domain { color: var(--accent); font: 8px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .1em; text-transform: uppercase; }
       .provider-card h3 { margin: 8px 0 0; font-size: 15px; line-height: 1.3; overflow-wrap: anywhere; }
@@ -1036,13 +1126,18 @@ ${providerCards}
         '@type': 'CollectionPage',
         name: 'World Monitor data source catalog',
         description,
-        url: absoluteUrl(baseUrl, path),
+        url: pageUrl,
         inLanguage: 'en-US',
         mainEntity: {
           '@type': 'ItemList',
           numberOfItems: sourceCatalog.length,
           itemListOrder: 'https://schema.org/ItemListUnordered',
-          itemListElement: sourceCatalog.map((provider) => provider.displayName),
+          itemListElement: sourceCatalog.map((provider, index) => ({
+            '@type': 'ListItem',
+            position: index + 1,
+            name: provider.displayName,
+            url: `${pageUrl}#${cardAnchors.get(provider.provider)}`,
+          })),
         },
       },
       catalogLd,

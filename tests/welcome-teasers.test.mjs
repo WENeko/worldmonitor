@@ -21,6 +21,8 @@ import { fileURLToPath } from 'node:url';
 import {
   TEASERS_OUTPUT_PATH,
   buildWelcomeTeasers,
+  renderProHtml,
+  renderWelcomeHtml,
   renderWelcomeTeasers,
 } from '../scripts/build-welcome-teasers.mjs';
 import {
@@ -249,6 +251,16 @@ describe('welcome teaser strip carries its snapshot stamp (#7654)', () => {
       new RegExp(`"dateModified": "${snapshot.capturedAt}"`),
       'homepage dateModified must agree with lastmod on the same snapshot date',
     );
+    assert.match(read('pro-test/index.html'), new RegExp(`"dateModified": "${snapshot.capturedAt}"`),
+      'the shared software entity must declare the same date on the Pro page');
+  });
+
+  it('updates both software declarations for the next pulse', () => {
+    const capturedAt = '2026-10-01';
+    for (const render of [renderWelcomeHtml, renderProHtml]) {
+      const html = render({ capturedAt });
+      assert.match(html, /"dateModified": "2026-10-01"/);
+    }
   });
 
   it('badges the snapshot rows as a published pulse, never a sample', () => {

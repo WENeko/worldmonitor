@@ -7120,6 +7120,346 @@
           "updatedAt": "2026-01-15T08:01:01.497Z"
         }
       ]
+    },
+    "lebanon-israel-escalation": {
+      "state": "ready",
+      "eventsTotal": "756",
+      "fatalities": "33",
+      "politicalViolenceEvents": "626",
+      "referencePeriod": "2025-12-09",
+      "asOf": "2026-01-15T03:01:30.380Z",
+      "missingCountries": [],
+      "rows": [
+        {
+          "code": "IL",
+          "name": "Israel",
+          "events": 113,
+          "fatalities": 0,
+          "political": 6,
+          "demonstrations": 107,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        },
+        {
+          "code": "LB",
+          "name": "Lebanon",
+          "events": 643,
+          "fatalities": 33,
+          "political": 620,
+          "demonstrations": 23,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        }
+      ]
+    },
+    "hormuz-gulf-security": {
+      "state": "ready",
+      "eventsTotal": "839",
+      "fatalities": "90",
+      "politicalViolenceEvents": "165",
+      "referencePeriod": "2025-12-09",
+      "asOf": "2026-01-15T03:01:30.380Z",
+      "missingCountries": [],
+      "rows": [
+        {
+          "code": "BH",
+          "name": "Bahrain",
+          "events": 36,
+          "fatalities": 0,
+          "political": 2,
+          "demonstrations": 34,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        },
+        {
+          "code": "IR",
+          "name": "Iran",
+          "events": 518,
+          "fatalities": 51,
+          "political": 65,
+          "demonstrations": 453,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        },
+        {
+          "code": "IQ",
+          "name": "Iraq",
+          "events": 257,
+          "fatalities": 37,
+          "political": 70,
+          "demonstrations": 187,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        },
+        {
+          "code": "KW",
+          "name": "Kuwait",
+          "events": 4,
+          "fatalities": 0,
+          "political": 4,
+          "demonstrations": 0,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        },
+        {
+          "code": "OM",
+          "name": "Oman",
+          "events": 13,
+          "fatalities": 2,
+          "political": 13,
+          "demonstrations": 0,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        },
+        {
+          "code": "QA",
+          "name": "Qatar",
+          "events": 0,
+          "fatalities": 0,
+          "political": 0,
+          "demonstrations": 0,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        },
+        {
+          "code": "SA",
+          "name": "Saudi Arabia",
+          "events": 10,
+          "fatalities": 0,
+          "political": 10,
+          "demonstrations": 0,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        },
+        {
+          "code": "AE",
+          "name": "United Arab Emirates",
+          "events": 1,
+          "fatalities": 0,
+          "political": 1,
+          "demonstrations": 0,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        }
+      ]
+    },
+    "sahel-insurgency": {
+      "state": "ready",
+      "eventsTotal": "351",
+      "fatalities": "863",
+      "politicalViolenceEvents": "338",
+      "referencePeriod": "2025-12-09",
+      "asOf": "2026-01-15T03:01:30.380Z",
+      "missingCountries": [],
+      "rows": [
+        {
+          "code": "BF",
+          "name": "Burkina Faso",
+          "events": 122,
+          "fatalities": 322,
+          "political": 112,
+          "demonstrations": 10,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        },
+        {
+          "code": "ML",
+          "name": "Mali",
+          "events": 156,
+          "fatalities": 371,
+          "political": 156,
+          "demonstrations": 0,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        },
+        {
+          "code": "NE",
+          "name": "Niger",
+          "events": 73,
+          "fatalities": 170,
+          "political": 70,
+          "demonstrations": 3,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        }
+      ]
+    },
+    "horn-of-africa": {
+      "state": "ready",
+      "eventsTotal": "955",
+      "fatalities": "1,522",
+      "politicalViolenceEvents": "891",
+      "referencePeriod": "2025-12-09",
+      "asOf": "2026-01-15T03:01:30.380Z",
+      "missingCountries": [],
+      "rows": [
+        {
+          "code": "ER",
+          "name": "Eritrea",
+          "events": 0,
+          "fatalities": 0,
+          "political": 0,
+          "demonstrations": 0,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        },
+        {
+          "code": "ET",
+          "name": "Ethiopia",
+          "events": 219,
+          "fatalities": 603,
+          "political": 204,
+          "demonstrations": 15,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        },
+        {
+          "code": "SO",
+          "name": "Somalia",
+          "events": 596,
+          "fatalities": 614,
+          "political": 550,
+          "demonstrations": 46,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        },
+        {
+          "code": "SS",
+          "name": "South Sudan",
+          "events": 140,
+          "fatalities": 305,
+          "political": 137,
+          "demonstrations": 3,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        }
+      ]
+    },
+    "myanmar-civil-war": {
+      "state": "ready",
+      "eventsTotal": "859",
+      "fatalities": "907",
+      "politicalViolenceEvents": "847",
+      "referencePeriod": "2025-12-09",
+      "asOf": "2026-01-15T03:01:30.380Z",
+      "missingCountries": [],
+      "rows": [
+        {
+          "code": "MM",
+          "name": "Myanmar (Burma)",
+          "events": 859,
+          "fatalities": 907,
+          "political": 847,
+          "demonstrations": 12,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        }
+      ]
+    },
+    "haiti-gang-crisis": {
+      "state": "ready",
+      "eventsTotal": "108",
+      "fatalities": "167",
+      "politicalViolenceEvents": "85",
+      "referencePeriod": "2025-12-09",
+      "asOf": "2026-01-15T03:01:30.380Z",
+      "missingCountries": [],
+      "rows": [
+        {
+          "code": "HT",
+          "name": "Haiti",
+          "events": 108,
+          "fatalities": 167,
+          "political": 85,
+          "demonstrations": 23,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        }
+      ]
+    },
+    "drc-eastern-conflict": {
+      "state": "ready",
+      "eventsTotal": "315",
+      "fatalities": "317",
+      "politicalViolenceEvents": "291",
+      "referencePeriod": "2025-12-09",
+      "asOf": "2026-01-15T03:01:30.380Z",
+      "missingCountries": [],
+      "rows": [
+        {
+          "code": "CD",
+          "name": "Congo - Kinshasa",
+          "events": 315,
+          "fatalities": 317,
+          "political": 291,
+          "demonstrations": 24,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        }
+      ]
+    },
+    "nigeria-security-crisis": {
+      "state": "ready",
+      "eventsTotal": "1,180",
+      "fatalities": "1,851",
+      "politicalViolenceEvents": "1,127",
+      "referencePeriod": "2025-12-09",
+      "asOf": "2026-01-15T03:01:30.380Z",
+      "missingCountries": [],
+      "rows": [
+        {
+          "code": "NG",
+          "name": "Nigeria",
+          "events": 1180,
+          "fatalities": 1851,
+          "political": 1127,
+          "demonstrations": 53,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        }
+      ]
+    },
+    "afghanistan-crisis": {
+      "state": "ready",
+      "eventsTotal": "217",
+      "fatalities": "214",
+      "politicalViolenceEvents": "176",
+      "referencePeriod": "2025-12-09",
+      "asOf": "2026-01-15T03:01:30.380Z",
+      "missingCountries": [],
+      "rows": [
+        {
+          "code": "AF",
+          "name": "Afghanistan",
+          "events": 217,
+          "fatalities": 214,
+          "political": 176,
+          "demonstrations": 41,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        }
+      ]
+    },
+    "palestine-gaza-crisis": {
+      "state": "ready",
+      "eventsTotal": "1,489",
+      "fatalities": "163",
+      "politicalViolenceEvents": "1,461",
+      "referencePeriod": "2025-12-09",
+      "asOf": "2026-01-15T03:01:30.380Z",
+      "missingCountries": [],
+      "rows": [
+        {
+          "code": "PS",
+          "name": "Palestinian Territories",
+          "events": 1489,
+          "fatalities": 163,
+          "political": 1461,
+          "demonstrations": 28,
+          "referencePeriod": "2025-12-09",
+          "updatedAt": "2026-01-15T03:01:30.380Z"
+        }
+      ]
     }
   },
   "headlines": [
@@ -7448,7 +7788,7 @@
     "countryErrorCount": 2,
     "chokepointCount": 13,
     "chokepointErrorCount": 0,
-    "crisisCount": 4,
+    "crisisCount": 14,
     "crisisErrorCount": 0,
     "headlineCount": 4,
     "headlineErrorCount": 0,

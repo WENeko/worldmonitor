@@ -9,6 +9,7 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { channelTypeValidator } from "./constants";
+import { requireVerifiedAccountEmail } from "./lib/notificationEmail";
 
 // Versioned queue: old Railway relays only poll wm:events:queue and ignore
 // welcomeId. Keeping connection-scoped events on a new queue means they wait
@@ -186,10 +187,12 @@ export const queueChannelWelcome = internalAction({
 export const getChannelsByUserId = internalQuery({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const channels = await ctx.db
       .query("notificationChannels")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .collect();
+    return channels.map(channel => channel.channelType === "email" && channel.emailOwnership !== "verified_account"
+      ? { ...channel, verified: false } : channel);
   },
 });
 
@@ -202,6 +205,8 @@ export const setChannelForUser = internalMutation({
     email: v.optional(v.string()),
     webhookLabel: v.optional(v.string()),
     scheduleWelcome: v.optional(v.boolean()),
+    // Internal-only: derived by the relay HTTP handler from Clerk, never the body.
+    verifiedAccountEmail: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { userId, channelType, chatId, webhookEnvelope, email, webhookLabel } = args;
@@ -223,8 +228,9 @@ export const setChannelForUser = internalMutation({
       const doc = { userId, channelType: "slack" as const, webhookEnvelope, verified: true, linkedAt: now };
       if (existing) { await ctx.db.replace(existing._id, doc); } else { channelId = String(await ctx.db.insert("notificationChannels", doc)); }
     } else if (channelType === "email") {
-      if (!email) throw new ConvexError("email required for email channel");
-      const doc = { userId, channelType: "email" as const, email, verified: true, linkedAt: now };
+      await assertProEntitlement(ctx, userId);
+      const recipient = requireVerifiedAccountEmail(email, args.verifiedAccountEmail);
+      const doc = { userId, channelType: "email" as const, email: recipient, emailOwnership: "verified_account" as const, verified: true, linkedAt: now };
       if (existing) { await ctx.db.replace(existing._id, doc); } else { channelId = String(await ctx.db.insert("notificationChannels", doc)); }
     } else if (channelType === "webhook") {
       if (!webhookEnvelope) throw new ConvexError("webhookEnvelope required for webhook channel");
@@ -459,10 +465,12 @@ export const getChannels = query({
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
-    return await ctx.db
+    const channels = await ctx.db
       .query("notificationChannels")
       .withIndex("by_user", (q) => q.eq("userId", identity.subject))
       .collect();
+    return channels.map(channel => channel.channelType === "email" && channel.emailOwnership !== "verified_account"
+      ? { ...channel, verified: false } : channel);
   },
 });
 
@@ -506,8 +514,8 @@ export const setChannel = mutation({
         await ctx.db.insert("notificationChannels", doc);
       }
     } else if (args.channelType === "email") {
-      if (!args.email) throw new ConvexError("email required for email channel");
-      const doc = { userId, channelType: "email" as const, email: args.email, verified: true, linkedAt: now };
+      const email = requireVerifiedAccountEmail(args.email, identity.emailVerified === true ? identity.email : undefined);
+      const doc = { userId, channelType: "email" as const, email, emailOwnership: "verified_account" as const, verified: true, linkedAt: now };
       if (existing) {
         await ctx.db.replace(existing._id, doc);
       } else {

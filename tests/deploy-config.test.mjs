@@ -891,17 +891,27 @@ describe('crawlable content corpus deployment contracts', () => {
       assert.equal(effectiveHeader(route, 'Vercel-CDN-Cache-Control'), null, `${route} is not a document and must not carry a Vercel cache policy`);
     }
 
+    // The sitemaps joined AGENT_TEXT_FILES in #7869 and keep the stricter
+    // browser policy they have always had — the crawler that re-fetches a
+    // sitemap wants a revalidation, and the shared edge TTL is unaffected.
+    const SITEMAPS = new Set(['sitemap.xml', 'sitemap-main.xml']);
     for (const file of AGENT_TEXT_FILES) {
       const route = `/${file}`;
       assert.equal(effectiveHeader(route, 'CDN-Cache-Control'), HTML_ENTRY_EDGE_CACHE, `${route} must advertise the 600s Cloudflare TTL`);
       assert.equal(effectiveHeader(route, 'Vercel-CDN-Cache-Control'), HTML_ENTRY_EDGE_CACHE, `${route} must advertise the 600s Vercel TTL`);
-      assert.equal(effectiveCacheControl(route), 'public, max-age=3600', `${route} must keep its browser policy`);
+      assert.equal(
+        effectiveCacheControl(route),
+        SITEMAPS.has(file) ? 'public, max-age=3600, must-revalidate' : 'public, max-age=3600',
+        `${route} must keep its browser policy`,
+      );
       assert.ok(existsSync(resolve(__dirname, '../public', file)), `${route} must be a static file in public/`);
     }
     // /index.md reaches the origin under its own name and is rewritten to
-    // /home.md there; robots.txt and the sitemaps are left to the zone bypass on
-    // purpose; the nested llms.txt twins are not root files.
-    for (const route of ['/index.md', '/robots.txt', '/sitemap.xml', '/sitemap-main.xml', '/schemamap.xml', '/api/download.md', '/developers/llms.txt']) {
+    // /home.md there; robots.txt is left to the zone bypass on purpose (it is
+    // re-fetched rarely and cheap to serve); the nested llms.txt twins are not
+    // root files. /schemamap.xml is not in the sitemap index and no crawler is
+    // pointed at it.
+    for (const route of ['/index.md', '/robots.txt', '/schemamap.xml', '/api/download.md', '/developers/llms.txt']) {
       assert.equal(effectiveHeader(route, 'CDN-Cache-Control'), null, `${route} must not advertise the document TTL`);
     }
   });
@@ -912,11 +922,17 @@ describe('crawlable content corpus deployment contracts', () => {
     assert.match(robotsSource, /^Sitemap: https:\/\/www\.worldmonitor\.app\/docs\/sitemap\.xml$/m);
   });
 
-  it('caches root sitemaps at Vercel without changing the Cloudflare bypass (#7749)', () => {
+  // #7749 gave the sitemaps the Vercel half of the pair and deliberately left
+  // the Cloudflare bypass alone. Round 7 then measured both still DYNAMIC under
+  // a GET while every other corpus route hit, which is what the half-pair
+  // predicts: the bypass rule names /sitemap.xml and .xml is outside
+  // Cloudflare's default-cacheable extensions. #7869 completes the pair — the
+  // claim lives in scripts/cloudflare-cache-rule.mjs (AGENT_TEXT_FILES).
+  it('caches root sitemaps at both shared caches (#7869, supersedes #7749)', () => {
     for (const route of ['/sitemap.xml', '/sitemap-main.xml']) {
       assert.equal(effectiveCacheControl(route), 'public, max-age=3600, must-revalidate');
       assert.equal(effectiveHeader(route, 'Vercel-CDN-Cache-Control'), HTML_ENTRY_EDGE_CACHE);
-      assert.equal(effectiveHeader(route, 'CDN-Cache-Control'), null);
+      assert.equal(effectiveHeader(route, 'CDN-Cache-Control'), HTML_ENTRY_EDGE_CACHE);
     }
   });
 

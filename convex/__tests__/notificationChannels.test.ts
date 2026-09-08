@@ -10,10 +10,13 @@ const originalFetch = globalThis.fetch;
 const originalUpstashUrl = process.env.UPSTASH_REDIS_REST_URL;
 const originalUpstashToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 const originalRelaySecret = process.env.RELAY_SHARED_SECRET;
+const originalClerkSecret = process.env.CLERK_SECRET_KEY;
 
 const USER = {
   subject: "user-tests-notification-channels",
   tokenIdentifier: "clerk|user-tests-notification-channels",
+  email: "pro-user@example.com",
+  emailVerified: true,
 };
 
 afterEach(() => {
@@ -24,6 +27,8 @@ afterEach(() => {
   else process.env.UPSTASH_REDIS_REST_TOKEN = originalUpstashToken;
   if (originalRelaySecret === undefined) delete process.env.RELAY_SHARED_SECRET;
   else process.env.RELAY_SHARED_SECRET = originalRelaySecret;
+  if (originalClerkSecret === undefined) delete process.env.CLERK_SECRET_KEY;
+  else process.env.CLERK_SECRET_KEY = originalClerkSecret;
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -197,11 +202,13 @@ describe("notificationChannels — durable first-connect welcome", () => {
     vi.useFakeTimers();
     const fetchMock = installQueueMock();
     const t = convexTest(schema, modules);
+    await seedEntitlement(t);
 
     await expect(t.mutation(notificationChannelFns.setChannelForUser, {
       userId: USER.subject,
       channelType: "email",
       email: "first-connect@example.com",
+      verifiedAccountEmail: "first-connect@example.com",
       scheduleWelcome: true,
     })).resolves.toEqual({ isNew: true });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -238,6 +245,7 @@ describe("notificationChannels — durable first-connect welcome", () => {
       userId: USER.subject,
       channelType: "email",
       email: "first-connect@example.com",
+      verifiedAccountEmail: "first-connect@example.com",
       scheduleWelcome: true,
     })).resolves.toEqual({ isNew: false });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -274,8 +282,8 @@ describe("notificationChannels — durable first-connect welcome", () => {
       body: JSON.stringify({
         action: "set-channel",
         userId: USER.subject,
-        channelType: "email",
-        email: "relay-first-connect@example.com",
+        channelType: "slack",
+        webhookEnvelope: "encrypted-slack-credential",
         scheduleWelcome: true,
       }),
     });
@@ -291,7 +299,7 @@ describe("notificationChannels — durable first-connect welcome", () => {
     expect(queuedEvent(fetchMock).message).toEqual({
       eventType: "channel_welcome",
       userId: USER.subject,
-      channelType: "email",
+      channelType: "slack",
       welcomeId: expect.any(String),
     });
   });
@@ -333,6 +341,7 @@ describe("notificationChannels — durable first-connect welcome", () => {
     const fetchMock = installQueueMock();
     process.env.RELAY_SHARED_SECRET = "relay-secret";
     const t = convexTest(schema, modules);
+    await seedEntitlement(t);
 
     const response = await t.fetch("/relay/notification-channels", {
       method: "POST",
@@ -343,8 +352,8 @@ describe("notificationChannels — durable first-connect welcome", () => {
       body: JSON.stringify({
         action: "set-channel",
         userId: USER.subject,
-        channelType: "email",
-        email: "legacy-relay@example.com",
+        channelType: "slack",
+        webhookEnvelope: "encrypted-slack-credential",
       }),
     });
     expect(response.status).toBe(200);
@@ -364,11 +373,13 @@ describe("notificationChannels — durable first-connect welcome", () => {
     fetchMock.mockRejectedValueOnce(new Error("temporary Upstash timeout"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const t = convexTest(schema, modules);
+    await seedEntitlement(t);
 
     await expect(t.mutation(notificationChannelFns.setChannelForUser, {
       userId: USER.subject,
       channelType: "email",
       email: "retry-enqueue@example.com",
+      verifiedAccountEmail: "retry-enqueue@example.com",
       scheduleWelcome: true,
     })).resolves.toEqual({ isNew: true });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -390,11 +401,13 @@ describe("notificationChannels — durable first-connect welcome", () => {
       .mockResolvedValueOnce(Response.json({ result: 0 }));
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const t = convexTest(schema, modules);
+    await seedEntitlement(t);
 
     await expect(t.mutation(notificationChannelFns.setChannelForUser, {
       userId: USER.subject,
       channelType: "email",
       email: "ambiguous-enqueue@example.com",
+      verifiedAccountEmail: "ambiguous-enqueue@example.com",
       scheduleWelcome: true,
     })).resolves.toEqual({ isNew: true });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -437,11 +450,13 @@ describe("notificationChannels — durable first-connect welcome", () => {
     );
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const t = convexTest(schema, modules);
+    await seedEntitlement(t);
 
     await expect(t.mutation(notificationChannelFns.setChannelForUser, {
       userId: USER.subject,
       channelType: "email",
       email: "script-error@example.com",
+      verifiedAccountEmail: "script-error@example.com",
       scheduleWelcome: true,
     })).resolves.toEqual({ isNew: true });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -459,11 +474,13 @@ describe("notificationChannels — durable first-connect welcome", () => {
     vi.useFakeTimers();
     const fetchMock = installQueueMock();
     const t = convexTest(schema, modules);
+    await seedEntitlement(t);
 
     await expect(t.mutation(notificationChannelFns.setChannelForUser, {
       userId: USER.subject,
       channelType: "email",
       email: "old-connection@example.com",
+      verifiedAccountEmail: "old-connection@example.com",
       scheduleWelcome: true,
     })).resolves.toEqual({ isNew: true });
     await t.run(async (ctx) => {
@@ -492,6 +509,7 @@ describe("notificationChannels — durable first-connect welcome", () => {
     vi.useFakeTimers();
     const fetchMock = installQueueMock();
     const t = convexTest(schema, modules);
+    await seedEntitlement(t);
     const endpoint = "https://fcm.googleapis.com/push/shared-device";
     const otherUser = "user-tests-notification-channels-b";
 
@@ -540,11 +558,13 @@ describe("notificationChannels — durable first-connect welcome", () => {
     );
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const t = convexTest(schema, modules);
+    await seedEntitlement(t);
 
     await expect(t.mutation(notificationChannelFns.setChannelForUser, {
       userId: USER.subject,
       channelType: "email",
       email: "retry-exhausted@example.com",
+      verifiedAccountEmail: "retry-exhausted@example.com",
       scheduleWelcome: true,
     })).resolves.toEqual({ isNew: true });
     // The terminal attempt (attempt 5, no successor) rethrows inside the
@@ -563,5 +583,100 @@ describe("notificationChannels — durable first-connect welcome", () => {
     );
     // Attempts 1-5 warn-and-retry; the terminal attempt rethrows instead.
     expect(retryWarns).toHaveLength(5);
+  });
+});
+
+describe("notificationChannels — email ownership", () => {
+  test.each([
+    { email: "owner@example.com", emailVerified: true, destination: "unrelated@example.com" },
+    { email: "owner@example.com", emailVerified: false, destination: "owner@example.com" },
+    { email: "owner@example.com", emailVerified: undefined, destination: "owner@example.com" },
+  ])("public setter rejects missing or mismatched proof: %j", async ({ destination, ...claims }) => {
+    const t = convexTest(schema, modules);
+    await seedEntitlement(t);
+    await expect(t.withIdentity({ ...USER, ...claims }).mutation(api.notificationChannels.setChannel, {
+      channelType: "email", email: destination,
+    })).rejects.toThrow(/EMAIL_OWNERSHIP_REQUIRED/);
+    expect(await t.query(notificationChannelFns.getChannelsByUserId, { userId: USER.subject })).toEqual([]);
+  });
+
+  test("internal setter cannot promote an arbitrary email without proof", async () => {
+    const t = convexTest(schema, modules);
+    await seedEntitlement(t);
+    await expect(t.mutation(notificationChannelFns.setChannelForUser, {
+      userId: USER.subject, channelType: "email", email: "unrelated@example.com",
+    })).rejects.toThrow(/EMAIL_OWNERSHIP_REQUIRED/);
+    expect(await t.query(notificationChannelFns.getChannelsByUserId, { userId: USER.subject })).toEqual([]);
+  });
+
+  test("verified identity email persists ownership proof", async () => {
+    const t = convexTest(schema, modules);
+    await seedEntitlement(t);
+    await t.withIdentity({ ...USER, email: "owner@example.com", emailVerified: true }).mutation(api.notificationChannels.setChannel, {
+      channelType: "email", email: "owner@example.com",
+    });
+    expect(await t.query(notificationChannelFns.getChannelsByUserId, { userId: USER.subject })).toMatchObject([
+      { email: "owner@example.com", verified: true, emailOwnership: "verified_account" },
+    ]);
+  });
+
+  test("legacy verified flags are not delivery proof and rows remain unchanged", async () => {
+    const t = convexTest(schema, modules);
+    const id = await t.run(ctx => ctx.db.insert("notificationChannels", {
+      userId: USER.subject, channelType: "email", email: "unrelated@example.com", verified: true, linkedAt: 1,
+    }));
+    expect(await t.query(notificationChannelFns.getChannelsByUserId, { userId: USER.subject })).toMatchObject([
+      { email: "unrelated@example.com", verified: false },
+    ]);
+    expect(await t.run(ctx => ctx.db.get(id))).toMatchObject({ verified: true, linkedAt: 1 });
+  });
+});
+
+describe("notificationChannels — relay email ownership", () => {
+  test.each([
+    { destination: "unrelated@example.com", status: "verified", expected: 400 },
+    { destination: "owner@example.com", status: "unverified", expected: 400 },
+    { destination: "owner@example.com", status: "verified", expected: 200 },
+  ])("server verifies Clerk primary email: %j", async ({ destination, status, expected }) => {
+    process.env.RELAY_SHARED_SECRET = "relay-secret";
+    process.env.CLERK_SECRET_KEY = "fake-clerk-secret";
+    const t = convexTest(schema, modules);
+    await seedEntitlement(t);
+    const clerk = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      expect(String(url)).toBe(`https://api.clerk.com/v1/users/${USER.subject}`);
+      expect(init?.headers).toMatchObject({ Authorization: "Bearer fake-clerk-secret" });
+      return Response.json({ id: USER.subject, primary_email_address_id: "primary", email_addresses: [
+        { id: "primary", email_address: "owner@example.com", verification: { status } },
+        { id: "other", email_address: "unrelated@example.com", verification: { status: "unverified" } },
+      ] });
+    });
+    const response = await t.fetch("/relay/notification-channels", {
+      method: "POST", headers: { Authorization: "Bearer relay-secret", "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set-channel", userId: USER.subject, channelType: "email", email: destination,
+        verifiedAccountEmail: destination, emailVerified: true, emailOwnership: "verified_account" }),
+    });
+    expect(response.status).toBe(expected);
+    expect(clerk).toHaveBeenCalledTimes(1);
+    const channels = await t.query(notificationChannelFns.getChannelsByUserId, { userId: USER.subject });
+    expect(channels).toMatchObject(expected === 200 ? [{ email: "owner@example.com", verified: true, emailOwnership: "verified_account" }] : []);
+  });
+
+  test.each(["missing-secret", "provider-error", "wrong-user"])("fails closed when verification is unavailable: %s", async failure => {
+    process.env.RELAY_SHARED_SECRET = "relay-secret";
+    process.env.CLERK_SECRET_KEY = "fake-clerk-secret";
+    if (failure === "missing-secret") delete process.env.CLERK_SECRET_KEY;
+    const t = convexTest(schema, modules);
+    await seedEntitlement(t);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => failure === "provider-error"
+      ? new Response("unavailable", { status: 503 })
+      : Response.json({ id: "different-user", primary_email_address_id: "primary", email_addresses: [
+        { id: "primary", email_address: "owner@example.com", verification: { status: "verified" } },
+      ] }));
+    const response = await t.fetch("/relay/notification-channels", {
+      method: "POST", headers: { Authorization: "Bearer relay-secret", "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set-channel", userId: USER.subject, channelType: "email", email: "owner@example.com" }),
+    });
+    expect(response.status).toBe(500);
+    expect(await t.query(notificationChannelFns.getChannelsByUserId, { userId: USER.subject })).toEqual([]);
   });
 });

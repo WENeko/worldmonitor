@@ -72,6 +72,7 @@ describe('notification relay welcome identity', () => {
         channelType: 'email',
         email: 'replacement@example.com',
         verified: true,
+        emailOwnership: 'verified_account',
       }]);
     });
     globalThis.fetch = fetchMock;
@@ -144,6 +145,7 @@ describe('notification relay welcome identity', () => {
         channelType: 'email',
         email: 'current@example.com',
         verified: true,
+        emailOwnership: 'verified_account',
       }]);
     });
 

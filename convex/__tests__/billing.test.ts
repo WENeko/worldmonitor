@@ -12,17 +12,18 @@ import {
 } from "../payments/billing";
 import { upsertEntitlements } from "../payments/subscriptionHelpers";
 import { getFeaturesForPlan } from "../lib/entitlements";
-import { signAnonClaimToken } from "../lib/identitySigning";
+import { signAnonClaimToken, signUserId } from "../lib/identitySigning";
 
-// Mock the Dodo REST SDK so the reconciliation action's `payments.retrieve`
-// is controllable per-test (no real network). billing.ts only news up
-// DodoPayments inside getDodoClient(), so a class stub is sufficient. No
-// other test in this file exercises the real SDK.
-const { dodoRetrieveMock } = vi.hoisted(() => ({ dodoRetrieveMock: vi.fn() }));
+// Control provider retrieval and portal responses without network access.
+// The billing actions, queries and storage still run through production code.
+const { dodoRetrieveMock, dodoPortalMock } = vi.hoisted(() => ({
+  dodoRetrieveMock: vi.fn(),
+  dodoPortalMock: vi.fn(),
+}));
 vi.mock("dodopayments", () => ({
   DodoPayments: class {
     payments = { retrieve: dodoRetrieveMock };
-    customers = { customerPortal: { create: vi.fn() } };
+    customers = { customerPortal: { create: dodoPortalMock } };
   },
 }));
 
@@ -40,6 +41,7 @@ type PlanKey = keyof typeof PRODUCT_CATALOG;
 afterEach(() => {
   vi.restoreAllMocks();
   dodoRetrieveMock.mockReset();
+  dodoPortalMock.mockReset();
   vi.useRealTimers();
   delete process.env.DODO_IDENTITY_SIGNING_SECRET;
   delete process.env.DODO_ANON_CLAIM_TOKEN_TTL_MS;
@@ -2702,58 +2704,73 @@ describe("payments billing getDodoCustomerIdForUserPortal", () => {
     expect(result).toBeNull();
   });
 
-  test("returns the right dodoCustomerId for each Clerk user when SAME Dodo customer is shared across multiple Clerk accounts (the WORLDMONITOR-R5 scenario)", async () => {
-    // user_A and user_B both checked out with the same email; Dodo deduped
-    // to one customer (cus_shared). Each has their OWN subscription row,
-    // and the customers table's userId field may point at either one due
-    // to webhook race. This query must work for BOTH users regardless of
-    // who currently owns the customers row.
+  test.each([
+    ["shared provider customer", "cus_shared", "cus_shared"],
+    ["distinct provider customers", "cus_A", "cus_B"],
+  ])("characterizes signed owners and portal requests with %s (#7897)", async (_label, customerA, customerB) => {
+    process.env.DODO_IDENTITY_SIGNING_SECRET = SIGNING_SECRET;
+    process.env.DODO_API_KEY = "synthetic-portal-api-key";
+    dodoPortalMock.mockImplementation(async (customerId: string) => ({
+      link: `https://portal.example.test/${customerId}`,
+    }));
     const t = convexTest(schema, modules);
+    const owners = [
+      { subject: "user_A", tokenIdentifier: "clerk|user_A", email: "login-a@example.test" },
+      { subject: "user_B", tokenIdentifier: "clerk|user_B", email: "login-b@example.test" },
+    ];
+    const customerIds = [customerA, customerB];
 
-    // customers row currently owned by user_A (could just as easily be user_B).
-    await t.run(async (ctx) => {
-      await ctx.db.insert("customers", {
-        userId: "user_A",
-        dodoCustomerId: "cus_shared",
-        email: "shared@example.com",
-        normalizedEmail: "shared@example.com",
-        createdAt: NOW - DAY_MS,
-        updatedAt: NOW - DAY_MS,
+    for (const [index, owner] of owners.entries()) {
+      // The provider customer assignment is a fixture input, not proof that
+      // hosted checkout permits reuse without control of this billing email.
+      await t.mutation(internal.payments.webhookMutations.processWebhookEvent, {
+        webhookId: `msg_portal_${index}`,
+        eventType: "subscription.active",
+        timestamp: NOW + index,
+        rawPayload: {
+          type: "subscription.active",
+          data: {
+            subscription_id: `sub_portal_${index}`,
+            product_id: PRODUCT_CATALOG.pro_monthly.dodoProductId!,
+            status: "active",
+            customer: { customer_id: customerIds[index], email: "billing-alias@example.test" },
+            metadata: { wm_user_id: owner.subject, wm_user_id_sig: await signUserId(owner.subject) },
+            previous_billing_date: new Date(NOW - DAY_MS).toISOString(),
+            next_billing_date: new Date(NOW + 30 * DAY_MS).toISOString(),
+          },
+        },
       });
-    });
+    }
 
-    await seedSubscription(t, {
-      planKey: "pro_monthly",
-      dodoProductId: PRODUCT_CATALOG.pro_monthly.dodoProductId!,
-      status: "active",
-      currentPeriodEnd: NOW + 30 * DAY_MS,
-      suffix: "portal_userA",
-      userId: "user_A",
-      rawPayload: { customer: { customer_id: "cus_shared", email: "shared@example.com" } },
-    });
-    await seedSubscription(t, {
-      planKey: "pro_monthly",
-      dodoProductId: PRODUCT_CATALOG.pro_monthly.dodoProductId!,
-      status: "active",
-      currentPeriodEnd: NOW + 30 * DAY_MS,
-      suffix: "portal_userB",
-      userId: "user_B",
-      rawPayload: { customer: { customer_id: "cus_shared", email: "shared@example.com" } },
-    });
+    const beforePortal = await t.run(async (ctx) => ({
+      subscriptions: await ctx.db.query("subscriptions").collect(),
+      customers: await ctx.db.query("customers").collect(),
+    }));
+    expect(beforePortal.subscriptions).toHaveLength(2);
+    for (const [index, owner] of owners.entries()) {
+      expect(beforePortal.subscriptions.find((sub) => sub.dodoSubscriptionId === `sub_portal_${index}`))
+        .toMatchObject({ userId: owner.subject, dodoCustomerId: customerIds[index] });
+    }
+    expect(beforePortal.customers).toHaveLength(customerA === customerB ? 1 : 2);
+    expect(beforePortal.customers.find((customer) => customer.dodoCustomerId === customerB)?.userId)
+      .toBe("user_B");
 
-    const resultA = await t.query(
-      internal.payments.billing.getDodoCustomerIdForUserPortal,
-      { userId: "user_A" },
-    );
-    const resultB = await t.query(
-      internal.payments.billing.getDodoCustomerIdForUserPortal,
-      { userId: "user_B" },
-    );
-    // Both Clerk accounts resolve to the SAME shared Dodo customer,
-    // without needing to consult the customers table. Each Clerk
-    // account's "Manage Billing" click opens the right portal.
-    expect(resultA).toBe("cus_shared");
-    expect(resultB).toBe("cus_shared");
+    for (const [index, owner] of owners.entries()) {
+      const result = await t.withIdentity(owner).action(api.payments.billing.getCustomerPortalUrl, {});
+      expect(result).toEqual({ portal_url: `https://portal.example.test/${customerIds[index]}` });
+      expect(dodoPortalMock).toHaveBeenNthCalledWith(index + 1, customerIds[index], { send_email: false });
+    }
+    expect(dodoPortalMock).toHaveBeenCalledTimes(2);
+
+    // Knowing the same email alone provides no local customer mapping.
+    await expect(t.withIdentity({ subject: "user_unmapped", email: "billing-alias@example.test" })
+      .action(api.payments.billing.getCustomerPortalUrl, {})).rejects.toThrow("NO_CUSTOMER");
+    await expect(t.action(api.payments.billing.getCustomerPortalUrl, {})).rejects.toThrow("AUTH_REQUIRED");
+    expect(dodoPortalMock).toHaveBeenCalledTimes(2);
+    expect(await t.run(async (ctx) => ({
+      subscriptions: await ctx.db.query("subscriptions").collect(),
+      customers: await ctx.db.query("customers").collect(),
+    }))).toEqual(beforePortal);
   });
 
   test("resolves via the stable dodoCustomerId column even when a later lifecycle payload wiped the rawPayload customer field (P1 regression)", async () => {

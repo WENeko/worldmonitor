@@ -770,6 +770,7 @@
       "source": "/(sitemap\\.xml|sitemap-main\\.xml)",
       "headers": [
         {"key": "Cache-Control", "value": "public, max-age=3600, must-revalidate"},
+        {"key": "CDN-Cache-Control", "value": "public, s-maxage=600, stale-while-revalidate=60"},
         {"key": "Vercel-CDN-Cache-Control", "value": "public, s-maxage=600, stale-while-revalidate=60"}
       ]
     },

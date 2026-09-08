@@ -1343,7 +1343,20 @@ export function createDomainGateway(
       || isPublicSharedRpcRequest(request.url, request.method);
     const seedRefreshVerified = await isResilienceRankingSeedRefreshRequest(request, pathname);
     const relayWarmPingVerified = await isRelayWarmPingRequest(request, pathname);
-    const requiresDirectLlmQuota = !internalMcpVerified && await shouldReserveGatewayDirectLlmQuota(request, pathname);
+    // Resolve the quota policy against the route POST compatibility will use.
+    // Keep body validation after auth and abuse limiting; invalid bodies still
+    // return before reservation or dispatch.
+    let directLlmPolicyRequest = request;
+    if (
+      request.method === 'POST'
+      && GATEWAY_DIRECT_LLM_QUOTA_METHODS[pathname] === 'GET'
+      && isPostToGetCompatibleBodySize(request.headers)
+      && !router.match(request)
+    ) {
+      const getProbe = new Request(request.url, { method: 'GET', headers: request.headers });
+      if (router.match(getProbe)) directLlmPolicyRequest = getProbe;
+    }
+    const requiresDirectLlmQuota = !internalMcpVerified && await shouldReserveGatewayDirectLlmQuota(directLlmPolicyRequest, pathname);
     const isTierGated = !internalMcpVerified && !isPublicNoAuthRpc && !seedRefreshVerified && !relayWarmPingVerified && getRequiredTier(pathname) !== null;
     // Docker self-hosting has no Clerk/Convex entitlement backend. Its browser
     // still obtains and presents a server-signed anonymous session, so that

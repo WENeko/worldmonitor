@@ -397,3 +397,27 @@ describe('/api/notification-channels relay timeout recovery', () => {
     assert.equal(relayFetch.mock.calls.length, 3);
   });
 });
+
+describe('/api/notification-channels email ownership errors', () => {
+  it('preserves the ownership rejection for the browser', async () => {
+    installInMemoryUpstash();
+    const mod = await importFreshNotificationChannels();
+    mod.__setNotificationChannelsDepsForTests({
+      validateBearerToken: async () => ({ valid: true, userId: 'user-email-proof' }),
+      getEntitlements: async () => ({
+        planKey: 'pro_monthly',
+        features: { tier: 1, apiAccess: true, apiRateLimit: 1_000, maxDashboards: 10, prioritySupport: true, exportFormats: ['json'], mcpAccess: true },
+        validUntil: Date.now() + 60_000,
+      }),
+      fetch: async (_input, init) => {
+        const body = JSON.parse(String(init?.body));
+        if (body.action === 'welcome-scheduling-capability') return Response.json({ durableWelcomeScheduling: true });
+        return Response.json({ error: 'EMAIL_OWNERSHIP_REQUIRED' }, { status: 400 });
+      },
+    });
+    const response = await mod.default(makeSetChannelRequest(), { waitUntil() {} });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: 'EMAIL_OWNERSHIP_REQUIRED' });
+    mod.__setNotificationChannelsDepsForTests(null);
+  });
+});

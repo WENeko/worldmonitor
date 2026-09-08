@@ -685,6 +685,15 @@ describe(`live API cache/auth regression sweep (${LIVE ? 'ENABLED' : 'SKIPPED - 
       [`${WWW_BASE}/docs/documentation`, 'docs document'],
       [`${WWW_BASE}/blog/`, 'blog index'],
       [`${WWW_BASE}/llms.txt`, 'llms.txt'],
+      // #7869. The sitemaps are the one claimed family whose eligibility no
+      // probe covered, and the half that grants it lives in the live Cloudflare
+      // zone, not in the repo — so a merge that never runs
+      // `scripts/cloudflare-cache-rule.mjs --apply` leaves them DYNAMIC with
+      // every offline test still green. This is the probe that notices. Both
+      // are listed: the index and the URL set reach Cloudflare as separate
+      // objects and #7749 already shipped a half-pair for them once.
+      [`${WWW_BASE}/sitemap.xml`, 'root sitemap index'],
+      [`${WWW_BASE}/sitemap-main.xml`, 'root sitemap URL set'],
     ]) {
       const { resp } = await waitForCloudflareHit(url, name);
       assert.equal(
