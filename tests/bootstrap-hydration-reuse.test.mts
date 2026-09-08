@@ -491,7 +491,7 @@ describe('bootstrap hydration reuse (#7048)', () => {
     assert.equal(rpcUrlCount(requests), 1, 'the filtered read must use its own RPC/cache key');
   });
 
-  it('traffic anomalies: authoritative empty global hydration replaces cache but empty country results remain retryable', async () => {
+  it('traffic anomalies: authoritative empty hydration and country results stay cached', async () => {
     const requests = bootstrapStub({
       trafficAnomalies: { anomalies: [], totalCount: 0 },
     });
@@ -503,9 +503,9 @@ describe('bootstrap hydration reuse (#7048)', () => {
     assert.deepEqual(globalSecond, globalFirst, 'the empty global snapshot replaces the previous cached response');
     assert.equal(rpcUrlCount(requests), 0, 'valid empty global traffic hydration must stay in the breaker cache');
 
-    await harness.fetchTrafficAnomalies('US');
-    await harness.fetchTrafficAnomalies('US');
-    assert.equal(rpcUrlCount(requests), 2, 'empty country-filtered results retain their existing retry behavior');
+    await harness.fetchTrafficAnomalies('CA');
+    await harness.fetchTrafficAnomalies('CA');
+    assert.equal(rpcUrlCount(requests), 1, 'the confirmed empty country result stays cached after its first RPC');
   });
 
   it('socialVelocity (no breaker): the hydration handoff answers recurring reads', async () => {

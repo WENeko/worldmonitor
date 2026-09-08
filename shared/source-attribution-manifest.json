@@ -6374,6 +6374,9 @@
           "path": "scripts/validate-rss-feeds.mjs"
         },
         {
+          "path": "server/worldmonitor/intelligence/v1/_country-coverage-feeds.ts"
+        },
+        {
           "path": "server/worldmonitor/market/v1/stock-news-search.ts"
         },
         {

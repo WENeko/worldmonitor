@@ -66,10 +66,11 @@ in a bounded diagnostic collection rather than promoted to decision signals.
 ## Bounded collection
 
 SSE requests at most 100 rows from one reviewed 90-day page. SZSE requests at
-most two 50-row pages from the same reviewed window. The three-request total
-and two-proxy-request ceilings do not change. Results beyond those hard bounds
-report `PAGE_LIMIT_REACHED`; three consecutive empty results report
-`COVERAGE_GAP`.
+most two 50-row pages from the same reviewed window. SZSE has a four-request
+total and three-proxy-request ceiling so one transient CONNECT 5xx can rotate
+to a second China sticky exit without dropping the bounded second page. Results
+beyond those hard bounds report `PAGE_LIMIT_REACHED`; three consecutive empty
+results report `COVERAGE_GAP`.
 
 The combined snapshot retains at most 100 classified events, at most 20
 revisions per event, and at most 100 unclassified revisions. The Railway
@@ -96,8 +97,8 @@ Retries keep the selected host, credentials, and TLS mode. The China rotating
 port `30000` and unrecognized endpoint ranges stay unchanged.
 
 SSE uses up to four direct and four proxy requests with bounded concurrency.
-SZSE uses at most 2 direct attempts and at most 2 proxy attempts on distinct
-eligible gateway ports. Both routes share a total ceiling of 3 requests per
+SZSE uses at most 2 direct attempts and at most 3 proxy attempts on distinct
+eligible gateway ports. Both routes share a total ceiling of 4 requests per
 run.
 
 The fallback order applies only to transport failures. HTTP or schema results

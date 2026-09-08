@@ -72,6 +72,19 @@ test('Docker nginx injects LOCAL_API_TOKEN through a private transport header', 
   assert.doesNotMatch(nginx, /proxy_set_header Authorization/);
 });
 
+test('Docker nginx applies an inert response policy to the RSS proxy route', () => {
+  const nginx = readProjectFile('docker/nginx.conf');
+  const rssBlock = nginx.match(/location = \/api\/rss-proxy \{[\s\S]*?\n    \}/)?.[0] ?? '';
+
+  assert.ok(rssBlock, 'RSS proxy must have a dedicated Docker location');
+  assert.match(rssBlock, /add_header X-Content-Type-Options "nosniff" always;/);
+  assert.match(rssBlock, /add_header Content-Security-Policy "sandbox; default-src 'none'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" always;/);
+  assert.match(rssBlock, /proxy_pass http:\/\/127\.0\.0\.1:\$\{LOCAL_API_PORT\};/);
+  assert.match(rssBlock, /proxy_set_header X-WorldMonitor-Local-Token "\$\{LOCAL_API_TOKEN\}";/);
+  assert.match(rssBlock, /proxy_read_timeout 120s;/);
+  assert.match(rssBlock, /proxy_send_timeout 120s;/);
+});
+
 test('Docker nginx denies the native administration namespace before the data proxy', () => {
   const nginx = readProjectFile('docker/nginx.conf');
   assert.match(nginx, /location \^~ \/api\/local- \{\s*add_header Origin-Agent-Cluster "\?1" always;\s*return 403;/);

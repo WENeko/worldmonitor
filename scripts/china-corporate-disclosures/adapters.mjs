@@ -90,9 +90,9 @@ export const OFFICIAL_EXCHANGE_SOURCE_CONTRACTS = Object.freeze({
     metadataEndpoint: 'https://www.szse.cn/api/disc/announcement/annList',
     metadataHost: 'www.szse.cn',
     documentHosts: CHINA_DISCLOSURE_DOCUMENT_HOSTS.SZSE,
-    maxRequestsPerRun: 3,
+    maxRequestsPerRun: 4,
     maxDirectRequestsPerRun: 2,
-    maxProxyRequestsPerRun: 2,
+    maxProxyRequestsPerRun: 3,
     transportRecoverySuccessRuns: SZSE_TRANSPORT_RECOVERY_SUCCESS_RUNS,
     fallbackPolicy: 'direct_then_proxy_on_transport_failure',
     // SZSE_PROXY_URL is an optional source-specific override; Railway requires
@@ -101,8 +101,9 @@ export const OFFICIAL_EXCHANGE_SOURCE_CONTRACTS = Object.freeze({
     maxResponseBytes: 131_072,
     redirectPolicy: 'error',
     documentRetrieval: 'lazy-link-only',
-    // One extra page fits the existing one-direct-plus-two-proxy request
-    // ceiling. Counts beyond that hard bound stay visibly degraded.
+    // One extra page plus one transient CONNECT retry fits the bounded
+    // one-direct-plus-three-proxy request ceiling. Counts beyond that hard
+    // bound stay visibly degraded.
     paginationPolicy: 'bounded_two_pages',
     saturationBehavior: 'degraded_on_page_limit',
     emptyResultPolicy: Object.freeze({
@@ -177,7 +178,7 @@ const SSE_DIRECT_TIMEOUT_MS = 20_000;
 const SSE_PROXY_TIMEOUT_MS = 12_000;
 const SZSE_PAGE_SIZE = 50;
 const SZSE_MAX_PAGES = 2;
-// Worst case (direct, two proxy attempts all time out) this
+// Worst case (direct, three proxy attempts all time out) this
 // source can take about 55s before the bundle moves on. Keep this comfortably
 // inside the per-section timeoutMs configured in seed-bundle-market-backup.mjs.
 const SZSE_DIRECT_TIMEOUT_MS = 15_000;

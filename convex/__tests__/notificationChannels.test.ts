@@ -119,7 +119,7 @@ describe("notificationChannels — Convex entitlement gate", () => {
     await seedEntitlement(t, 1, Date.now() - 1_000);
 
     await expect(
-      t.mutation(api.notificationChannels.claimPairingToken, {
+      t.mutation(internal.notificationChannels.claimPairingToken, {
         token: pairing.token,
         chatId: "12345",
       }),
@@ -159,7 +159,7 @@ describe("notificationChannels — Convex entitlement gate", () => {
       { variant: "full" },
     );
     const claimed = await t.mutation(
-      api.notificationChannels.claimPairingToken,
+      internal.notificationChannels.claimPairingToken,
       { token: pairing.token, chatId: "12345" },
     );
 

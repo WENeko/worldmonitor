@@ -16,6 +16,8 @@ const {
   HEALTH_VERDICT_REFRESH_WAIT_MS,
   hasExpiredActivationGrace,
   snapshotTtlSeconds,
+  CHINA_COVERAGE_SUMMARY_KEY,
+  CHINA_DECISION_SIGNALS_PENDING_MS,
 } = __testing__;
 const realFetch = globalThis.fetch;
 const realSetTimeout = globalThis.setTimeout;
@@ -550,6 +552,7 @@ test('snapshot TTL is clamped down to the nearest activation deadline', () => {
   assert.equal(snapshotTtlSeconds({ checks: { a: { status: 'OK', contentFreshnessPendingUntil: at(30_000) } } }, now), 30);
   assert.equal(snapshotTtlSeconds({ checks: { a: { status: 'STALE_CONTENT', staleContentGraceUntil: at(20_000) } } }, now), 20);
   assert.equal(snapshotTtlSeconds({ problems: {}, pending: { a: { status: 'STALE_CONTENT', staleContentGraceUntil: at(20_000) } } }, now), 20);
+  assert.equal(snapshotTtlSeconds({ pending: { a: { status: 'COVERAGE_PARTIAL', chinaCoveragePendingUntil: at(12_000) } } }, now), 12);
   // Rollout deadline, which only counts on a ROLLOUT_PENDING entry.
   assert.equal(snapshotTtlSeconds({ checks: { a: { status: 'ROLLOUT_PENDING', rolloutPendingUntil: at(10_000) } } }, now), 10);
   // Compact shape: deadlines live under `summary`, because a graced check is OK
@@ -576,6 +579,23 @@ test('stale-content grace invalidates full and compact snapshots at the exact de
   const compact = {
     problems: {},
     pending: { temporalAnomalies: { status: 'STALE_CONTENT', staleContentGraceUntil: deadline } },
+  };
+
+  assert.equal(hasExpiredActivationGrace(full, now - 1), false);
+  assert.equal(hasExpiredActivationGrace(compact, now - 1), false);
+  assert.equal(hasExpiredActivationGrace(full, now), true);
+  assert.equal(hasExpiredActivationGrace(compact, now), true);
+});
+
+test('China decision pending invalidates full and compact snapshots at the exact deadline', () => {
+  const now = Date.parse('2026-09-08T17:15:00.000Z');
+  const deadline = new Date(now).toISOString();
+  const full = {
+    checks: { chinaDecisionSignals: { status: 'COVERAGE_PARTIAL', chinaCoveragePendingUntil: deadline } },
+  };
+  const compact = {
+    problems: {},
+    pending: { chinaDecisionSignals: { status: 'COVERAGE_PARTIAL', chinaCoveragePendingUntil: deadline } },
   };
 
   assert.equal(hasExpiredActivationGrace(full, now - 1), false);
@@ -632,7 +652,13 @@ const TEMPORAL_META_KEY = 'seed-meta:temporal:anomalies';
 
 // A registry sweep where exactly one source has fresh seeder metadata but no
 // usable item timestamp — the undatable STALE_CONTENT shape.
-function sweepFetch({ graceStore = new Map(), onCommands = () => {}, failGraceClaim = false } = {}) {
+function sweepFetch({
+  graceStore = new Map(),
+  onCommands = () => {},
+  failGraceClaim = false,
+  chinaCoverageSummary,
+  chinaDecisionMeta,
+} = {}) {
   return async (_url, init) => {
     const commands = JSON.parse(init.body);
     onCommands(commands);
@@ -664,6 +690,14 @@ function sweepFetch({ graceStore = new Map(), onCommands = () => {}, failGraceCl
           }),
         };
       }
+      if (op === 'GET' && key === CHINA_COVERAGE_SUMMARY_KEY && chinaCoverageSummary) {
+        return { result: JSON.stringify(chinaCoverageSummary) };
+      }
+      if (op === 'GET'
+        && key === 'seed-meta:intelligence:china-decision-signals'
+        && chinaDecisionMeta) {
+        return { result: JSON.stringify(chinaDecisionMeta) };
+      }
       if (op === 'GET') {
         return { result: JSON.stringify({ fetchedAt: Date.now(), recordCount: 1 }) };
       }
@@ -678,6 +712,94 @@ async function sweepCompactBody(fetchImpl) {
   const response = await handler(new Request('https://api.worldmonitor.app/api/health?compact=1'));
   return response.json();
 }
+
+function chinaCorporateCoverageSummary(now, degradedStreak) {
+  const problems = [{
+    id: 'market.china-corporate-disclosures',
+    status: 'degraded',
+    reasonCodes: ['CHINA_COVERAGE_PARTIAL'],
+  }];
+  return {
+    schemaVersion: 1,
+    countryCode: 'CN',
+    status: 'degraded',
+    evaluatedAt: new Date(now - 60_000).toISOString(),
+    counts: {
+      total: 1,
+      launched: 1,
+      planned: 0,
+      blocked: 0,
+      healthy: 0,
+      degraded: 1,
+      unavailable: 0,
+    },
+    entries: problems.map((problem) => ({ ...problem, launchStatus: 'launched' })),
+    degradedStreak,
+    degradedProblemKey: JSON.stringify(problems),
+  };
+}
+
+function chinaCorporateDecisionMeta(now) {
+  return {
+    fetchedAt: now - 60_000,
+    recordCount: 5,
+    groupStates: {
+      macro: 'available',
+      'policy-enforcement': 'available',
+      'cross-strait-activity': 'available',
+      'corporate-disclosures': 'unavailable',
+      'corridor-conditions': 'available',
+      'activity-nowcast': 'available',
+    },
+    groupCounts: {
+      populated: 5,
+      partial: 0,
+      stale: 0,
+      unavailable: 1,
+      healthyQuiet: 0,
+      operationallyCovered: 5,
+    },
+    unavailableCauses: { 'corporate-disclosures': 'upstream_unavailable' },
+  };
+}
+
+test('handleHealth reconciles the duplicate China warning only for the first observation', async () => {
+  const now = Date.parse('2026-09-08T16:01:57.702Z');
+  Date.now = () => now;
+  const decisionMeta = chinaCorporateDecisionMeta(now);
+
+  const run = async (degradedStreak) => {
+    const pipelines = [];
+    const body = await sweepCompactBody(sweepFetch({
+      chinaCoverageSummary: chinaCorporateCoverageSummary(now, degradedStreak),
+      chinaDecisionMeta: decisionMeta,
+      onCommands: (commands) => pipelines.push(commands),
+    }));
+    const write = pipelines.flat().find(
+      ([op, key]) => op === 'SET' && key === HEALTH_SNAPSHOT_KEY,
+    );
+    return { body, stored: JSON.parse(write[2]) };
+  };
+
+  const first = await run(1);
+  const deadline = new Date(
+    now - 60_000 + CHINA_DECISION_SIGNALS_PENDING_MS,
+  ).toISOString();
+  assert.deepEqual(first.body.pending?.chinaDecisionSignals, {
+    status: 'COVERAGE_PARTIAL',
+    chinaCoveragePendingUntil: deadline,
+  });
+  assert.equal(first.body.problems?.chinaDecisionSignals, undefined);
+  assert.equal(first.body.problems?.chinaCoverage?.status, 'OK');
+  assert.equal(first.stored.checks.chinaDecisionSignals.chinaCoveragePendingUntil, deadline);
+
+  const repeated = await run(2);
+  assert.equal(repeated.body.pending?.chinaDecisionSignals, undefined);
+  assert.equal(repeated.body.problems?.chinaDecisionSignals?.status, 'COVERAGE_PARTIAL');
+  assert.equal(repeated.body.problems?.chinaCoverage?.status, 'CHINA_DEGRADED');
+  assert.equal(repeated.stored.checks.chinaDecisionSignals.chinaCoveragePendingUntil, undefined);
+  assert.equal(repeated.body.summary.warn, first.body.summary.warn + 2);
+});
 
 test('handleHealth claims, publishes, and reuses one stale-content deadline', async () => {
   const graceStore = new Map();

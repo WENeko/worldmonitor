@@ -15,10 +15,13 @@ import {
   findOperationalProblems,
   formatAcceptanceReport,
   formatAcceptanceMarkdown,
+  isChinaCoveragePendingProblem,
   isOnDemandProblem,
   findPendingDiagnostics,
   isSourceFailurePendingProblem,
   isStaleContentGraceProblem,
+  CHINA_COVERAGE_PENDING_SKEW_SLACK_MS,
+  MAX_CHINA_COVERAGE_PENDING_MS,
   MAX_STALE_CONTENT_GRACE_MS,
   STALE_CONTENT_GRACE_SKEW_SLACK_MS,
   validateAcceptanceBaseline,
@@ -351,6 +354,55 @@ describe('scheduled seed freshness monitor', () => {
           [collection]: { temporalAnomalies: candidate },
         }, now).length, 1, `${collection}: ${label}`);
       }
+    }
+  });
+
+  it('consumes only active bounded China coverage pending entries', () => {
+    const now = Date.parse('2026-09-08T16:01:00.000Z');
+    assert.equal(
+      MAX_CHINA_COVERAGE_PENDING_MS,
+      healthTesting.CHINA_DECISION_SIGNALS_PENDING_MS
+        + CHINA_COVERAGE_PENDING_SKEW_SLACK_MS,
+    );
+    const pendingUntil = new Date(
+      now + healthTesting.CHINA_DECISION_SIGNALS_PENDING_MS,
+    ).toISOString();
+    const problem = {
+      status: 'COVERAGE_PARTIAL',
+      chinaCoveragePendingUntil: pendingUntil,
+    };
+    const compact = healthTesting.healthResponseBody({
+      status: 'HEALTHY',
+      summary: { total: 1, ok: 1, warn: 0, pending: 1, crit: 0 },
+      checkedAt: new Date(now).toISOString(),
+      checks: { chinaDecisionSignals: problem },
+    }, true);
+
+    assert.equal(isChinaCoveragePendingProblem(problem, now), true);
+    assert.deepEqual(compact.pending, { chinaDecisionSignals: problem });
+    assert.deepEqual(findOperationalProblems(compact, now), []);
+    assert.deepEqual(findPendingDiagnostics(compact, now), [{
+      name: 'chinaDecisionSignals',
+      status: 'COVERAGE_PARTIAL',
+      graceUntil: pendingUntil,
+    }]);
+
+    for (const [label, candidate] of [
+      ['exact deadline', { ...problem, chinaCoveragePendingUntil: new Date(now).toISOString() }],
+      ['missing deadline', { status: 'COVERAGE_PARTIAL' }],
+      ['malformed deadline', { ...problem, chinaCoveragePendingUntil: 'not-a-date' }],
+      ['non-string deadline', { ...problem, chinaCoveragePendingUntil: [pendingUntil] }],
+      ['excessive deadline', {
+        ...problem,
+        chinaCoveragePendingUntil: new Date(now + MAX_CHINA_COVERAGE_PENDING_MS + 1).toISOString(),
+      }],
+      ['wrong status', { ...problem, status: 'SEED_ERROR' }],
+    ]) {
+      assert.equal(isChinaCoveragePendingProblem(candidate, now), false, label);
+      assert.equal(findOperationalProblems({
+        status: 'HEALTHY',
+        pending: { chinaDecisionSignals: candidate },
+      }, now).length, 1, label);
     }
   });
 

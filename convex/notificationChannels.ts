@@ -191,7 +191,8 @@ export const getChannelsByUserId = internalQuery({
       .query("notificationChannels")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .collect();
-    return channels.map(channel => channel.channelType === "email" && channel.emailOwnership !== "verified_account"
+    return channels.map(channel => (channel.channelType === "email" && channel.emailOwnership !== "verified_account")
+      || (channel.channelType === "telegram" && channel.telegramOwnership !== "verified_callback")
       ? { ...channel, verified: false } : channel);
   },
 });
@@ -209,7 +210,7 @@ export const setChannelForUser = internalMutation({
     verifiedAccountEmail: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { userId, channelType, chatId, webhookEnvelope, email, webhookLabel } = args;
+    const { userId, channelType, webhookEnvelope, email, webhookLabel } = args;
     const existing = await ctx.db
       .query("notificationChannels")
       .withIndex("by_user_channel", (q) =>
@@ -220,9 +221,7 @@ export const setChannelForUser = internalMutation({
     let channelId = existing ? String(existing._id) : "";
     const now = Date.now();
     if (channelType === "telegram") {
-      if (!chatId) throw new ConvexError("chatId required for telegram channel");
-      const doc = { userId, channelType: "telegram" as const, chatId, verified: true, linkedAt: now };
-      if (existing) { await ctx.db.replace(existing._id, doc); } else { channelId = String(await ctx.db.insert("notificationChannels", doc)); }
+      throw new ConvexError("telegram channel must be linked through bot pairing");
     } else if (channelType === "slack") {
       if (!webhookEnvelope) throw new ConvexError("webhookEnvelope required for slack channel");
       const doc = { userId, channelType: "slack" as const, webhookEnvelope, verified: true, linkedAt: now };
@@ -469,7 +468,8 @@ export const getChannels = query({
       .query("notificationChannels")
       .withIndex("by_user", (q) => q.eq("userId", identity.subject))
       .collect();
-    return channels.map(channel => channel.channelType === "email" && channel.emailOwnership !== "verified_account"
+    return channels.map(channel => (channel.channelType === "email" && channel.emailOwnership !== "verified_account")
+      || (channel.channelType === "telegram" && channel.telegramOwnership !== "verified_callback")
       ? { ...channel, verified: false } : channel);
   },
 });
@@ -498,13 +498,7 @@ export const setChannel = mutation({
     const now = Date.now();
 
     if (args.channelType === "telegram") {
-      if (!args.chatId) throw new ConvexError("chatId required for telegram channel");
-      const doc = { userId, channelType: "telegram" as const, chatId: args.chatId, verified: true, linkedAt: now };
-      if (existing) {
-        await ctx.db.replace(existing._id, doc);
-      } else {
-        await ctx.db.insert("notificationChannels", doc);
-      }
+      throw new ConvexError("telegram channel must be linked through bot pairing");
     } else if (args.channelType === "slack") {
       if (!args.webhookEnvelope) throw new ConvexError("webhookEnvelope required for slack channel");
       const doc = { userId, channelType: "slack" as const, webhookEnvelope: args.webhookEnvelope, verified: true, linkedAt: now };
@@ -644,7 +638,7 @@ export const createPairingToken = mutation({
   },
 });
 
-export const claimPairingToken = mutation({
+export const claimPairingToken = internalMutation({
   args: { token: v.string(), chatId: v.string() },
   handler: async (ctx, args) => {
     const record = await ctx.db
@@ -675,6 +669,7 @@ export const claimPairingToken = mutation({
       channelType: "telegram" as const,
       chatId: args.chatId,
       verified: true,
+      telegramOwnership: "verified_callback" as const,
       linkedAt: Date.now(),
     };
 

@@ -2647,6 +2647,10 @@ describe('crawlable corpus generator', () => {
         const route = `/countries/${country.slug}/`;
         const countryHtml = read(outDir, `${route.slice(1)}index.html`);
         const countryDocument = htmlDocument(countryHtml, `https://www.worldmonitor.app${route}`);
+        assert.ok(
+          countryDocument.querySelector('[data-intel-brief], [data-brief-unavailable]'),
+          `${route} must publish a grounded brief or explain its absence`,
+        );
         if (country.rank == null) {
           assert.match(countryHtml, /Nearest ranked comparators:/);
           assert.doesNotMatch(
@@ -3709,7 +3713,8 @@ describe('crawlable corpus generator', () => {
       assert.equal(catalog.dataset.length, corpusData.crises.length + 1);
       for (const dataset of catalog.dataset) {
         assert.ok(dataset['@id'], `${dataset.name} must reuse its detail-page identity`);
-        const detailPath = new URL(dataset.url).pathname.slice(1) + 'index.html';
+        assert.deepEqual(dataset, { '@id': dataset['@id'] }, 'catalog must reference the canonical Dataset');
+        const detailPath = new URL(dataset['@id']).pathname.slice(1) + 'index.html';
         const details = jsonLdObjects(read(outDir, detailPath)).flatMap((node) => collectDatasets(node));
         assert.ok(details.some((node) => node['@type'] === 'Dataset' && node['@id'] === dataset['@id']),
           `${dataset['@id']} must identify a Dataset on the generated detail page`);
@@ -5801,15 +5806,51 @@ describe('country recent developments', () => {
     assertCountryBriefPresentation({ pagePath: '/countries/sudan/', html, sources });
   });
 
-  it('renders nothing when zero items were captured', () => {
-    // No absence boilerplate: the same note on ~140 pages would be the exact
-    // template share the enrichment exists to reduce. The gap is recorded in
-    // resilience.json for the residual hub-consolidation decision.
-    assert.equal(renderCountryDevelopments({
+  it('explains an empty snapshot without presenting the note as a development', () => {
+    const html = renderCountryDevelopments({
       countryName: 'Palau',
       developments: { headlines: [], brief: null, timeline: [], briefSkipped: 'no-grounding', capturedAt: '2026-09-03T00:00:00.000Z' },
-    }), '');
-    assert.equal(renderCountryDevelopments({ countryName: 'Palau', developments: null }), '');
+    });
+    assert.match(html, /data-brief-unavailable/);
+    assert.match(html, /No country brief is available for Palau in this snapshot/);
+    assert.match(html, /No country-specific grounding sources were captured/);
+    assert.match(renderCountryDevelopments({ countryName: 'Palau', developments: null }), /No brief was captured/);
+    assert.equal(developmentsHasDatedItem({ headlines: [], brief: null, timeline: [] }), false);
+    for (const signals of [
+      { ciiEntry: CII_ENTRY },
+      { pulse: { score: CII_ENTRY.score, band: CII_ENTRY.band, trend: 'stable', asOf: CII_ENTRY.asOf } },
+    ]) {
+      const emptyHtml = renderCountryDevelopments({
+        countryName: 'Palau',
+        developments: { headlines: [], brief: null, timeline: [], briefSkipped: 'no-grounding' },
+        ...signals,
+      });
+      assert.match(emptyHtml, /data-brief-unavailable/);
+      assert.doesNotMatch(emptyHtml, /Reporting captured in the same window/);
+    }
+  });
+
+  it('explains each withheld state and never exposes internal or unknown reason text', () => {
+    const reasons = {
+      'thin-grounding': /at least two distinct publishers/,
+      'uncurated-grounding': /curated news source/,
+      'unsupported-citation': /citations did not pass/,
+      'no-service-key': /generation was unavailable/,
+      failed: /request failed/,
+      empty: /no usable brief/,
+      '<script>': /No brief was captured/,
+      constructor: /No brief was captured/,
+    };
+    for (const [briefSkipped, expected] of Object.entries(reasons)) {
+      const html = renderCountryDevelopments({
+        countryName: 'Sudan', developments: { ...DEVELOPMENTS, brief: null, briefSkipped },
+      });
+      assert.match(html, expected);
+      assert.match(html, /data-brief-unavailable/);
+      assert.ok(!html.includes('data-intel-brief'));
+      assert.ok(html.includes(HEADLINE.url), 'keep the lighter sourced developments');
+    }
+    assert.ok(!renderCountryDevelopments({ countryName: 'Sudan', developments: DEVELOPMENTS }).includes('data-brief-unavailable'));
   });
 
   it('throws on unattributable rows instead of publishing them', () => {
@@ -6295,8 +6336,8 @@ describe('country recent developments', () => {
     withoutDevelopments.countries.NO = { ...(withoutDevelopments.countries.NO || {}) };
     delete withoutDevelopments.countries.NO.developments;
     const plain = renderCountryPage({ ...pageArgs, livePulse: withoutDevelopments });
-    assert.ok(!plain.includes('data-country-developments'),
-      'a country with no frozen developments renders no section');
+    assert.ok(plain.includes('data-brief-unavailable'),
+      'a country with no frozen developments explains why no brief is available');
     const plainWebPage = jsonLdObjects(plain).find((entry) => entry['@type'] === 'WebPage');
     assert.ok(!('dateModified' in plainWebPage), 'no items means no dateModified claim');
   });

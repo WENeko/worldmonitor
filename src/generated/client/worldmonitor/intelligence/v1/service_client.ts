@@ -144,6 +144,51 @@ export interface BriefSource {
   publishedAt: string;
 }
 
+export interface GetCountryCoverageRequest {
+  countryCode: string;
+  windowHours: number;
+  limit: number;
+}
+
+export interface GetCountryCoverageResponse {
+  countryCode: string;
+  countryName: string;
+  windowHours: number;
+  generatedAt: string;
+  headlines: CountryCoverageHeadline[];
+  events: CountryCoverageEvent[];
+  sources: CountryCoverageSourceStatus[];
+  degraded: boolean;
+  containment: string;
+}
+
+export interface CountryCoverageHeadline {
+  title: string;
+  url: string;
+  source: string;
+  publishedAt: string;
+  publishedAtMs: number;
+}
+
+export interface CountryCoverageEvent {
+  timestampMs: number;
+  occurredAt: string;
+  lane: string;
+  label: string;
+  severity: string;
+  origin: string;
+  source: string;
+}
+
+export interface CountryCoverageSourceStatus {
+  source: string;
+  state: string;
+  detail: string;
+  fetchedAt: string;
+  ageSeconds: number;
+  contributed: number;
+}
+
 export interface SearchGdeltDocumentsRequest {
   query: string;
   maxRecords: number;
@@ -1255,6 +1300,33 @@ export class IntelligenceServiceClient {
     }
 
     return await resp.json() as GetCountryIntelBriefResponse;
+  }
+
+  async getCountryCoverage(req: GetCountryCoverageRequest, options?: IntelligenceServiceCallOptions): Promise<GetCountryCoverageResponse> {
+    let path = "/api/intelligence/v1/get-country-coverage";
+    const params = new URLSearchParams();
+    if (req.countryCode != null && req.countryCode !== "") params.set("country_code", String(req.countryCode));
+    if (req.windowHours != null && req.windowHours !== 0) params.set("window_hours", String(req.windowHours));
+    if (req.limit != null && req.limit !== 0) params.set("limit", String(req.limit));
+    const url = this.baseURL + path + (params.toString() ? "?" + params.toString() : "");
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...this.defaultHeaders,
+      ...options?.headers,
+    };
+
+    const resp = await this.fetchFn(url, {
+      method: "GET",
+      headers,
+      signal: options?.signal,
+    });
+
+    if (!resp.ok) {
+      return this.handleError(resp);
+    }
+
+    return await resp.json() as GetCountryCoverageResponse;
   }
 
   async searchGdeltDocuments(req: SearchGdeltDocumentsRequest, options?: IntelligenceServiceCallOptions): Promise<SearchGdeltDocumentsResponse> {

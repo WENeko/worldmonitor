@@ -17,6 +17,38 @@ function docsHtmlRequest(): Request {
 }
 
 describe('middleware docs locale SEO proxy', () => {
+  it('replaces canonical Organization bodies with references throughout upstream JSON-LD (#7861)', async () => {
+    const id = 'https://www.worldmonitor.app/#organization';
+    const organization = {
+      '@id': id,
+      '@type': ['Organization'],
+      name: 'World Monitor',
+      logo: { '@type': 'ImageObject', url: 'https://www.worldmonitor.app/logo.png' },
+      sameAs: ['https://github.com/koala73/worldmonitor'],
+    };
+    const otherOrganization = { '@type': 'Organization', '@id': 'https://example.org/#organization', name: 'Source' };
+    const upstream = `<html><head><script TYPE = 'application/ld+json'>${JSON.stringify({
+      '@context': 'https://schema.org',
+      '@graph': [organization, { '@type': 'Article', publisher: organization, author: { '@id': id }, provider: otherOrganization }],
+    })}</script></head><body>Docs</body></html>`;
+    const originalFetch = globalThis.fetch;
+    mock.method(globalThis, 'fetch', async () => new Response(upstream, { headers: { 'content-type': 'text/html' } }));
+    try {
+      for (const path of ['/docs/about', '/docs/zh/about']) {
+        const response = await middleware(new Request(`https://www.worldmonitor.app${path}`, { headers: { accept: 'text/html' } }));
+        assert.ok(response instanceof Response);
+        const html = await response.text();
+        const graph = JSON.parse(html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)![1])['@graph'];
+        assert.deepEqual(graph[0], { '@id': id });
+        assert.deepEqual(graph[1].publisher, { '@id': id });
+        assert.deepEqual(graph[1].author, { '@id': id });
+        assert.deepEqual(graph[1].provider, otherOrganization);
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('keeps the official canonical and excludes copied deployments from indexing', async () => {
     const originalFetch = globalThis.fetch;
     mock.method(globalThis, 'fetch', async () => new Response(

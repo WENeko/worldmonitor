@@ -1,4 +1,4 @@
-import { internalMutation, mutation, query } from "./_generated/server";
+import { internalMutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { DatabaseReader, DatabaseWriter } from "./_generated/server";
 
@@ -49,7 +49,10 @@ async function incrementCounter(db: DatabaseWriter, name: string): Promise<numbe
   return newVal;
 }
 
-export const register = mutation({
+// This write is intentionally internal. The public edge handler performs the
+// Turnstile/desktop proof, email validation, rate limits, and honeypot check;
+// exposing the mutation itself would let a caller bypass that entire boundary.
+export const register = internalMutation({
   args: {
     email: v.string(),
     source: v.optional(v.string()),

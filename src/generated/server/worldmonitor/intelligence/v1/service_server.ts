@@ -144,6 +144,51 @@ export interface BriefSource {
   publishedAt: string;
 }
 
+export interface GetCountryCoverageRequest {
+  countryCode: string;
+  windowHours: number;
+  limit: number;
+}
+
+export interface GetCountryCoverageResponse {
+  countryCode: string;
+  countryName: string;
+  windowHours: number;
+  generatedAt: string;
+  headlines: CountryCoverageHeadline[];
+  events: CountryCoverageEvent[];
+  sources: CountryCoverageSourceStatus[];
+  degraded: boolean;
+  containment: string;
+}
+
+export interface CountryCoverageHeadline {
+  title: string;
+  url: string;
+  source: string;
+  publishedAt: string;
+  publishedAtMs: number;
+}
+
+export interface CountryCoverageEvent {
+  timestampMs: number;
+  occurredAt: string;
+  lane: string;
+  label: string;
+  severity: string;
+  origin: string;
+  source: string;
+}
+
+export interface CountryCoverageSourceStatus {
+  source: string;
+  state: string;
+  detail: string;
+  fetchedAt: string;
+  ageSeconds: number;
+  contributed: number;
+}
+
 export interface SearchGdeltDocumentsRequest {
   query: string;
   maxRecords: number;
@@ -1130,6 +1175,7 @@ export interface IntelligenceServiceHandler {
   classifyEvent(ctx: ServerContext, req: ClassifyEventRequest): Promise<ClassifyEventResponse>;
   getCountryRisk(ctx: ServerContext, req: GetCountryRiskRequest): Promise<GetCountryRiskResponse>;
   getCountryIntelBrief(ctx: ServerContext, req: GetCountryIntelBriefRequest): Promise<GetCountryIntelBriefResponse>;
+  getCountryCoverage(ctx: ServerContext, req: GetCountryCoverageRequest): Promise<GetCountryCoverageResponse>;
   searchGdeltDocuments(ctx: ServerContext, req: SearchGdeltDocumentsRequest): Promise<SearchGdeltDocumentsResponse>;
   deductSituation(ctx: ServerContext, req: DeductSituationRequest): Promise<DeductSituationResponse>;
   listSatellites(ctx: ServerContext, req: ListSatellitesRequest): Promise<ListSatellitesResponse>;
@@ -1382,6 +1428,55 @@ export function createIntelligenceServiceRoutes(
 
           const result = await handler.getCountryIntelBrief(ctx, body);
           return new Response(JSON.stringify(result as GetCountryIntelBriefResponse), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (err: unknown) {
+          if (err instanceof ValidationError) {
+            return new Response(JSON.stringify({ violations: err.violations }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (options?.onError) {
+            return options.onError(err, req);
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          return new Response(JSON.stringify({ message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
+    },
+    {
+      method: "GET",
+      path: "/api/intelligence/v1/get-country-coverage",
+      handler: async (req: Request): Promise<Response> => {
+        try {
+          const pathParams: Record<string, string> = {};
+          const url = new URL(req.url, "http://localhost");
+          const params = url.searchParams;
+          const body: GetCountryCoverageRequest = {
+            countryCode: params.get("country_code") ?? "",
+            windowHours: Number(params.get("window_hours") ?? "0"),
+            limit: Number(params.get("limit") ?? "0"),
+          };
+          if (options?.validateRequest) {
+            const bodyViolations = options.validateRequest("getCountryCoverage", body);
+            if (bodyViolations) {
+              throw new ValidationError(bodyViolations);
+            }
+          }
+
+          const ctx: ServerContext = {
+            request: req,
+            pathParams,
+            headers: Object.fromEntries(req.headers.entries()),
+          };
+
+          const result = await handler.getCountryCoverage(ctx, body);
+          return new Response(JSON.stringify(result as GetCountryCoverageResponse), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           });

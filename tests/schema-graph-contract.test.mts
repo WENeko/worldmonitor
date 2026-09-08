@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import middleware from '../middleware';
-import { WORLD_MONITOR_ORG } from '../scripts/build-crawlable-corpus.mjs';
+import { rewriteDocsLocaleHtml } from '../src/config/docs-locale-seo';
+import { buildCorpus, WORLD_MONITOR_ORG } from '../scripts/build-crawlable-corpus.mjs';
 import {
   SOFTWARE_SHARED_PROPERTIES,
   WEBSITE_SHARED_PROPERTIES,
@@ -276,8 +279,28 @@ describe('canonical schema graph', () => {
   // entity. Enumerating the properties that were wrong in Sept 2026 would only
   // freeze those; the invariant is "one `@id`, one body", so this asserts the
   // pinned values AND that no unpinned property diverges either.
-  it('serves one set of #software and #website property values across every surface (#7611)', () => {
-    const documents = jsonLdDocumentPaths();
+  it('serves consistent product, Organization and Dataset bodies across every surface (#7611, #7861)', async () => {
+    const documents = new Map(jsonLdDocumentPaths().map((path) => [path, read(path)]));
+    // CI does not prebuild the corpus. Exercise its real generator in isolation.
+    const corpusDir = mkdtempSync(join(tmpdir(), 'wm-schema-corpus-'));
+    try {
+      await buildCorpus({ outDir: corpusDir });
+      for (const path of readdirSync(corpusDir, { recursive: true }) as string[]) {
+        if (path.endsWith('.html')) documents.set(`public/${path}`, readFileSync(join(corpusDir, path), 'utf8'));
+      }
+    } finally {
+      rmSync(corpusDir, { recursive: true, force: true });
+    }
+    const docsOrganization = JSON.parse(read('docs/docs.json')).seo.organization;
+    const { id, logo, ...properties } = docsOrganization;
+    const docsHtml = `<html><head><script type="application/ld+json">${JSON.stringify({
+      '@context': 'https://schema.org',
+      '@graph': [{ '@type': 'Organization', '@id': id, ...properties, logo: { '@type': 'ImageObject', url: logo } }],
+    })}</script></head><body></body></html>`;
+    documents.set('docs/about (middleware output)', rewriteDocsLocaleHtml(docsHtml, '/docs/about'));
+    const datasetIds = new Set([...documents.values()].flatMap((html) =>
+      collectNodesOfType(html, 'Dataset').map((node) => node['@id']).filter((id): id is string => typeof id === 'string')));
+    assert.ok(datasetIds.size > 0, 'build the corpus before checking Dataset identities');
     const pinned: Array<[string, Record<string, unknown>, string[]]> = [
       [SOFTWARE_ID, SOFTWARE_SHARED_PROPERTIES, withoutUnbuiltProPaths([
         'index.html',
@@ -291,6 +314,8 @@ describe('canonical schema graph', () => {
         'pro-test/welcome.html',
         'public/pro/welcome.html',
       ])],
+      [ORGANIZATION_ID, {}, ['pro-test/welcome.html']],
+      ...[...datasetIds].map((id): [string, Record<string, unknown>, string[]] => [id, {}, []]),
     ];
 
     for (const [id, expected, required] of pinned) {
@@ -298,13 +323,14 @@ describe('canonical schema graph', () => {
       // identity is caught here rather than quietly exempted. The hand-listed
       // paths are the FLOOR -- they also catch a surface dropping the node.
       const emitters = new Map<string, Record<string, any>>();
-      for (const path of documents) {
-        const html = read(path);
+      for (const [path, html] of documents) {
         if (!html.includes(id)) continue;
         const declarations = declarationsOf(html, id);
         if (declarations.length === 0) continue;
-        assert.equal(declarations.length, 1, `${path} must declare ${id} exactly once`);
-        emitters.set(path, declarations[0]);
+        if (id === SOFTWARE_ID || id === WEBSITE_ID) {
+          assert.equal(declarations.length, 1, `${path} must declare ${id} exactly once`);
+        }
+        declarations.forEach((node, index) => emitters.set(index === 0 ? path : `${path} (node ${index + 1})`, node));
       }
       for (const path of required) {
         assert.ok(emitters.has(path), `${path} must still declare ${id}`);
@@ -324,7 +350,8 @@ describe('canonical schema graph', () => {
       const carriers = new Map<string, Array<[string, unknown]>>();
       for (const [path, node] of emitters) {
         for (const [property, value] of Object.entries(node)) {
-          if (MAY_DIVERGE_ACROSS_SURFACES.has(property)) continue;
+          if (property === '@context') continue;
+          if ((id === SOFTWARE_ID || id === WEBSITE_ID) && MAY_DIVERGE_ACROSS_SURFACES.has(property)) continue;
           const seen = carriers.get(property) ?? [];
           seen.push([path, value]);
           carriers.set(property, seen);

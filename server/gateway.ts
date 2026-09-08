@@ -328,6 +328,14 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/market/v1/list-etf-flows': 'slow',
   '/api/research/v1/list-hackernews-items': 'slow',
   '/api/intelligence/v1/get-country-risk': 'slow',
+  // get-country-coverage is premium-gated via PREMIUM_RPC_PATHS, so the gateway
+  // short-circuits to 'slow-browser' before consulting this map — same as
+  // get-regional-snapshot below. This entry exists to satisfy the parity
+  // contract in tests/route-cache-tier.test.mjs and to record the intended tier
+  // if the endpoint ever stops being premium: `medium` rather than the sibling
+  // `slow`, because the response can carry degraded=true and an hour of shared
+  // edge cache would pin a transient upstream failure long after it healed.
+  '/api/intelligence/v1/get-country-coverage': 'medium',
   '/api/intelligence/v1/get-risk-scores': 'slow',
   '/api/intelligence/v1/get-pizzint-status': 'slow',
   '/api/intelligence/v1/classify-event': 'static',

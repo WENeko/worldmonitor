@@ -1106,6 +1106,8 @@ export async function freezeCrawlableLivePulse({
         .filter((row) => (row.developments?.headlines?.length || 0) > 0).length,
       briefCountryCount: Object.values(countries)
         .filter((row) => row.developments?.brief != null).length,
+      // Grounding eligibility is independent of credentials or request outcome.
+      briefEligibleCount: [...headlinesByCode.values()].filter(hasBriefGrounding).length,
       briefUnsupportedCitationCount: Object.values(countries)
         .filter((row) => row.developments?.briefSkipped === 'unsupported-citation').length,
       // Countries a brief was requested for: keyed, and grounded on at least
@@ -1231,6 +1233,7 @@ if (isMain) {
         + `quotes=${snapshot.coverage.quoteCount} `
         + `headlineCountries=${snapshot.coverage.headlineCountryCount} `
         + `briefCountries=${snapshot.coverage.briefCountryCount} `
+        + `briefEligible=${snapshot.coverage.briefEligibleCount} `
         + `briefUnsupportedCitations=${snapshot.coverage.briefUnsupportedCitationCount} `
         + `briefThinGrounding=${snapshot.coverage.briefThinGroundingCount} `
         + `timelineCountries=${snapshot.coverage.timelineCountryCount} `

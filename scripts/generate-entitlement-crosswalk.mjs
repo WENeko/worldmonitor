@@ -141,7 +141,11 @@ const MAP = [
   [/:\/api\/intelligence\/v1\/classify-event$/,           { cap: 'news.classification' }],
   [/:\/api\/intelligence\/v1\/deduct-situation$/,         { cap: 'intel.deduction' }],
   [/:\/api\/intelligence\/v1\/(search-intel-history|get-intel-timeline|get-similar-events)$/, { cap: 'intel.memory' }],
-  [/:\/api\/intelligence\/v1\/(get-country-intel-brief|get-regime-history)$/, { cap: 'intel.country_brief' }],
+  // get-country-coverage (#7526) is the agent-facing sibling of the country
+  // brief: same country-intelligence depth, same Pro tier, no UI of its own.
+  // Grouped here rather than given a new user-facing capability label, which
+  // would advertise a paid feature that no panel surfaces.
+  [/:\/api\/intelligence\/v1\/(get-country-intel-brief|get-regime-history|get-country-coverage)$/, { cap: 'intel.country_brief' }],
   [/:\/api\/intelligence\/v1\/(get-regional-snapshot|get-regional-brief)$/,   { cap: 'intel.regional' }],
   [/:\/api\/resilience\/v1\//,                            { cap: 'resilience.scores' }],
   [/:\/api\/scorecard\/v1\//,                             { cap: 'resilience.scores', note: 'five-factor scorecards' }],

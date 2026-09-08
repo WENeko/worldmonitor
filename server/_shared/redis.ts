@@ -122,7 +122,7 @@ export async function readCachedEnvelopeJson(key: string, raw = false): Promise<
   return readCachedJsonInternal(key, raw, false);
 }
 
-function logCacheReadError(key: string, err: unknown): void {
+export function logCacheReadError(key: string, err: unknown): void {
   // Structured timeout log goes to Sentry via Vercel integration. Large-
   // payload timeouts used to silently return null and let downstream callers
   // cache zero-state — see docs/plans/chokepoint-rpc-payload-split.md for

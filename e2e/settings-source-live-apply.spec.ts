@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { attachBrowserLossDiagnostics, pageBrowserLossEvents } from './browser-loss-diagnostics';
 
 /**
  * Settings → SOURCES must reach the live dashboard when the modal closes (#6380).
@@ -109,13 +110,22 @@ async function seedProFullVariant(page: Page): Promise<void> {
 async function bootUntilNewsSettles(page: Page): Promise<DigestLog> {
   const log = await installDigestAccounting(page);
 
-  const firstDigest = page.waitForRequest(DIGEST_GLOB);
-  await page.goto('/', { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(
-    () => document.documentElement.dataset.wmEventHandlersReady === 'true',
+  // Capture terminal signals during boot; normal teardown must remain silent.
+  const lossWatch = attachBrowserLossDiagnostics(
+    pageBrowserLossEvents(page),
+    'settings-source-live-apply bootUntilNewsSettles',
   );
-  await firstDigest;
-  await page.waitForTimeout(SETTLE_MS);
+  try {
+    const firstDigest = page.waitForRequest(DIGEST_GLOB);
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(
+      () => document.documentElement.dataset.wmEventHandlersReady === 'true',
+    );
+    await firstDigest;
+    await page.waitForTimeout(SETTLE_MS);
+  } finally {
+    lossWatch.dispose();
+  }
 
   expect(
     log.urls.length,

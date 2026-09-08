@@ -319,9 +319,14 @@ export const SERVER_NAME = 'worldmonitor';
 // Leaving the version at 1.18.0 would let one version string describe two
 // different tool surfaces, which is exactly what discovery scanners read it to
 // rule out.
+// Bumped 1.19.0 → 1.20.0 (2026-09-07) reflecting one new subscription tool:
+//   - get_country_coverage serves the country panel's own coverage timeline —
+//     clustered news incidents reconciled against first-party records, with
+//     per-producer freshness — so an agent stops rebuilding country matching,
+//     expiry and de-duplication out of the raw news tools. Tool count 74 → 75.
 // Keep aligned with public/.well-known/mcp/server-card.json::serverInfo.version
 // — discovery scanners cross-check both values.
-export const SERVER_VERSION = '1.19.0';
+export const SERVER_VERSION = '1.20.0';
 
 // MCP logging capability — valid severity levels per the 2025-03-26 spec
 // (RFC 5424 subset). Stateless HTTP transport: we ACK the level but do not

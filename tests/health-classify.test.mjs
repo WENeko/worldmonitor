@@ -31,6 +31,7 @@ const {
   ZERO_RECORD_DATA_OK_KEYS,
   EMPTY_DATA_OK_KEYS,
   projectChinaCoverageStatus,
+  composeChinaDecisionSignalsStatus,
 } = __testing__;
 
 const NOW = 1_700_000_000_000;
@@ -2367,6 +2368,155 @@ test('china coverage: a held verdict survives the compact health projection', ()
     (problem) => problem.id === 'market.china-stock-connect',
   ));
   assert.deepEqual(healthResponseBody(compact, true), compact, 'cached compact snapshots remain stable');
+});
+
+test('china coverage: the derived decision check shares the first corporate failure hold', () => {
+  const chinaCoverage = projectChinaCoverageStatus(chinaSummary({
+    degradedStreak: 1,
+    entries: [{
+      id: 'market.china-corporate-disclosures',
+      launchStatus: 'launched',
+      status: 'degraded',
+      reasonCodes: ['CHINA_COVERAGE_PARTIAL'],
+    }],
+    degradedProblemKey: JSON.stringify([{
+      id: 'market.china-corporate-disclosures',
+      status: 'degraded',
+      reasonCodes: ['CHINA_COVERAGE_PARTIAL'],
+    }]),
+  }));
+  const evaluatedAt = Date.parse(chinaCoverage.evaluatedAt);
+  const now = evaluatedAt + 60_000;
+  const pendingUntil = evaluatedAt + __testing__.CHINA_DECISION_SIGNALS_PENDING_MS;
+  const decisionSignals = composeChinaDecisionSignalsStatus({
+    status: 'COVERAGE_PARTIAL',
+    records: 5,
+    minRecordCount: 6,
+    decisionGroups: {
+      operationallyCovered: 5,
+      unavailableGroups: [{
+        id: 'corporate-disclosures',
+        unavailableCause: 'upstream_unavailable',
+      }],
+    },
+  }, chinaCoverage, now);
+
+  assert.equal(decisionSignals.status, 'COVERAGE_PARTIAL', 'the diagnosis stays truthful');
+  assert.equal(decisionSignals.chinaCoveragePendingUntil, new Date(pendingUntil).toISOString());
+  assert.equal(__testing__.healthStatusBucket(decisionSignals, pendingUntil - 1), 'ok');
+  assert.equal(__testing__.healthStatusBucket(decisionSignals, pendingUntil), 'warn');
+
+  const compact = healthResponseBody({
+    status: 'HEALTHY',
+    summary: { total: 2, ok: 2, warn: 0, pending: 1, crit: 0 },
+    checkedAt: new Date(now).toISOString(),
+    checks: { chinaCoverage, chinaDecisionSignals: decisionSignals },
+  }, true);
+  assert.deepEqual(compact.pending?.chinaDecisionSignals, {
+    status: 'COVERAGE_PARTIAL',
+    chinaCoveragePendingUntil: new Date(pendingUntil).toISOString(),
+  });
+  assert.equal(compact.problems?.chinaDecisionSignals, undefined);
+  assert.equal(compact.problems?.chinaCoverage?.degradedStreak, 1);
+  assert.equal(__testing__.hasExpiredActivationGrace(compact, pendingUntil - 1), false);
+  assert.equal(__testing__.hasExpiredActivationGrace(compact, pendingUntil), true);
+});
+
+test('china coverage: unrelated or repeated decision failures are never held', () => {
+  const firstCorporateFailure = projectChinaCoverageStatus(chinaSummary({
+    degradedStreak: 1,
+    entries: [{
+      id: 'market.china-corporate-disclosures',
+      launchStatus: 'launched',
+      status: 'degraded',
+      reasonCodes: ['CHINA_COVERAGE_PARTIAL'],
+    }],
+  }));
+  const corporateDecisionFailure = {
+    status: 'COVERAGE_PARTIAL',
+    records: 5,
+    minRecordCount: 6,
+    decisionGroups: {
+      operationallyCovered: 5,
+      unavailableGroups: [{
+        id: 'corporate-disclosures',
+        unavailableCause: 'upstream_unavailable',
+      }],
+    },
+  };
+  const activityFailure = {
+    ...corporateDecisionFailure,
+    decisionGroups: {
+      unavailableGroups: [{
+        id: 'activity-nowcast',
+        unavailableCause: 'insufficient_data',
+      }],
+    },
+  };
+  const secondCorporateFailure = {
+    ...firstCorporateFailure,
+    status: 'CHINA_DEGRADED',
+    degradedStreak: 2,
+  };
+
+  assert.equal(
+    composeChinaDecisionSignalsStatus(activityFailure, firstCorporateFailure, Date.parse(firstCorporateFailure.evaluatedAt)).chinaCoveragePendingUntil,
+    undefined,
+    'another decision group remains an immediate warning',
+  );
+  assert.equal(
+    composeChinaDecisionSignalsStatus(corporateDecisionFailure, secondCorporateFailure, Date.parse(firstCorporateFailure.evaluatedAt)).chinaCoveragePendingUntil,
+    undefined,
+    'the second same corporate failure remains a warning',
+  );
+  assert.equal(
+    composeChinaDecisionSignalsStatus(
+      corporateDecisionFailure,
+      {
+        ...firstCorporateFailure,
+        problems: [{
+          id: 'market.china-corporate-disclosures',
+          status: 'degraded',
+          reasonCodes: ['CHINA_COVERAGE_PARTIAL', 'CHINA_SOURCE_UNAVAILABLE'],
+        }],
+      },
+      Date.parse(firstCorporateFailure.evaluatedAt),
+    ).chinaCoveragePendingUntil,
+    undefined,
+    'a mixed corporate failure remains an immediate warning',
+  );
+  assert.equal(__testing__.healthStatusBucket(corporateDecisionFailure, NOW), 'warn');
+  assert.deepEqual(
+    composeChinaDecisionSignalsStatus(
+      { status: 'COVERAGE_PARTIAL', records: 5 },
+      { ...firstCorporateFailure, problems: undefined },
+      Date.parse(firstCorporateFailure.evaluatedAt),
+    ),
+    { status: 'COVERAGE_PARTIAL', records: 5 },
+    'missing diagnostics fail closed without throwing',
+  );
+
+  for (const malformedCoverage of [
+    { records: 1, minRecordCount: 6, operationallyCovered: 1 },
+    { records: 5, minRecordCount: 7, operationallyCovered: 5 },
+    { records: 5, minRecordCount: 6, operationallyCovered: 4 },
+  ]) {
+    const candidate = {
+      ...corporateDecisionFailure,
+      records: malformedCoverage.records,
+      minRecordCount: malformedCoverage.minRecordCount,
+      decisionGroups: {
+        ...corporateDecisionFailure.decisionGroups,
+        operationallyCovered: malformedCoverage.operationallyCovered,
+      },
+    };
+    assert.equal(
+      composeChinaDecisionSignalsStatus(candidate, firstCorporateFailure, Date.parse(firstCorporateFailure.evaluatedAt))
+        .chinaCoveragePendingUntil,
+      undefined,
+      JSON.stringify(malformedCoverage),
+    );
+  }
 });
 
 test('china coverage: a summary with no streak field alarms as before', () => {

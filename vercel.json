@@ -146,6 +146,18 @@
   ],
   "headers": [
     {
+      "source": "/stocks",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, follow" }]
+    },
+    {
+      "source": "/stocks/(.*)",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, follow" }]
+    },
+    {
+      "source": "/stocks.md",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, follow" }]
+    },
+    {
       "source": "/mcp",
       "headers": [
         { "key": "Access-Control-Allow-Origin", "value": "*" },

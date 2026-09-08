@@ -144,6 +144,96 @@ function setRateLimitResponseHeaders(headers: Headers, limit: number, reset: num
   headers.set("Retry-After", String(retryAfter));
 }
 
+const REGISTER_INTEREST_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const REGISTER_INTEREST_MAX_EMAIL_LENGTH = 320;
+const REGISTER_INTEREST_MAX_META_LENGTH = 100;
+
+/**
+ * Server-to-server bridge for the anonymous waitlist flow. The public
+ * registerInterest mutation is internal so a Convex client cannot bypass the
+ * edge handler's Turnstile/desktop proof, email validation, and rate limits.
+ */
+export async function registerInterestHttpHandler(
+  ctx: ActionCtx,
+  request: Request,
+): Promise<Response> {
+  const providedSecret = request.headers.get("x-convex-shared-secret") ?? "";
+  const expectedSecret = process.env.CONVEX_SERVER_SHARED_SECRET ?? "";
+  if (!expectedSecret || !(await timingSafeEqualStrings(providedSecret, expectedSecret))) {
+    return new Response(JSON.stringify({ error: "UNAUTHORIZED" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const body = await parseJsonObjectBody<{
+    email?: unknown;
+    source?: unknown;
+    appVersion?: unknown;
+    referredBy?: unknown;
+  }>(request);
+  if (!body) {
+    return new Response(JSON.stringify({ error: "INVALID_JSON" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const email = typeof body.email === "string" ? body.email : "";
+  if (
+    email.length === 0 ||
+    email.length > REGISTER_INTEREST_MAX_EMAIL_LENGTH ||
+    !REGISTER_INTEREST_EMAIL_RE.test(email)
+  ) {
+    return new Response(JSON.stringify({ error: "INVALID_EMAIL" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const metadata = [
+    ["source", body.source],
+    ["appVersion", body.appVersion],
+    ["referredBy", body.referredBy],
+  ] as const;
+  for (const [field, value] of metadata) {
+    if (
+      value !== undefined &&
+      (typeof value !== "string" || value.length > REGISTER_INTEREST_MAX_META_LENGTH)
+    ) {
+      return new Response(JSON.stringify({ error: `INVALID_${field.toUpperCase()}` }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  }
+  if (typeof body.referredBy === "string" && body.referredBy.length > 20) {
+    return new Response(JSON.stringify({ error: "INVALID_REFERRED_BY" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  try {
+    const result = await ctx.runMutation(internal.registerInterest.register, {
+      email,
+      source: body.source as string | undefined,
+      appVersion: body.appVersion as string | undefined,
+      referredBy: body.referredBy as string | undefined,
+    });
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    console.error("[register-interest] internal mutation failed:", err);
+    return new Response(JSON.stringify({ error: "REGISTRATION_UNAVAILABLE" }), {
+      status: 503,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+}
+
 export async function internalEntitlementsHttpHandler(
   ctx: ActionCtx,
   request: Request,
@@ -267,6 +357,12 @@ export async function internalEntitlementsHttpHandler(
 }
 
 const http = httpRouter();
+
+http.route({
+  path: "/api/internal-register-interest",
+  method: "POST",
+  handler: httpAction(registerInterestHttpHandler),
+});
 
 http.route({
   path: "/api/internal-entitlements",
@@ -436,18 +532,22 @@ http.route({
     if (!msg) return new Response("OK", { status: 200 });
 
     if (msg.chat?.type !== "private") return new Response("OK", { status: 200 });
-
-    if (!msg.date || Math.abs(Date.now() / 1000 - msg.date) > 900) {
+    if (typeof msg.chat.id !== "number" || !Number.isSafeInteger(msg.chat.id) || msg.chat.id <= 0) {
       return new Response("OK", { status: 200 });
     }
 
-    const text = msg.text?.trim() ?? "";
+    if (typeof msg.date !== "number" || !Number.isSafeInteger(msg.date) || Math.abs(Date.now() / 1000 - msg.date) > 900) {
+      return new Response("OK", { status: 200 });
+    }
+
+    if (typeof msg.text !== "string") return new Response("OK", { status: 200 });
+    const text = msg.text.trim();
     const chatId = String(msg.chat.id);
 
     const match = text.match(/^\/start\s+([A-Za-z0-9_-]{40,50})$/);
-    if (!match) return new Response("OK", { status: 200 });
+    if (!match?.[1]) return new Response("OK", { status: 200 });
 
-    const claimed = await ctx.runMutation(anyApi.notificationChannels!.claimPairingToken as any, {
+    const claimed = await ctx.runMutation(internal.notificationChannels.claimPairingToken, {
       token: match[1],
       chatId,
     });

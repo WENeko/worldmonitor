@@ -27,6 +27,7 @@ import "worldmonitor/intelligence/v1/get_social_velocity.proto";
 import "worldmonitor/intelligence/v1/get_country_energy_profile.proto";
 import "worldmonitor/intelligence/v1/compute_energy_shock.proto";
 import "worldmonitor/intelligence/v1/get_country_port_activity.proto";
+import "worldmonitor/intelligence/v1/get_country_coverage.proto";
 import "worldmonitor/intelligence/v1/get_china_decision_signals.proto";
 import "worldmonitor/intelligence/v1/get_regional_snapshot.proto";
 import "worldmonitor/intelligence/v1/get_regime_history.proto";
@@ -72,6 +73,16 @@ service IntelligenceService {
   rpc GetCountryIntelBrief(GetCountryIntelBriefRequest) returns (GetCountryIntelBriefResponse) {
     option (sebuf.http.config) = {
       path: "/get-country-intel-brief"
+      method: HTTP_METHOD_GET
+    };
+  }
+
+  // GetCountryCoverage returns the country panel's visible coverage timeline:
+  // clustered news incidents reconciled against first-party structured records,
+  // with per-producer freshness so an empty list is never silent.
+  rpc GetCountryCoverage(GetCountryCoverageRequest) returns (GetCountryCoverageResponse) {
+    option (sebuf.http.config) = {
+      path: "/get-country-coverage"
       method: HTTP_METHOD_GET
     };
   }

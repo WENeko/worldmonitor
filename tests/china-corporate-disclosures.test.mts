@@ -130,7 +130,7 @@ describe('official China corporate disclosures (#5577)', () => {
     assert.ok(timeoutMatch, 'China disclosure bundle section must declare timeoutMs');
     const sectionTimeoutMs = Number(timeoutMatch[1].replaceAll('_', ''));
 
-    assert.equal(CHINA_CORPORATE_DISCLOSURE_MAX_NETWORK_MS, 106_000);
+    assert.equal(CHINA_CORPORATE_DISCLOSURE_MAX_NETWORK_MS, 118_000);
     assert.ok(
       sectionTimeoutMs - CHINA_CORPORATE_DISCLOSURE_MAX_NETWORK_MS >= 20_000,
       'network attempts must leave at least 20s for startup, parsing, publication, and shutdown',
@@ -1321,9 +1321,9 @@ describe('official China corporate disclosures (#5577)', () => {
     assert.equal(szse?.requestCount, 3);
     assert.equal(szse?.transportPath, 'proxy');
     assert.equal(szse?.fallbackReason, 'UND_ERR_CONNECT_TIMEOUT');
-    assert.equal(OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxRequestsPerRun, 3);
+    assert.equal(OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxRequestsPerRun, 4);
     assert.equal(OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxDirectRequestsPerRun, 2);
-    assert.equal(OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxProxyRequestsPerRun, 2);
+    assert.equal(OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxProxyRequestsPerRun, 3);
     assert.ok(
       OFFICIAL_EXCHANGE_SOURCE_CONTRACTS.szse.maxRequestsPerRun
         <
@@ -1518,8 +1518,9 @@ describe('official China corporate disclosures (#5577)', () => {
     }
   });
 
-  it('uses a distinct Decodo sticky gateway port for each proxy attempt', async () => {
+  it('rotates past a CONNECT 522 and still completes both bounded SZSE pages', async () => {
     const proxyPorts: number[] = [];
+    const proxyPages: number[] = [];
     const snapshot = await fetchChinaCorporateDisclosureSnapshot({
       now: Date.parse(retrievedAt),
       previousSnapshot: null,
@@ -1537,23 +1538,30 @@ describe('official China corporate disclosures (#5577)', () => {
           cause: Object.assign(new Error('connect timed out'), { code: 'ETIMEDOUT' }),
         });
       },
-      proxyRequestFn: async (_input, proxyConfig) => {
+      proxyRequestFn: async (_input, proxyConfig, options) => {
         proxyPorts.push(proxyConfig.port);
+        proxyPages.push(JSON.parse(String(options.body)).pageNum);
         if (proxyPorts.length === 1) {
-          throw Object.assign(new Error('Proxy upstream timeout'), { status: 522 });
+          throw Object.assign(new Error('Proxy CONNECT: HTTP/1.1 522 Connection timed out'), {
+            status: 522,
+            proxyConnect: true,
+          });
         }
+        const pageNum = JSON.parse(String(options.body)).pageNum;
         return {
-          buffer: Buffer.from(JSON.stringify(fixture('szse.json'))),
+          buffer: Buffer.from(JSON.stringify(szsePage(51, pageNum))),
           status: 200,
           contentType: 'application/json',
         };
       },
     });
 
-    assert.deepEqual(proxyPorts, [10001, 10002]);
+    assert.deepEqual(proxyPorts, [10001, 10002, 10003]);
+    assert.deepEqual(proxyPages, [1, 1, 2]);
     const szse = snapshot.sources.find((source) => source.id === 'szse');
     assert.equal(szse?.transportStatus, 'fresh');
-    assert.equal(szse?.requestCount, 3);
+    assert.equal(szse?.contentStatus, 'current');
+    assert.equal(szse?.requestCount, 4);
     assert.equal(szse?.transportPath, 'proxy');
     assert.doesNotMatch(JSON.stringify(snapshot), /proxy-user|proxy-secret/);
   });
@@ -1598,8 +1606,15 @@ describe('official China corporate disclosures (#5577)', () => {
       });
       const szse = snapshot.sources.find((source) => source.id === 'szse');
       const decision = decisions.find((entry) => entry.sourceId === 'szse');
-      assert.deepEqual(ports, run === 0 ? [30001] : [30001, 30002]);
-      assert.equal(szse.requestCount, run === 0 ? 2 : 3);
+      assert.deepEqual(
+        ports,
+        run === 0
+          ? [30001]
+          : run === 1
+            ? [30001, 30002, 30003]
+            : [30001, 30002],
+      );
+      assert.equal(szse.requestCount, run === 0 ? 2 : run === 1 ? 4 : 3);
       assert.equal(decision?.proxyExitRotated, run !== 0);
       assert.equal(szse.lastSuccessAt, run === 1 ? retrievedAt : checkedAt);
       assert.equal(szse.transportReliability.status, ['stable', 'degraded', 'recovering', 'stable'][run]);
@@ -1793,8 +1808,8 @@ describe('official China corporate disclosures (#5577)', () => {
     assert.equal(szse?.transportStatus, 'error');
     assert.equal(szse?.contentStatus, 'stale');
     assert.equal(szse?.lastSuccessAt, retrievedAt);
-    assert.equal(proxyCalls, 2);
-    assert.equal(szse?.requestCount, 3);
+    assert.equal(proxyCalls, 3);
+    assert.equal(szse?.requestCount, 4);
     assert.equal(szse?.transportPath, 'proxy');
     assert.equal(szse?.fallbackReason, 'ECONNRESET');
     assert.equal(szse?.proxyFailureReason, 'EAI_AGAIN');

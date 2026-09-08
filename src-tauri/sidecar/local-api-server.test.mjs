@@ -781,6 +781,75 @@ test('preserves caller Authorization while hiding the sidecar transport token', 
   }
 });
 
+for (const registrationStatus of ['registered', 'already_registered']) {
+  test(`uses the authenticated Convex bridge for self-hosted register-interest (${registrationStatus})`, async () => {
+    const originalConvex = process.env.CONVEX_URL;
+    const originalSite = process.env.CONVEX_SITE_URL;
+    const originalSecret = process.env.CONVEX_SERVER_SHARED_SECRET;
+    const originalFetch = globalThis.fetch;
+    process.env.CONVEX_URL = 'https://self-hosted.convex.cloud';
+    process.env.CONVEX_SITE_URL = 'http://self-hosted.convex.site';
+    process.env.CONVEX_SERVER_SHARED_SECRET = 'convex-test-secret';
+
+    let captured;
+    globalThis.fetch = async (url, init) => {
+      captured = { url, init };
+      return new Response(JSON.stringify({
+        status: registrationStatus,
+        position: 7,
+        emailSuppressed: true,
+        referralCode: 'secret-referral-code',
+        referralCount: 9,
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+
+    const localApi = await setupApiDir({});
+    const app = await createLocalApiServer({
+      port: 0,
+      apiDir: localApi.apiDir,
+      remoteBase: 'https://worldmonitor.app',
+      logger: { log() { }, warn() { }, error() { } },
+    });
+    const { port } = await app.start();
+
+    try {
+      const response = await postJsonViaHttp(`http://127.0.0.1:${port}/api/register-interest`, {
+        email: 'self-hosted@example.com',
+        source: 'desktop-settings',
+        appVersion: '2.8.0',
+        referredBy: 'REF123',
+      });
+      assert.equal(response.status, 200);
+      assert.deepEqual(response.json, {
+        status: 'registered',
+        referralCode: '',
+        referralCount: 0,
+        position: 0,
+        emailSuppressed: false,
+      });
+      assert.equal(captured.url, 'http://self-hosted.convex.site/api/internal-register-interest');
+      assert.equal(captured.init.headers['x-convex-shared-secret'], 'convex-test-secret');
+      assert.equal(captured.init.headers['User-Agent'], 'worldmonitor-sidecar/1.0');
+      assert.deepEqual(JSON.parse(captured.init.body), {
+        email: 'self-hosted@example.com',
+        source: 'desktop-settings',
+        appVersion: '2.8.0',
+        referredBy: 'REF123',
+      });
+    } finally {
+      await app.close();
+      await localApi.cleanup();
+      globalThis.fetch = originalFetch;
+      if (originalConvex === undefined) delete process.env.CONVEX_URL;
+      else process.env.CONVEX_URL = originalConvex;
+      if (originalSite === undefined) delete process.env.CONVEX_SITE_URL;
+      else process.env.CONVEX_SITE_URL = originalSite;
+      if (originalSecret === undefined) delete process.env.CONVEX_SERVER_SHARED_SECRET;
+      else process.env.CONVEX_SERVER_SHARED_SECRET = originalSecret;
+    }
+  });
+}
+
 test('does not forward the sidecar transport token through Docker cloud proxy routes', async () => {
   const originalConvex = process.env.CONVEX_URL;
   delete process.env.CONVEX_URL;
@@ -823,7 +892,7 @@ test('does not forward the sidecar transport token through Docker cloud proxy ro
   }
 });
 
-test('preserves Request body when handler uses fetch(Request)', async () => {
+for (const inputKind of ['Request', 'URL']) test(`preserves body when handler uses fetch(${inputKind})`, async () => {
   // Use a DISTINCT upstream server (not the sidecar itself) so this test
   // exercises real "handler proxies to external host" semantics. The upstream
   // is on 127.0.0.1, so it must be opted into the SSRF allowlist via
@@ -850,7 +919,7 @@ test('preserves Request body when handler uses fetch(Request)', async () => {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ secret: 'keep-body' }),
         });
-        const upstream = await fetch(request);
+        const upstream = await fetch(${inputKind === 'Request' ? 'request' : 'new URL(request.url), { method: request.method, headers: request.headers, body: await request.text() }'});
         const payload = await upstream.text();
         return new Response(payload, {
           status: upstream.status,
@@ -939,7 +1008,7 @@ test('returns local handler error when fetch(Request) uses a consumed body', asy
   }
 });
 
-test('blocks handler global fetches to private network targets (#3549)', async () => {
+for (const inputKind of ['string', 'URL', 'Request']) test(`blocks handler ${inputKind} fetches to private network targets (#3549, #7892)`, async () => {
   let upstreamHits = 0;
 
   const upstream = createServer((_req, res) => {
@@ -953,7 +1022,7 @@ test('blocks handler global fetches to private network targets (#3549)', async (
   const localApi = await setupApiDir({
     'private-proxy.js': `
       export default async function handler() {
-        const upstream = await fetch(process.env.WM_TEST_UPSTREAM);
+        const upstream = await fetch(${inputKind === 'string' ? 'process.env.WM_TEST_UPSTREAM' : `new ${inputKind}(process.env.WM_TEST_UPSTREAM)`});
         const payload = await upstream.text();
         return new Response(payload, {
           status: upstream.status,
@@ -2610,6 +2679,144 @@ test('rss-proxy pins an IPv6-only hostname to the validated address', async () =
     assert.equal(outboundOptions?.hostname, 'ipv6-only.example');
     assert.equal(outboundOptions?.family, 6);
     assert.deepEqual(pinnedLookup, { address: publicIpv6, family: 6 });
+  } finally {
+    dns.resolve4 = originalResolve4;
+    dns.resolve6 = originalResolve6;
+    https.request = originalHttpsRequest;
+    await app.close();
+    await localApi.cleanup();
+  }
+});
+
+test('rss-proxy blocks IPv4-mapped IPv6 literals and DNS answers before transport', async () => {
+  const localApi = await setupApiDir({});
+  const originalResolve4 = dns.resolve4;
+  const originalResolve6 = dns.resolve6;
+  const originalHttpsRequest = https.request;
+  let outboundCalls = 0;
+
+  dns.resolve4 = async () => ['93.184.216.34'];
+  dns.resolve6 = async () => ['::ffff:7f00:1'];
+  https.request = () => {
+    outboundCalls += 1;
+    throw new Error('blocked mapped address must not reach the network');
+  };
+
+  const app = await createLocalApiServer({
+    port: 0,
+    apiDir: localApi.apiDir,
+    logger: { log() {}, warn() {}, error() {} },
+  });
+  const { port } = await app.start();
+
+  try {
+    const mappedUrls = [
+      'https://[::ffff:127.0.0.1]/feed.xml',
+      'https://[0:0:0:0:0:ffff:127.0.0.1]/feed.xml',
+      'https://[::ffff:7f00:1]/feed.xml',
+      'https://[::ffff:c0a8:101]/feed.xml',
+      'https://[::ffff:a9fe:101]/feed.xml',
+      'https://[::ffff:c633:6401]/feed.xml',
+    ];
+    for (const feedUrl of mappedUrls) {
+      const response = await authFetch(
+        `http://127.0.0.1:${port}/api/rss-proxy?url=${encodeURIComponent(feedUrl)}`,
+      );
+      assert.equal(response.status, 403, feedUrl);
+      const body = await response.json();
+      assert.match(body.error, /private\/reserved/, feedUrl);
+    }
+
+    const dnsResponse = await authFetch(
+      `http://127.0.0.1:${port}/api/rss-proxy?url=${encodeURIComponent('https://mapped-dns.example/feed.xml')}`,
+    );
+    assert.equal(dnsResponse.status, 403);
+    assert.match((await dnsResponse.json()).error, /private\/reserved/);
+    assert.equal(outboundCalls, 0);
+  } finally {
+    dns.resolve4 = originalResolve4;
+    dns.resolve6 = originalResolve6;
+    https.request = originalHttpsRequest;
+    await app.close();
+    await localApi.cleanup();
+  }
+});
+
+test('rss-proxy forces active and error responses through an inert response policy', async () => {
+  const localApi = await setupApiDir({});
+  const originalResolve4 = dns.resolve4;
+  const originalResolve6 = dns.resolve6;
+  const originalHttpsRequest = https.request;
+  const upstreamResponses = [
+    {
+      statusCode: 200,
+      statusMessage: 'OK',
+      contentType: 'text/html; charset=utf-8',
+      body: '<html><script>globalThis.rssProxyExecuted = true;</script></html>',
+    },
+    {
+      statusCode: 502,
+      statusMessage: 'Bad Gateway',
+      contentType: 'image/svg+xml',
+      body: '<svg><script>globalThis.rssProxyExecuted = true;</script></svg>',
+    },
+  ];
+  let upstreamIndex = 0;
+
+  dns.resolve4 = async () => ['93.184.216.34'];
+  dns.resolve6 = async () => {
+    const error = new Error('No AAAA records');
+    error.code = 'ENODATA';
+    throw error;
+  };
+  https.request = (_options, onResponse) => {
+    const upstream = upstreamResponses[upstreamIndex++];
+    const req = new EventEmitter();
+    req.setTimeout = () => {};
+    req.write = () => {};
+    req.destroy = (error) => {
+      if (error) req.emit('error', error);
+    };
+    req.end = () => {
+      queueMicrotask(() => {
+        const res = new EventEmitter();
+        res.statusCode = upstream.statusCode;
+        res.statusMessage = upstream.statusMessage;
+        res.headers = { 'content-type': upstream.contentType };
+        onResponse(res);
+        res.emit('data', Buffer.from(upstream.body));
+        res.emit('end');
+      });
+    };
+    return req;
+  };
+
+  const app = await createLocalApiServer({
+    port: 0,
+    apiDir: localApi.apiDir,
+    logger: { log() {}, warn() {}, error() {} },
+  });
+  const { port } = await app.start();
+
+  try {
+    for (const upstream of upstreamResponses) {
+      const response = await authFetch(
+        `http://127.0.0.1:${port}/api/rss-proxy?url=${encodeURIComponent('https://publisher.example/feed.xml')}`,
+      );
+      assert.equal(response.status, upstream.statusCode);
+      assert.equal(await response.text(), upstream.body);
+      assert.equal(response.headers.get('content-type'), 'application/xml; charset=utf-8');
+      assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+      assert.match(response.headers.get('content-security-policy') || '', /(?:^|;\s*)sandbox(?:;|$)/);
+      assert.match(response.headers.get('content-security-policy') || '', /script-src 'none'/);
+    }
+
+    for (const query of ['', '?url=http%3A%2F%2F127.0.0.1%2F']) {
+      const response = await authFetch(`http://127.0.0.1:${port}/api/rss-proxy${query}`);
+      assert.ok(response.status === 400 || response.status === 403);
+      assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+      assert.match(response.headers.get('content-security-policy') || '', /(?:^|;\s*)sandbox(?:;|$)/);
+    }
   } finally {
     dns.resolve4 = originalResolve4;
     dns.resolve6 = originalResolve6;

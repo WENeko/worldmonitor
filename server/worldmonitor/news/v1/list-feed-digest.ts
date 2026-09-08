@@ -476,7 +476,7 @@ const ENTITY_CORROBORATION_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DIPLOMACY_SEVERITY_PROMOTION_MIN_TIER12_SOURCES = 3;
 
 
-interface ParsedItem {
+export interface ParsedItem {
   source: string;
   // Originating publisher from the RSS <source> element ('' when absent).
   // Google News feeds — which back 154 of the 366 server digest labels —
@@ -805,7 +805,7 @@ async function fetchRssText(
  * an unrecognized date dialect — see U2 in
  * docs/plans/2026-04-26-001-fix-brief-static-page-contamination-plan.md).
  */
-interface ParseResult {
+export interface ParseResult {
   items: ParsedItem[];
   parsedTotal: number;     // count of <item>/<entry> blocks attempted
   droppedUndated: number;  // count dropped because every recognized date tag was empty/unparseable/future
@@ -824,7 +824,18 @@ interface ParseResult {
 const CACHE_TTL_HEALTHY_S = 3600;
 const CACHE_TTL_EMPTY_S = 300;
 
-async function fetchAndParseRss(
+/**
+ * Fetch one feed and parse it: direct, then the relay when direct is blocked,
+ * with a Cloudflare-challenge body sniff and a strict date gate.
+ *
+ * Exported since #7526 so the country-coverage RPC uses this transport instead
+ * of standing up a second RSS fetcher. Its cache key already carries the whole
+ * feed URL, so a per-country query is keyed per country for free. Note that
+ * `item.level` / `item.category` are stamped by the DIGEST classifier
+ * (`./_classifier`); a caller that must agree with the browser re-labels the
+ * title with shared/threat-keyword-classifier instead of reading those fields.
+ */
+export async function fetchAndParseRss(
   feed: ServerFeed,
   variant: string,
   signal: AbortSignal,

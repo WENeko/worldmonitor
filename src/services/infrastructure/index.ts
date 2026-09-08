@@ -162,10 +162,7 @@ export async function fetchTrafficAnomalies(country?: string): Promise<ListInter
     return response;
   }, emptyAnomaliesFallback, {
     cacheKey: country,
-    // Global empty data is authoritative, but preserve the existing
-    // country-specific retry behavior for an empty filtered result.
-    shouldCache: (response) => isTrafficAnomaliesResponse(response)
-      && (!country || response.anomalies.length > 0),
+    shouldCache: isTrafficAnomaliesResponse,
   });
 }
 

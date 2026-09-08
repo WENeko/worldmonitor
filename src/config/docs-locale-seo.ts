@@ -176,7 +176,7 @@ const DOCS_WEBSITE_IDS = new Set([
   `${DOCS_PUBLIC_ORIGIN}/docs/#website`,
 ]);
 const JSON_LD_SCRIPT_RE =
-  /<script\b(?=[^>]*\btype=["']application\/ld\+json["'])[^>]*>([\s\S]*?)<\/script>/gi;
+  /<script\b(?=[^>]*\btype\s*=\s*["']application\/ld\+json["'])[^>]*>([\s\S]*?)<\/script>/gi;
 
 /** `@type` may be a string or an array of strings in valid JSON-LD. */
 function hasJsonLdType(node: Record<string, unknown>, type: string): boolean {
@@ -249,19 +249,23 @@ function collapseCanonicalWebSite(node: Record<string, unknown>): Record<string,
 }
 
 /**
- * Walk every node at every depth — a WebSite can sit at the top level, inside a
+ * Collapse canonical Organization bodies to references and prune WebSites at
+ * every depth. These nodes can sit at the top level, inside a
  * top-level array, under `@graph`, or nested beneath any property such as
  * `mainEntity`. Returns null when the value itself must be removed.
  */
-function pruneWebSites(value: unknown): unknown | null {
+function pruneDocsEntities(value: unknown): unknown | null {
   if (Array.isArray(value)) {
-    // pruneWebSites returns null for a droppable entry, so mapping then
+    // pruneDocsEntities returns null for a droppable entry, so mapping then
     // discarding nulls removes and recurses in one pass.
     return value
-      .map((entry) => pruneWebSites(entry))
+      .map((entry) => pruneDocsEntities(entry))
       .filter((entry) => entry !== null);
   }
   if (!value || typeof value !== 'object') return value;
+  if ((value as Record<string, unknown>)['@id'] === ORGANIZATION_ID) {
+    return { '@id': ORGANIZATION_ID };
+  }
   if (shouldDropWebSite(value)) return null;
 
   const node = collapseCanonicalWebSite(value as Record<string, unknown>);
@@ -271,7 +275,7 @@ function pruneWebSites(value: unknown): unknown | null {
 
   const next: Record<string, unknown> = {};
   for (const [key, nested] of Object.entries(node)) {
-    const pruned = pruneWebSites(nested);
+    const pruned = pruneDocsEntities(nested);
     if (pruned === null) continue;
     next[key] = pruned;
   }
@@ -283,7 +287,7 @@ function rewriteDocsJsonLdValue(
   pathname?: string,
   allowArticleInjection = true,
 ): unknown | null {
-  const pruned = pruneWebSites(rewriteDocsWebsiteIds(value));
+  const pruned = pruneDocsEntities(rewriteDocsWebsiteIds(value));
   if (pruned === null) return null;
   const attributed = withDocsArticleAuthor(withDocsSpeakable(pruned));
   const withArticle = allowArticleInjection

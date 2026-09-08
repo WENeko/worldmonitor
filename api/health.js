@@ -176,6 +176,11 @@ const CHINA_COVERAGE_SUMMARY_KEY = 'health:china-coverage:v1';
 // reported. See projectChinaCoverageStatus for why the debounce lives here and
 // not in the summary's own `status` field.
 const CHINA_DEGRADED_MIN_CONSECUTIVE = 2;
+// The aggregate China evaluator runs hourly. Give that second observation one
+// full cycle plus one 15-minute derived-signal publication interval to arrive.
+// A repeated incident stops being pending as soon as the evaluator publishes
+// streak 2; this deadline is only the fail-closed backstop when it does not.
+const CHINA_DECISION_SIGNALS_PENDING_MS = 75 * 60 * 1_000;
 const HEALTH_VERDICT_SNAPSHOT_TTL_MS = HEALTH_VERDICT_SNAPSHOT_TTL_SECONDS * 1_000;
 const HEALTH_VERDICT_REFRESH_LOCK_KEY = `${HEALTH_VERDICT_SNAPSHOT_KEY}:refresh-lock`;
 // The sweep can consume its full 8s timeout, followed by a 4s failure-log read
@@ -3095,6 +3100,9 @@ const STATUS_COUNTS = {
 };
 
 function healthStatusBucket(entry, now) {
+  if (entry?.status === 'COVERAGE_PARTIAL'
+    && typeof entry.chinaCoveragePendingUntil === 'string'
+    && !isExpiredDeadline(entry.chinaCoveragePendingUntil, now)) return 'ok';
   if (entry?.status === 'SEED_ERROR'
     && typeof entry.sourceFailurePendingUntil === 'string'
     && !isExpiredDeadline(entry.sourceFailurePendingUntil, now)) return 'ok';
@@ -3261,6 +3269,50 @@ function composeChinaCoverageStatus(entry, raw, readError = false) {
   return { ...entry, ...projected, seedStatus };
 }
 
+function composeChinaDecisionSignalsStatus(entry, chinaCoverageEntry, now) {
+  if (
+    entry?.status !== 'COVERAGE_PARTIAL'
+    || chinaCoverageEntry?.status !== 'OK'
+    || chinaCoverageEntry?.chinaStatus !== 'degraded'
+    || chinaCoverageEntry?.degradedStreak !== CHINA_DEGRADED_MIN_CONSECUTIVE - 1
+  ) return entry;
+
+  const chinaProblems = Array.isArray(chinaCoverageEntry.problems)
+    ? chinaCoverageEntry.problems
+    : [];
+  const decisionProblems = Array.isArray(entry.decisionGroups?.unavailableGroups)
+    ? entry.decisionGroups.unavailableGroups
+    : [];
+  const requiredDecisionGroups = SEED_META.chinaDecisionSignals.minRecordCount;
+  const [chinaProblem] = chinaProblems;
+  const [decisionProblem] = decisionProblems;
+  const sameHeldCorporateIncident = chinaProblems.length === 1
+    && chinaProblem?.id === 'market.china-corporate-disclosures'
+    && chinaProblem?.status === 'degraded'
+    && Array.isArray(chinaProblem?.reasonCodes)
+    && chinaProblem.reasonCodes.length === 1
+    && chinaProblem.reasonCodes[0] === 'CHINA_COVERAGE_PARTIAL'
+    && decisionProblems.length === 1
+    && decisionProblem?.id === 'corporate-disclosures'
+    && decisionProblem?.unavailableCause === 'upstream_unavailable'
+    && entry.minRecordCount === requiredDecisionGroups
+    && entry.records === requiredDecisionGroups - 1
+    && entry.decisionGroups?.operationallyCovered === entry.records;
+  if (!sameHeldCorporateIncident) return entry;
+
+  const evaluatedAt = Date.parse(chinaCoverageEntry.evaluatedAt);
+  const pendingUntil = evaluatedAt + CHINA_DECISION_SIGNALS_PENDING_MS;
+  if (!Number.isFinite(evaluatedAt) || evaluatedAt > now || now >= pendingUntil) return entry;
+
+  // chinaDecisionSignals is derived from the same corporate snapshot the
+  // aggregate evaluator just held for its first degraded observation. Keep the
+  // derived coverage diagnosis visible, but bucket both projections together;
+  // otherwise one source incident bypasses the debounce through a second key
+  // and flips the fleet verdict despite retained last-good data. The deadline
+  // prevents a stalled evaluator from holding this projection indefinitely.
+  return { ...entry, chinaCoveragePendingUntil: new Date(pendingUntil).toISOString() };
+}
+
 function composeScorecardReadModelStatus(entry, raw, readError = false) {
   if (!entry) return entry;
   if (readError) return { ...entry, status: 'REDIS_PARTIAL', readModelReady: false };
@@ -3331,8 +3383,8 @@ function isExpiredDeadline(raw, now) {
 
 // Every per-entry softening deadline a snapshot can carry, in one place. Both
 // readers below walk this table instead of repeating a `hasOwnProperty` +
-// `isExpiredDeadline` block per field, so adding a FOURTH softening is one
-// entry here rather than two more near-identical branches that can drift apart.
+// `isExpiredDeadline` block per field, so adding another softening is one
+// entry here rather than more near-identical branches that can drift apart.
 //
 // `kind` decides which `hasExpiredActivationGrace` toggle governs the field.
 // `status` pins a field to one status where the field alone is not proof:
@@ -3343,6 +3395,7 @@ const ENTRY_SOFTENING_DEADLINES = [
   { field: 'contentFreshnessPendingUntil', kind: 'content', status: null },
   { field: 'staleContentGraceUntil', kind: 'content', status: null },
   { field: 'sourceFailurePendingUntil', kind: 'source', status: 'SEED_ERROR' },
+  { field: 'chinaCoveragePendingUntil', kind: 'source', status: 'COVERAGE_PARTIAL' },
 ];
 
 function entryDeadlineRaw(entry, { field, status }) {
@@ -3909,6 +3962,12 @@ export async function handleHealth(req, ctx, options = {}) {
     }
   }
 
+  checks.chinaDecisionSignals = composeChinaDecisionSignalsStatus(
+    checks.chinaDecisionSignals,
+    checks.chinaCoverage,
+    evaluationNow,
+  );
+
   // Now that every key has a status, claim (or read back) the one durable
   // deadline per STALE_CONTENT source and publish it. Only the claim half is
   // awaited — the recovery cleanup is bookkeeping no reader of this response
@@ -4118,8 +4177,10 @@ export const __testing__ = {
   HEALTH_VERDICT_REFRESH_LOCK_KEY,
   HEALTH_VERDICT_REFRESH_WAIT_MS,
   CHINA_COVERAGE_SUMMARY_KEY,
+  CHINA_DECISION_SIGNALS_PENDING_MS,
   projectChinaCoverageStatus,
   composeChinaCoverageStatus,
+  composeChinaDecisionSignalsStatus,
   composeScorecardReadModelStatus,
   healthVerdictRedisKey,
   parseHealthVerdictSnapshot,

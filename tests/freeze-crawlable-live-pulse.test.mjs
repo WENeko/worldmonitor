@@ -819,6 +819,9 @@ describe('freeze per-country developments capture', () => {
     assert.ok(!requested.some((href) => href.includes('/api/wm-session') === false && href.includes('get-country-intel-brief')));
     assert.ok(!requested.some((href) => href.includes('get-intel-timeline')));
     assert.equal(snapshot.coverage.serviceKeyPresent, false);
+    assert.equal(snapshot.coverage.briefEligibleCount, 2);
+    assert.equal(snapshot.coverage.briefMatchedCount, 0);
+    assert.equal(snapshot.coverage.briefCountryCount, 0);
     const sudan = snapshot.countries.SD.developments;
     assert.equal(sudan.headlines.length, 2);
     assert.equal(sudan.headlines[0].source, 'UN News');
@@ -909,6 +912,7 @@ describe('freeze per-country developments capture', () => {
       'no LLM call is spent on a brief that would be withheld');
     assert.equal(snapshot.coverage.briefThinGroundingCount, 1);
     assert.equal(snapshot.coverage.briefMatchedCount, 2, 'only the two-headline countries are owed a brief');
+    assert.equal(snapshot.coverage.briefEligibleCount, 2);
     // The stub timeline serves every country, so a keyed run has no tail.
     assert.equal(snapshot.coverage.developmentsMissingCount, 0);
     assert.equal(
@@ -1260,6 +1264,7 @@ describe('freeze per-country developments capture', () => {
     assert.equal(snapshot.coverage.briefMatchedCount, 2);
     assert.equal(snapshot.coverage.briefCountryCount, 0);
     assert.equal(snapshot.coverage.briefUnsupportedCitationCount, 2);
+    assert.equal(snapshot.coverage.briefEligibleCount, 2, 'withholding does not erase grounding eligibility');
     for (const code of ['SD', 'NO']) {
       const row = snapshot.countries[code].developments;
       assert.equal(row.brief, null);

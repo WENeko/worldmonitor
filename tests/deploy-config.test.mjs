@@ -727,6 +727,19 @@ describe('crawlable content corpus deployment contracts', () => {
     }
   });
 
+  it('marks stock workspaces and their markdown twins noindex without breaking deep links (#7905)', () => {
+    for (const path of ['/stocks', '/stocks/', '/stocks.md', '/stocks/AAPL', '/stocks/ZZZZFAKE',
+      '/stocks/aapl/', '/stocks/BRK.B', '/stocks/7203.T', '/stocks/AAPL.md', '/stocks/ZZZZFAKE.md']) {
+      assert.equal(effectiveHeader(path, 'X-Robots-Tag'), 'noindex, follow', path);
+    }
+    for (const path of ['/dashboard', '/stocksmith', '/countries/united-states']) {
+      assert.equal(effectiveHeader(path, 'X-Robots-Tag'), null, path);
+    }
+    for (const symbol of ['AAPL', 'ZZZZFAKE', 'BRK.B', '7203.T']) {
+      assert.equal(firstRewriteFor({ host: 'www.worldmonitor.app', path: `/stocks/${symbol}` })?.destination, DASHBOARD_HTML_DESTINATION);
+    }
+  });
+
   it('serves no SPA fallback for generated corpus paths while keeping real client deep links', () => {
     // #6575: unknown paths must fall through to the filesystem (404), so the
     // only dashboard-serving rewrites left are the explicit client History

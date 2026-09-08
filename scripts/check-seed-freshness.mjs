@@ -88,6 +88,14 @@ export const MAX_ROLLOUT_WINDOW_MS = 24 * 60 * 60 * 1000;
 // window far longer than the publisher can legally mint.
 export const STALE_CONTENT_GRACE_SKEW_SLACK_MS = 5 * 60 * 1000;
 export const MAX_STALE_CONTENT_GRACE_MS = 3 * 60 * 60 * 1000 + STALE_CONTENT_GRACE_SKEW_SLACK_MS;
+// Mirrors CHINA_DECISION_SIGNALS_PENDING_MS in api/health.js, with the same
+// cross-machine clock-skew allowance used for stale-content grace. The API
+// keeps a first corporate-disclosures miss diagnostic-only while the hourly
+// China evaluator confirms it; this monitor must consume that bounded verdict
+// instead of turning the pending entry back into an operational failure.
+export const CHINA_COVERAGE_PENDING_SKEW_SLACK_MS = 5 * 60 * 1000;
+export const MAX_CHINA_COVERAGE_PENDING_MS = 75 * 60 * 1000
+  + CHINA_COVERAGE_PENDING_SKEW_SLACK_MS;
 
 function hasActiveBoundedDeadline(raw, now, maxWindowMs) {
   const until = Date.parse(typeof raw === 'string' ? raw : '');
@@ -110,6 +118,15 @@ export function isStaleContentGraceProblem(problem, now = Date.now()) {
   );
 }
 
+export function isChinaCoveragePendingProblem(problem, now = Date.now()) {
+  if (problem?.status !== 'COVERAGE_PARTIAL') return false;
+  return hasActiveBoundedDeadline(
+    problem.chinaCoveragePendingUntil,
+    now,
+    MAX_CHINA_COVERAGE_PENDING_MS,
+  );
+}
+
 export function isSourceFailurePendingProblem(problem, now = Date.now()) {
   const earthquake = problem?.errorCode === 'EARTHQUAKE_UPSTREAM_INCOMPLETE';
   const nhc = /^NHC_(POINT_REQUEST_FAILED|POINT_RESPONSE_INVALID)$/.test(problem?.errorCode || '');
@@ -126,11 +143,18 @@ export function isSourceFailurePendingProblem(problem, now = Date.now()) {
 
 export function findPendingDiagnostics(payload, now = Date.now()) {
   return compactHealthEntries(payload)
-    .filter(([, problem]) => isStaleContentGraceProblem(problem, now) || isSourceFailurePendingProblem(problem, now))
+    .filter(([, problem]) => (
+      isStaleContentGraceProblem(problem, now)
+      || isSourceFailurePendingProblem(problem, now)
+      || isChinaCoveragePendingProblem(problem, now)
+    ))
     .map(([name, problem]) => ({
       name,
       status: problem?.status ?? 'UNKNOWN',
-      graceUntil: problem?.staleContentGraceUntil ?? problem?.sourceFailurePendingUntil ?? null,
+      graceUntil: problem?.staleContentGraceUntil
+        ?? problem?.sourceFailurePendingUntil
+        ?? problem?.chinaCoveragePendingUntil
+        ?? null,
     }));
 }
 
@@ -146,6 +170,7 @@ export function findOperationalProblems(payload, now = Date.now()) {
       && !isRolloutPendingProblem(problem, now)
       && !isStaleContentGraceProblem(problem, now)
       && !isSourceFailurePendingProblem(problem, now)
+      && !isChinaCoveragePendingProblem(problem, now)
     ))
     .map(([name, problem]) => ({
       name,
