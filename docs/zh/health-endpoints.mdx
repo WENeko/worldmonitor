@@ -21,14 +21,16 @@ description: "World Monitor 提供两个健康检查端点用于持续监控数�
 
 | HTTP 状态 | 总体状态 | 含义 |
 |-------------|---------------|---------|
-| `200` | `HEALTHY` | 所有检查正常，无警告 |
-| `200` | `WARNING` | 某些键过期或按需键为空，但无严重故障 |
+| `200` | `HEALTHY` | 用户可见平台可用。所有检查正常，或一个受控警告仍提供可用的最后一次正常数据 |
+| `200` | `WARNING` | 至少一个警告影响可用性，或存在多个可操作警告，或一个受控警告超过所有探测键的 3% |
 | `200` | `DEGRADED` | 关键键为空，但 ≤3% 的所有探测键 |
 | `200` | `UNHEALTHY` | 关键键为空，>3% 的所有探测键 |
 | `401` | - | 无有效运维/企业 API 密钥时请求详细健康检查或历史记录 |
 | `503` | `REDIS_DOWN` | 无法连接到 Redis —— 这是**唯一**返回非 200 状态码的状态 |
 
 > 总体健康判定位于 JSON 的 `status` 字段中，而非 HTTP 状态码。除 `REDIS_DOWN` 外的每种状态都返回 `200`，这样警告级别的种子抖动不会触发 HTTP 状态监控器的抖动（参见 PR #2699）。`REDIS_DOWN` 返回 `503`，因为当 Redis 不可达时，端点无法评估任何内容，所以普通的 HTTP 探测必须看到失败。
+
+顶层 `status` 表示用户可见平台的可用性，而不是所有数据源都完全正常。因此，当警告由可用的最后一次正常数据控制时，`HEALTHY` 可以与 `summary` 和 `problems` 中的警告同时出现。
 
 ### 响应体
 
@@ -39,6 +41,7 @@ description: "World Monitor 提供两个健康检查端点用于持续监控数�
     "total": 292,
     "ok": 292,
     "warn": 0,
+    "containedWarn": 0,
     "onDemandWarn": 0,
     "staleContent": 0,
     "rolloutPending": 0,
@@ -56,9 +59,11 @@ description: "World Monitor 提供两个健康检查端点用于持续监控数�
 }
 ```
 
-`summary` 字段：`total` 是每个探测键的一个条目，并随面板增加而增长 —— 请以你自己响应中的数值为准，而非本页示例。`warn` **不包括**按需为空的键 —— 这些键作为 `onDemandWarn` 单独显示，因此它们不会将总体判定推向 `WARNING`。`staleContent` 统计所有 `STALE_CONTENT` 诊断。在数据源处于三小时的 `staleContentGraceUntil` 宽限期内时，该值可以大于 `warn`。数据源仍显示在 `problems` 中，但在截止时间前计入 `ok`。`rolloutPending` 是 `warn` 的一个**子集**（新部署的 schema 仍处于其有界的「部署先于定时任务」窗口内）。只有 `crit`（`EMPTY`/`EMPTY_DATA`）会驱动 `DEGRADED`/`UNHEALTHY`。
+`summary` 字段：`total` 是每个探测键的一个条目，并随面板增加而增长 —— 请以你自己响应中的数值为准，而非本页示例。`warn` 是完整的可操作警告总数，但**不包括**按需为空的键；这些键在 `onDemandWarn` 中单独显示。`containedWarn` 是 `warn` 的子集，不是额外的计数桶。只有 `SEED_ERROR`、`COVERAGE_PARTIAL` 和 `COVERAGE_DEGRADED` 有资格受控，而且元数据必须证明记录数为正、不存在已知不可用情况，且不在有效宽限期内。只有一个可操作警告受到控制，且不超过所有探测键的 3% 时，可用性仍为 `HEALTHY`。两个或更多可操作警告始终影响可用性，包括来自同一播种器的多个检查。 受控判断会独立检查所有必需的诊断证据，不受最终状态选择顺序影响。证据必须与最终诊断状态一致，并且仍处于该检查现有的种子和内容新鲜度预算内。`STALE_SEED` 和 `STALE_CONTENT` 永不受控。可选的 `containmentUntil` 截止时间同时限制完整和精简判定缓存。制裁检查（`sanctionsPressure`、`sanctionsEntities`）、美国关税（`tariffTrendsUs`）和涉及再分发权限的供应链检查（`supplyVulnerability`、`supplyChokepointDependencies`）永不受控。陈旧年龄未知、读取策略或缓存状态不兼容、实物价格背离警告以及 `CHINA_DEGRADED` 均不受控；汇总行数不能证明底层中国数据集仍然可用。
 
-使用 `?compact=1` 时，`checks` 对象会被 `problems` 替换，仅包含非 OK 的键。
+缺失或不可用的数据、未知警告状态、`REDIS_PARTIAL`、`ROLLOUT_PENDING`、超过 3% 的受控警告，以及所有严重故障都会影响可用性。`EMPTY_ON_DEMAND` 和待处理诊断保留现有语义。`staleContent` 统计所有 `STALE_CONTENT` 诊断。在数据源处于三小时的 `staleContentGraceUntil` 宽限期内时，该值可以大于 `warn`。数据源在截止时间前计入 `ok` 和可选的 `pending`。`rolloutPending` 是 `warn` 的一个**子集**。只有 `crit`（`EMPTY`/`EMPTY_DATA`）会驱动 `DEGRADED`/`UNHEALTHY`。
+
+使用 `?compact=1` 时，`checks` 对象会被 `problems` 替换。`problems` 保留所有可操作故障，包括不影响顶层可用性判定的受控警告；`pending` 保留有效宽限期内的诊断。严格的数据质量监控必须检查 `summary.warn` 和 `problems`，不能只检查顶层可用性状态。
 
 ### 消费价格来源覆盖率
 
@@ -396,9 +401,11 @@ curl -s https://api.worldmonitor.app/api/seed-health \
 - `503` = `REDIS_DOWN`（Redis 不可达 —— 真正的硬中断）
 - `200` = 其他所有状态，包括 `DEGRADED` 和 `UNHEALTHY`
 
-因此，仅基于 HTTP 状态的监控器能捕获完全的后端中断，但**不能**捕获降级/不健康的数据。对于这些情况，请添加关键字监控器。
+因此，仅基于 HTTP 状态的监控器能捕获完全的后端中断，但**不能**捕获降级/不健康的可用性。对于这些情况，请添加关键字监控器。
 
 将关键字监控器指向 `https://api.worldmonitor.app/api/health?compact=1`，并在紧凑令牌 `"status":"HEALTHY"`（冒号后无空格）从响应体中**缺失**时告警。紧凑模式序列化时不带缩进，因此无论格式如何，此确切令牌都是稳定的。
+
+此关键字监控器测量可用性。`HEALTHY` 响应仍可能包含受控警告。严格的数据质量监控还必须在 `summary.warn` 大于零时告警，并检查 `problems` 以确定受影响的数据源。
 
 > 裸 `/api/health` URL 现在是运维视图，无 API 密钥时返回 `401`。公开监控应始终使用 `?compact=1`。
 

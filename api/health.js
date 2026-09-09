@@ -2516,6 +2516,9 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
         retailers: coverageRetailers,
       }
     : null;
+  const coverageCompletionRatioUsable = Number.isFinite(meta?.coverage?.completionRatio)
+    && meta.coverage.completionRatio >= 0
+    && meta.coverage.completionRatio <= 1;
 
   let synthesisFailure = null;
   if (seedCfg.synthesisFailure) {
@@ -2575,6 +2578,7 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
   const chinaRow = projectJodiChinaRow(meta, seedCfg?.chinaRow);
   return {
     hasMeta: meta != null,
+    seedFetchedAt: fetchedAt,
     seedAge,
     seedStale,
     seedError: sourceDegraded || failedDatasets.length > 0,
@@ -2590,6 +2594,7 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
     contentFreshness,
     decisionGroups,
     coverage,
+    coverageCompletionRatioUsable,
     errorCode,
     sourceFailure,
     synthesisFailure,
@@ -2617,6 +2622,7 @@ function isCascadeCovered(name, hasData, keyStrens, keyErrors) {
 function classifyKey(name, redisKey, opts, ctx) {
   const { keyStrens, keyErrors, keyMetaValues, keyMetaErrors, now } = ctx;
   const seedCfg = SEED_META[name];
+  ctx.containmentEvidenceByName?.delete(name);
   // #6095 audited this grace and DELIBERATELY kept it soft when the marker read
   // failed, unlike the content-freshness grace below. What it gates is why:
   //   1. It downgrades exactly the two "no records" verdicts — EMPTY (key
@@ -2696,6 +2702,7 @@ function classifyKey(name, redisKey, opts, ctx) {
     contentFreshness,
     decisionGroups,
     coverage,
+    coverageCompletionRatioUsable,
     errorCode,
     sourceFailure,
     synthesisFailure,
@@ -2892,9 +2899,7 @@ function classifyKey(name, redisKey, opts, ctx) {
   // producer wrote no usable block cannot prove anything about its content,
   // and "cannot prove" must never resolve to OK — that is exactly the
   // fresh-transport/complete-cardinality mask this branch exists to remove.
-  else if (seedCfg?.requireContentFreshness && !contentFreshness?.usable && !contentFreshnessPending) {
-    status = 'COVERAGE_DEGRADED';
-  }
+  else if (seedCfg?.requireContentFreshness && !contentFreshness?.usable && !contentFreshnessPending) status = 'COVERAGE_DEGRADED';
   else if (
     seedCfg?.minSuccessRate != null
     && coverage
@@ -3055,6 +3060,46 @@ function classifyKey(name, redisKey, opts, ctx) {
       entry.lastSynthesisFailureCode = synthesisFailure.lastSynthesisFailureCode;
     }
   }
+  // Diagnostic precedence must not skip a reader requirement: every required
+  // proof is checked here, even when an earlier stale/error verdict won.
+  const validUntil = Math.min(
+    meta.seedFetchedAt + seedCfg?.maxStaleMin * 60_000,
+    contentAge ? contentAge.newestItemAt + contentAge.maxContentAgeMin * 60_000 : Infinity,
+    contentFreshness?.usable
+      ? contentFreshness.criticalOldestObservedAt + contentFreshness.budgetMinutes * 60_000
+      : Infinity,
+    synthesisFailure?.servedGeneratedAt
+      ? Date.parse(synthesisFailure.servedGeneratedAt) + seedCfg?.maxStaleMin * 60_000
+      : Infinity,
+  );
+  ctx.containmentEvidenceByName?.set(name, {
+    status,
+    records: hasData ? metaCount : null,
+    validUntil,
+    usable: Number.isFinite(seedAge) && seedAge >= 0
+      && Number.isFinite(meta.seedFetchedAt) && meta.seedFetchedAt > 0 && meta.seedFetchedAt <= now
+      && !NEVER_CONTAINED_KEYS.has(name)
+      && Number.isFinite(validUntil) && now < validUntil
+      && !contentFreshness?.contentStale
+      && (!synthesisFailure?.servedGeneratedAt || Date.parse(synthesisFailure.servedGeneratedAt) <= now)
+      && (seedCfg?.requiredRedistributionPolicyVersion == null
+        || redistributionPolicyVersion === seedCfg.requiredRedistributionPolicyVersion)
+      && !decisionGroups?.coverageFailureInvalidReason
+      && (seedCfg?.minRankableRecordCount == null || rankableRecordCount != null)
+      && (!seedCfg?.requireVulnerabilityCoverage || (coverage
+        && Object.keys(seedCfg.requireVulnerabilityCoverage)
+          .every((field) => Number.isFinite(coverage[field]))))
+      && (!seedCfg?.minPoolCounts || poolCounts !== null)
+      && (!seedCfg?.requireCoverage || coverage !== null)
+      && (!coverage || seedCfg?.minSuccessRate == null || coverageCompletionRatioUsable)
+      && (!seedCfg?.requireContentFreshness || contentFreshness?.usable || contentFreshnessPending)
+      && (!contentAge || (Number.isFinite(contentAge.newestItemAt) && contentAge.newestItemAt <= now
+        && Number.isFinite(contentAge.contentAgeMin) && contentAge.contentAgeMin >= 0))
+      && resilienceCacheState?.ok !== false
+      // These records include missing/stale input placeholders. A positive
+      // count alone cannot prove that the reader serves a usable index.
+      && !seedCfg?.enforceInputFreshUntil,
+  });
   return entry;
 }
 
@@ -3123,6 +3168,34 @@ function healthStatusBucket(entry, now) {
     && !isExpiredDeadline(entry.staleContentGraceUntil, now)
   ) return 'ok';
   return STATUS_COUNTS[entry?.status] ?? 'warn';
+}
+
+// These checks describe sanctions, tariff rules, or redistribution rights.
+// Their warnings must remain availability-affecting even with retained data.
+const NEVER_CONTAINED_KEYS = new Set([
+  'sanctionsPressure',
+  'sanctionsEntities',
+  'tariffTrendsUs',
+  'supplyVulnerability',
+  'supplyChokepointDependencies',
+]);
+
+const CONTAINMENT_ELIGIBLE_STATUSES = new Set([
+  'SEED_ERROR',
+  'COVERAGE_PARTIAL',
+  'COVERAGE_DEGRADED',
+]);
+
+function isContainedHealthWarning(entry, evidence, now = Date.now()) {
+  return healthStatusBucket(entry, now) === 'warn'
+    && CONTAINMENT_ELIGIBLE_STATUSES.has(entry?.status)
+    && Number.isFinite(entry?.records)
+    && entry.records > 0
+    && evidence?.status === entry.status
+    && evidence.records === entry.records
+    && evidence.usable === true
+    && Number.isFinite(evidence.validUntil) && now < evidence.validUntil
+    && entry.readModelReady !== false;
 }
 
 // Orders the buckets above so classifyKey can compare two candidate verdicts
@@ -3300,7 +3373,10 @@ function composeChinaDecisionSignalsStatus(entry, _chinaCoverageEntry, now) {
   if (validCoverageShortfall) {
     const pendingUntil = lastSuccessAt + CHINA_DECISION_SIGNALS_PENDING_MS;
     if (Number.isSafeInteger(lastSuccessAt) && now < pendingUntil) {
-      return { ...entry, chinaCoveragePendingUntil: new Date(pendingUntil).toISOString() };
+      return {
+        ...entry,
+        chinaCoveragePendingUntil: new Date(pendingUntil).toISOString(),
+      };
     }
   }
 
@@ -3309,13 +3385,20 @@ function composeChinaDecisionSignalsStatus(entry, _chinaCoverageEntry, now) {
 
 function composeScorecardReadModelStatus(entry, raw, readError = false) {
   if (!entry) return entry;
-  if (readError) return { ...entry, status: 'REDIS_PARTIAL', readModelReady: false };
+  if (readError) {
+    return { ...entry, status: 'REDIS_PARTIAL', readModelReady: false };
+  }
   const readModelReady = Number(raw) === 1;
   if (readModelReady) return { ...entry, readModelReady: true };
   if (STATUS_COUNTS[entry.status] === 'crit' || entry.status === 'SEED_ERROR') {
     return { ...entry, readModelReady: false };
   }
-  return { ...entry, status: 'COVERAGE_PARTIAL', seedStatus: entry.status, readModelReady: false };
+  return {
+    ...entry,
+    status: 'COVERAGE_PARTIAL',
+    seedStatus: entry.status,
+    readModelReady: false,
+  };
 }
 
 function parseHealthVerdictSnapshot(raw, now, { requireChecks = true } = {}) {
@@ -3390,6 +3473,7 @@ const ENTRY_SOFTENING_DEADLINES = [
   { field: 'staleContentGraceUntil', kind: 'content', status: null },
   { field: 'sourceFailurePendingUntil', kind: 'source', status: 'SEED_ERROR' },
   { field: 'chinaCoveragePendingUntil', kind: 'source', status: null },
+  { field: 'containmentUntil', kind: 'source', status: null },
 ];
 
 function entryDeadlineRaw(entry, { field, status }) {
@@ -3481,24 +3565,47 @@ function snapshotTtlSeconds(snapshot, now) {
  * ROLLOUT_PENDING is NOT — were pinned against a copy rather than against this
  * code. Subtracting a new bucket here would have kept every test green.
  *
- * `onDemandWarn` is the ONLY bucket subtracted: an on-demand key nobody has
- * requested yet is warn-level for visibility and must not flip the verdict.
- * ROLLOUT_PENDING deliberately stays inside `realWarnCount` (#6059) — it is on a
- * clock, and its escalation to crit is the deadline, not operator attention.
+ * `realWarnCount` preserves the diagnostic warning census by subtracting only
+ * on-demand misses. Availability then subtracts the explicit contained subset;
+ * those defects stay actionable in `summary.warn` and `problems`.
+ * ROLLOUT_PENDING is never contained (#6059): it stays availability-affecting
+ * until its deadline promotes a missing payload to critical.
  */
 function computeOverallStatus(counts, totalChecks) {
   const realWarnCount = counts.warn - counts.onDemandWarn;
+  const containedWarnCount = Number.isInteger(counts.containedWarn)
+    && counts.containedWarn >= 0
+    && counts.containedWarn <= realWarnCount
+    ? counts.containedWarn
+    : 0;
+  const availabilityWarnCount = realWarnCount - containedWarnCount;
   const critCount = counts.crit;
 
-  let overall;
-  if (critCount === 0 && realWarnCount === 0) overall = 'HEALTHY';
-  else if (critCount === 0) overall = 'WARNING';
-  // Degraded threshold scales with registry size so adding keys doesn't
-  // silently raise the page-out bar. ~3% of total keys (was hardcoded 3).
-  else if (critCount / totalChecks <= 0.03) overall = 'DEGRADED';
-  else overall = 'UNHEALTHY';
+  if (critCount > 0) {
+    // Critical severity is shared by both verdicts. The threshold scales with
+    // registry size so adding keys does not silently raise the page-out bar.
+    const overall = critCount / totalChecks <= 0.03 ? 'DEGRADED' : 'UNHEALTHY';
+    return {
+      overall,
+      diagnosticOverall: overall,
+      realWarnCount,
+      critCount,
+    };
+  }
 
-  return { overall, realWarnCount, critCount };
+  const diagnosticOverall = realWarnCount > 0 ? 'WARNING' : 'HEALTHY';
+  const overall = availabilityWarnCount === 0
+    && containedWarnCount <= 1
+    && containedWarnCount / totalChecks <= 0.03
+    ? 'HEALTHY'
+    : 'WARNING';
+
+  return {
+    overall,
+    diagnosticOverall,
+    realWarnCount,
+    critCount,
+  };
 }
 
 // Failure-log / ?history=1 problem set. Distinct from the compact `problems` map
@@ -3516,6 +3623,69 @@ function collectFailureLogProblems(checks, now = Date.now()) {
     // The dedupe signature uses only key:status (no age) so a long STALE_SEED
     // window doesn't produce a new log entry on every poll.
     sigKeys: entries.map(([k, c]) => `${k}:${c.status}`).sort(),
+  };
+}
+
+function buildFailureLogPersistencePlan({
+  verdict,
+  diagnostics,
+  containedWarnCount,
+  previousSignature,
+  now,
+}) {
+  const {
+    overall: availabilityOverall,
+    diagnosticOverall,
+    critCount,
+    realWarnCount: warnCount,
+  } = verdict;
+  const { problemKeys, sigKeys } = diagnostics;
+
+  if (problemKeys.length === 0) {
+    // A later recurrence of the same problem set is a new incident only after
+    // a diagnostic recovery, independent of the public availability verdict.
+    return {
+      action: 'clear',
+      commands: [['DEL', 'health:failure-log-sig']],
+    };
+  }
+
+  const entry = {
+    at: new Date(now).toISOString(),
+    status: diagnosticOverall,
+    ...(diagnosticOverall !== availabilityOverall
+      ? { availabilityStatus: availabilityOverall, containedWarnCount }
+      : {}),
+    critCount,
+    warnCount,
+    problems: problemKeys,
+  };
+  const signature = `${diagnosticOverall}|${sigKeys.join(',')}`;
+  const appendIncident = signature !== previousSignature;
+  const commands = [
+    ['SET', 'health:last-failure', JSON.stringify(entry), 'EX', 86400],
+  ];
+
+  if (appendIncident) {
+    commands.push(
+      ['LPUSH', 'health:failure-log', JSON.stringify(entry)],
+      ['LTRIM', 'health:failure-log', 0, 49],
+    );
+  }
+
+  // Refresh history and its signature together while an incident is active:
+  // neither duplicate it after 24h nor lose its only history entry after 7d.
+  commands.push(
+    ['EXPIRE', 'health:failure-log', 86400 * 7],
+    ['SET', 'health:failure-log-sig', signature, 'EX', 86400],
+  );
+
+  return {
+    action: 'persist',
+    appendIncident,
+    entry,
+    signature,
+    commands,
   };
 }
 
@@ -3915,7 +4085,9 @@ export async function handleHealth(req, ctx, options = {}) {
     rolloutPendingUntilMs.set('fredRatesSeeder', fredRatesRolloutUntil);
   }
 
+  const containmentEvidenceByName = new Map();
   const classifyCtx = {
+    containmentEvidenceByName,
     keyStrens,
     keyErrors,
     keyMetaValues,
@@ -3928,7 +4100,16 @@ export async function handleHealth(req, ctx, options = {}) {
   };
   const checks = {};
   const contentFreshnessPendingUntil = {};
-  const counts = { ok: 0, warn: 0, onDemandWarn: 0, staleContent: 0, rolloutPending: 0, pending: 0, crit: 0 };
+  const counts = {
+    ok: 0,
+    warn: 0,
+    containedWarn: 0,
+    onDemandWarn: 0,
+    staleContent: 0,
+    rolloutPending: 0,
+    pending: 0,
+    crit: 0,
+  };
   let totalChecks = 0;
 
   const sources = [
@@ -3993,9 +4174,14 @@ export async function handleHealth(req, ctx, options = {}) {
     if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(graceCleanup);
   }
 
-  for (const entry of Object.values(checks)) {
+  for (const [name, entry] of Object.entries(checks)) {
     const bucket = healthStatusBucket(entry, evaluationNow);
     counts[bucket]++;
+    const evidence = containmentEvidenceByName.get(name);
+    if (isContainedHealthWarning(entry, evidence, evaluationNow)) {
+      counts.containedWarn++;
+      entry.containmentUntil = new Date(evidence.validUntil).toISOString();
+    }
     if (isPendingHealthEntry(entry, evaluationNow)) counts.pending++;
     if (entry.status === 'EMPTY_ON_DEMAND') counts.onDemandWarn++;
     // STALE_CONTENT = "seeder is fresh but the upstream DATA stopped advancing"
@@ -4009,49 +4195,38 @@ export async function handleHealth(req, ctx, options = {}) {
     if (entry.status === 'ROLLOUT_PENDING') counts.rolloutPending++;
   }
 
-  const { overall, realWarnCount, critCount } = computeOverallStatus(counts, totalChecks);
+  const {
+    overall,
+    diagnosticOverall,
+    realWarnCount,
+    critCount,
+  } = computeOverallStatus(counts, totalChecks);
 
-  if (overall !== 'HEALTHY') {
-    // problemKeys includes seedAgeMin for the snapshot (useful for post-mortem),
-    // but the dedupe signature uses only key:status (no age) so a long STALE_SEED
-    // window doesn't produce a new log entry on every poll.
-    const { problemKeys, sigKeys } = collectFailureLogProblems(checks, evaluationNow);
-    console.log('[health] %s problems=[%s]', overall, problemKeys.join(', '));
-    const failureLogEntry = {
-      at: new Date(evaluationNow).toISOString(),
-      status: overall,
-      critCount,
-      warnCount: realWarnCount,
-      problems: problemKeys,
-    };
-    // Dedupe: only LPUSH when the incident signature (status + problem set,
-    // excluding seedAgeMin) changes. Read the previous sig first, then write
-    // everything (last-failure + sig + LPUSH) in one atomic pipeline so the
-    // sig only advances when the LPUSH succeeds. If the pipeline fails, the
-    // sig stays stale and the next poll retries the append.
-    const sig = `${overall}|${sigKeys.join(',')}`;
-    const prevSigResult = await redisPipeline([['GET', 'health:failure-log-sig']], 4_000).catch(() => null);
-    const prevSig = prevSigResult?.[0]?.result ?? '';
-    const persistCmds = [
-      ['SET', 'health:last-failure', JSON.stringify(failureLogEntry), 'EX', 86400],
-    ];
-    if (sig !== prevSig) {
-      persistCmds.push(
-        ['LPUSH', 'health:failure-log', JSON.stringify(failureLogEntry)],
-        ['LTRIM', 'health:failure-log', 0, 49],
-        ['EXPIRE', 'health:failure-log', 86400 * 7],
-        ['SET', 'health:failure-log-sig', sig, 'EX', 86400],
-      );
-    }
-    const persist = redisPipeline(persistCmds, 4_000).catch(() => {});
-    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(persist);
-  } else {
-    // Clear the sig on recovery so a recurrence of the same problem set
-    // after a healthy gap is logged as a new incident, not deduped against
-    // the previous one.
-    const clear = redisPipeline([['DEL', 'health:failure-log-sig']], 4_000).catch(() => {});
-    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(clear);
+  // Incident history follows actionable diagnostics, not the public
+  // availability verdict. A contained defect may intentionally leave uptime
+  // HEALTHY, but it must remain visible to operators and strict monitors.
+  const diagnostics = collectFailureLogProblems(checks, evaluationNow);
+  const { problemKeys } = diagnostics;
+  if (problemKeys.length > 0) {
+    console.log('[health] %s problems=[%s]', diagnosticOverall, problemKeys.join(', '));
   }
+  const persistFailureLog = async () => {
+    let previousSignature = '';
+    if (problemKeys.length > 0) {
+      const result = await redisPipeline([['GET', 'health:failure-log-sig']], 4_000).catch(() => null);
+      previousSignature = result?.[0]?.result ?? '';
+    }
+    const persistencePlan = buildFailureLogPersistencePlan({
+      verdict: { overall, diagnosticOverall, realWarnCount, critCount },
+      diagnostics,
+      containedWarnCount: counts.containedWarn,
+      previousSignature,
+      now: evaluationNow,
+    });
+    await redisPipeline(persistencePlan.commands, 4_000).catch(() => {});
+  };
+  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(persistFailureLog());
+  else await persistFailureLog();
 
   const verdictSnapshot = {
     status: overall,
@@ -4061,6 +4236,10 @@ export async function handleHealth(req, ctx, options = {}) {
       // `warn` excludes on-demand-empty (cosmetic warns); `onDemandWarn` is
       // surfaced separately so readers can reconcile against `overall`.
       warn: realWarnCount,
+      // Subset of `warn`: actionable source defects that still prove a usable
+      // metadata-backed payload. These remain in `problems` even when the
+      // small-cohort availability verdict stays HEALTHY.
+      containedWarn: counts.containedWarn,
       onDemandWarn: counts.onDemandWarn,
       // `staleContent` counts every STALE_CONTENT diagnosis (fresh seeder,
       // frozen upstream data — issue #3845), so a frozen feed is visible
@@ -4118,6 +4297,20 @@ export async function handleHealth(req, ctx, options = {}) {
   // deleting a successor's lock after a slow sweep outlives its lease.
   if (snapshotWriteFailed) console.warn('[health] verdict snapshot write failed');
 
+  // Persistence can cross the evidence deadline. Revoke containment before
+  // returning; cached copies carry that deadline and are rejected on read.
+  if (counts.containedWarn > 0) {
+    const responseNow = snapshotNow();
+    for (const entry of Object.values(checks)) {
+      if (entry.containmentUntil && isExpiredDeadline(entry.containmentUntil, responseNow)) {
+        counts.containedWarn--;
+        delete entry.containmentUntil;
+      }
+    }
+    verdictSnapshot.summary.containedWarn = counts.containedWarn;
+    verdictSnapshot.status = computeOverallStatus(counts, totalChecks).overall;
+  }
+
   // Compact is the public keyless form polled by external uptime MONITORS, so it
   // must NEVER be edge-cached: the prior `s-maxage=60` (#4907, to collapse
   // dashboard-tab polling) let a shared CDN entry pin a stale WARNING that kept
@@ -4143,6 +4336,7 @@ export const __testing__ = {
   classifyKey,
   healthResponseBody,
   collectFailureLogProblems,
+  buildFailureLogPersistencePlan,
   ACTIVATION_MARKERS,
   CONTENT_FRESHNESS_ROLLOUT_UNTIL_MS,
   RUNTIME_ROLLOUT_PENDING_POLICIES,
@@ -4159,6 +4353,7 @@ export const __testing__ = {
   staleContentGraceUntilMs,
   applyStaleContentGrace,
   healthStatusBucket,
+  isContainedHealthWarning,
   computeOverallStatus,
   hasExpiredActivationGrace,
   snapshotTtlSeconds,

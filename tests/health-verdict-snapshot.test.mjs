@@ -34,7 +34,7 @@ afterEach(() => {
 function healthySnapshot(checkedAt = new Date().toISOString()) {
   return {
     status: 'HEALTHY',
-    summary: { total: 1, ok: 1, warn: 0, onDemandWarn: 0, staleContent: 0, crit: 0 },
+    summary: { total: 1, ok: 1, warn: 0, containedWarn: 0, onDemandWarn: 0, staleContent: 0, crit: 0 },
     checkedAt,
     checks: { example: { status: 'OK', records: 1 } },
   };
@@ -216,15 +216,15 @@ test('coalesces concurrent cache misses into one full sweep', async () => {
   assert.equal(firstBody.checkedAt, secondBody.checkedAt);
 });
 
-test('projects only failing checks from a cached compact snapshot', async () => {
+test('serves HEALTHY with contained problems from a cached compact snapshot', async () => {
   const snapshot = {
     ...healthySnapshot(),
-    status: 'WARNING',
-    summary: { total: 3, ok: 2, warn: 1, onDemandWarn: 0, staleContent: 0, crit: 0 },
+    status: 'HEALTHY',
+    summary: { total: 3, ok: 2, warn: 1, containedWarn: 1, onDemandWarn: 0, staleContent: 0, crit: 0 },
     checks: {
       healthy: { status: 'OK', records: 1 },
       cascade: { status: 'OK_CASCADE', records: 1 },
-      delayed: { status: 'STALE_SEED', seedAgeMin: 30 },
+      delayed: { status: 'STALE_SEED', records: 5, seedAgeMin: 30 },
     },
   };
   // The problems are now projected ONCE, at sweep time, into the compact snapshot —
@@ -242,6 +242,9 @@ test('projects only failing checks from a cached compact snapshot', async () => 
   const body = await response.json();
 
   assert.equal(response.status, 200);
+  assert.equal(body.status, 'HEALTHY');
+  assert.equal(body.summary.warn, 1);
+  assert.equal(body.summary.containedWarn, 1);
   assert.deepEqual(body.problems, { delayed: snapshot.checks.delayed });
   assert.ok(!Object.hasOwn(body, 'checks'));
   assert.equal(body.checkedAt, snapshot.checkedAt);

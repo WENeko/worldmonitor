@@ -407,6 +407,7 @@ test('just-over-budget content stays diagnostically stale without making health 
   const counts = { ok: 1, warn: 0, onDemandWarn: 0, staleContent: 1, rolloutPending: 0, crit: 0 };
   assert.deepEqual(computeOverallStatus(counts, 1), {
     overall: 'HEALTHY',
+    diagnosticOverall: 'HEALTHY',
     realWarnCount: 0,
     critCount: 0,
   });

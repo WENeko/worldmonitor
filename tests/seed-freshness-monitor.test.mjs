@@ -165,6 +165,36 @@ globalThis.fetch = async () => {
 });
 
 describe('scheduled seed freshness monitor', () => {
+  it('blocks on contained problems even when public availability is HEALTHY', () => {
+    const observedAt = Date.parse('2026-09-09T08:00:00.000Z');
+    const payload = {
+      status: 'HEALTHY',
+      summary: {
+        total: 292, ok: 291, warn: 1, containedWarn: 1,
+        onDemandWarn: 0, staleContent: 1, crit: 0,
+      },
+      checkedAt: new Date(observedAt).toISOString(),
+      problems: {
+        diseaseOutbreaks: {
+          status: 'STALE_CONTENT', records: 159,
+          seedAgeMin: 5, maxStaleMin: 360,
+          contentAgeMin: 181, maxContentAgeMin: 180,
+        },
+      },
+    };
+
+    validateCompactHealthPayload(payload);
+    assert.deepEqual(findOperationalProblems(payload, observedAt), [{
+      name: 'diseaseOutbreaks',
+      status: 'STALE_CONTENT',
+      records: 159,
+      seedAgeMin: 5,
+      maxStaleMin: 360,
+      contentAgeMin: 181,
+      maxContentAgeMin: 180,
+    }]);
+  });
+
   it('projects stable per-source statuses without putting changing ages in the incident identity', () => {
     const base = {
       blocking: [
