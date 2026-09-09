@@ -294,6 +294,13 @@ describe('docs entity-graph rewrite handles alternate vendor shapes (#7459d)', (
 
   const survivingMintlify = (html: string): boolean => JSON.stringify(blocks(html)).includes('Mintlify');
 
+  it('preserves unrelated publishers whose URL only contains the vendor domain', () => {
+    for (const url of ['https://notmintlify.com', 'https://mintlify.com.example.org', 'https://example.org/mintlify.com']) {
+      const html = rewriteDocsEntityGraph(wrap({ '@type': 'WebSite', '@id': CANONICAL_WEBSITE, creator: { name: 'Other', url } }));
+      assert.ok(html.includes(CANONICAL_WEBSITE), url);
+    }
+  });
+
   it('drops a vendor WebSite inside a top-level array', () => {
     const html = rewriteDocsEntityGraph(wrap([
       { '@type': 'WebSite', name: 'World Monitor', creator: MINTLIFY },
@@ -518,4 +525,20 @@ describe('docs article injection for bare WebPage output', () => {
       );
     }
   });
+});
+
+it('keeps canonical-looking script text intact with alternate closing tags', () => {
+  const script = `<script>const example = '<link rel="canonical" href="https://example.org">';</script foo="bar">`;
+  const html = rewriteDocsLocaleHtml(`<html><head>${script}</head><body></body></html>`, '/docs/about');
+  assert.ok(html.includes(script));
+});
+
+it('preserves closing-head text inside scripts while inserting real head links', () => {
+  for (const prefix of ['', '<link rel="canonical" href="https://old.example">']) {
+    const script = '<script>const closing = "</head>";</script>';
+    const html = rewriteDocsLocaleHtml(`<html><head>${prefix}${script}</head><body></body></html>`, '/docs/about');
+    assert.ok(html.includes(script));
+    assert.equal(html.match(/rel="canonical"/g)?.length, 1);
+    assert.ok(html.includes('hreflang="en"'));
+  }
 });

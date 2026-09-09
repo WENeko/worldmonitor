@@ -11,6 +11,7 @@
 //   use SHAPE — default CRS is EPSG:3005). Dataset licence: OGL-BC.
 
 import { CHROME_UA } from '../_seed-utils.mjs';
+import { decodeHtmlEntities } from '../_html-entities.mjs';
 
 export const BC_OPENMAPS_HOST = 'openmaps.gov.bc.ca';
 export const BC_FIRE_LAYER = 'PROT_CURRENT_FIRE_PNTS_SP';
@@ -111,13 +112,7 @@ export function stableBcFireId(props = {}, coords = {}) {
 }
 
 function decodeXml(text) {
-  return String(text || '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .trim();
+  return decodeHtmlEntities(text).trim();
 }
 
 function xmlField(block, name) {

@@ -2,7 +2,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { fetchCwfisFires, CWFIS_ACTIVE_LAYER } from '../scripts/wildfire/cwfis-wfs.mjs';
+import {
+  fetchCwfisFires,
+  CWFIS_ACTIVE_LAYER,
+  CWFIS_RETAIN_MS,
+  CWFIS_SNAPSHOT_TTL_SECONDS,
+  CWFIS_WARN_AFTER_CONSECUTIVE_FAILURES,
+} from '../scripts/wildfire/cwfis-wfs.mjs';
 import { mergeWildfireSourcesWithBc, canadianWildfireAfterPublish } from '../scripts/wildfire/bc-fire-points.mjs';
 import { __testing__ as health } from '../api/health.js';
 
@@ -45,7 +51,7 @@ test('CWFIS retries the failed active request once without replaying prescribed'
   assert.equal(verdict(data).status, 'OK');
 });
 
-test('CWFIS retains source rows and their clock on the first miss, warns on repeat, and recovers', async () => {
+test('CWFIS retains source rows through two transient misses, warns on the third, and recovers', async () => {
   const good = await run();
   assert.equal(good._cwfisSnapshot.fetchedAt, NOW);
   const first = await run({ previousSnapshot: good._cwfisSnapshot, nowMs: NOW + 10 * MIN, fetchFn: fail });
@@ -54,24 +60,30 @@ test('CWFIS retains source rows and their clock on the first miss, warns on repe
   assert.equal(first._cwfisSnapshot.consecutiveFailures, 1);
   assert.equal(first.fireDetections.some(row => row.source === 'firms'), true);
   const entry = verdict(first, NOW + 10 * MIN);
-  assert.equal(entry.sourceFailurePendingUntil, new Date(NOW + 25 * MIN).toISOString());
+  assert.equal(entry.sourceFailurePendingUntil, new Date(NOW + 180 * MIN).toISOString());
   assert.equal(verdict(first, NOW + 13 * MIN).sourceFailurePendingUntil, entry.sourceFailurePendingUntil);
-  assert.equal(verdict(first, NOW + 25 * MIN).sourceFailurePendingUntil, undefined);
+  assert.equal(verdict(first, NOW + 180 * MIN).sourceFailurePendingUntil, undefined);
   const second = await run({ previousSnapshot: first._cwfisSnapshot, nowMs: NOW + 20 * MIN, fetchFn: fail });
   assert.equal(second._cwfisSnapshot.consecutiveFailures, 2);
   assert.equal(second._cwfisSnapshot.firstFailureAt, NOW + 10 * MIN);
-  assert.equal(verdict(second, NOW + 20 * MIN).status, 'SEED_ERROR');
-  assert.equal(verdict(second, NOW + 20 * MIN).sourceFailurePendingUntil, undefined);
-  const recovered = await run({ previousSnapshot: second._cwfisSnapshot, nowMs: NOW + 21 * MIN });
+  const secondEntry = verdict(second, NOW + 20 * MIN);
+  assert.equal(secondEntry.status, 'SEED_ERROR');
+  assert.equal(secondEntry.sourceFailurePendingUntil, entry.sourceFailurePendingUntil);
+  assert.equal(health.healthStatusBucket(secondEntry, NOW + 20 * MIN), 'ok');
+  const third = await run({ previousSnapshot: second._cwfisSnapshot, nowMs: NOW + 30 * MIN, fetchFn: fail });
+  assert.equal(third._cwfisSnapshot.consecutiveFailures, 3);
+  assert.equal(verdict(third, NOW + 30 * MIN).status, 'SEED_ERROR');
+  assert.equal(verdict(third, NOW + 30 * MIN).sourceFailurePendingUntil, undefined);
+  const recovered = await run({ previousSnapshot: third._cwfisSnapshot, nowMs: NOW + 31 * MIN });
   assert.equal(recovered._cwfisSnapshot.consecutiveFailures, 0);
-  assert.equal(recovered._cwfisSnapshot.fetchedAt, NOW + 21 * MIN);
-  assert.equal(verdict(recovered, NOW + 21 * MIN).status, 'OK');
+  assert.equal(recovered._cwfisSnapshot.fetchedAt, NOW + 31 * MIN);
+  assert.equal(verdict(recovered, NOW + 31 * MIN).status, 'OK');
 });
 
 test('CWFIS missing, expired, malformed, future or unknown-streak snapshots earn no grace', async () => {
   const good = await run();
   for (const previousSnapshot of [
-    null, {}, { ...good._cwfisSnapshot, fetchedAt: NOW - 20 * MIN },
+    null, {}, { ...good._cwfisSnapshot, fetchedAt: NOW - 170 * MIN },
     { ...good._cwfisSnapshot, fetchedAt: NOW + 11 * MIN },
     { ...good._cwfisSnapshot, fireDetections: [{}] },
     { ...good._cwfisSnapshot, consecutiveFailures: undefined },
@@ -84,13 +96,22 @@ test('CWFIS missing, expired, malformed, future or unknown-streak snapshots earn
   }
 });
 
-test('CWFIS retention expires at its original 30-minute limit even during a pending episode', async () => {
+test('CWFIS retention expires at three hours even during a pending episode', async () => {
   const good = await run();
-  const data = await run({ previousSnapshot: good._cwfisSnapshot, nowMs: NOW + 29 * MIN, fetchFn: fail });
-  assert.equal(verdict(data, NOW + 29 * MIN).sourceFailurePendingUntil, new Date(NOW + 30 * MIN).toISOString());
-  assert.equal(verdict(data, NOW + 30 * MIN).sourceFailurePendingUntil, undefined);
-  const expired = await run({ previousSnapshot: data._cwfisSnapshot, nowMs: NOW + 30 * MIN, fetchFn: fail });
+  const data = await run({ previousSnapshot: good._cwfisSnapshot, nowMs: NOW + 179 * MIN, fetchFn: fail });
+  assert.equal(verdict(data, NOW + 179 * MIN).sourceFailurePendingUntil, new Date(NOW + 180 * MIN).toISOString());
+  assert.equal(verdict(data, NOW + 180 * MIN).sourceFailurePendingUntil, undefined);
+  const expired = await run({ previousSnapshot: data._cwfisSnapshot, nowMs: NOW + 180 * MIN, fetchFn: fail });
   assert.equal(expired._cwfisCount, 0);
+});
+
+test('the persisted CWFIS snapshot outlives its three-hour retention window', () => {
+  assert.equal(CWFIS_RETAIN_MS, 3 * 60 * MIN);
+  assert.ok(CWFIS_SNAPSHOT_TTL_SECONDS * 1000 > CWFIS_RETAIN_MS);
+  const policy = health.SEED_META.wildfires.sourceFailure.find(candidate =>
+    candidate.failureCodePattern.test('CWFIS_SOURCE_FAILED'));
+  assert.equal(policy.warnAfterConsecutive, CWFIS_WARN_AFTER_CONSECUTIVE_FAILURES);
+  assert.equal(policy.maxPendingMin * MIN, CWFIS_RETAIN_MS);
 });
 
 test('a complete empty CWFIS response clears previous fires and remains a valid last-good snapshot', async () => {
@@ -203,9 +224,14 @@ async function seedProcess(initial, now, mode, activeFixture) {
   const timer = globalThis.setTimeout;
   globalThis.setTimeout = (fn, ms, ...args) => timer(fn, ms === 6000 ? 0 : ms, ...args);
   const store = new Map(initial);
+  const expiries = new Map();
   const calls = { firms: 0, active: 0, prescribed: 0 };
-  const redis = ([command, key, value]) => {
-    if (command === 'SET') { store.set(key, value); return 'OK'; }
+  const redis = ([command, key, value, expiryMode, ttlSeconds]) => {
+    if (command === 'SET') {
+      store.set(key, value);
+      if (expiryMode === 'EX') expiries.set(key, ttlSeconds);
+      return 'OK';
+    }
     if (command === 'GET') return store.get(key) ?? null;
     if (command === 'DEL') return Number(store.delete(key));
     if (command === 'EXPIRE' || command === 'EVAL') return 1;
@@ -240,7 +266,7 @@ async function seedProcess(initial, now, mode, activeFixture) {
       : Response.json({ type: 'FeatureCollection', features: [], numberMatched: 0, numberReturned: 0 });
     throw new Error(`unexpected network request ${url}`);
   };
-  process.on('exit', () => console.log('FIXTURE_RESULT=' + JSON.stringify({ store: [...store], calls })));
+  process.on('exit', () => console.log('FIXTURE_RESULT=' + JSON.stringify({ store: [...store], expiries: [...expiries], calls })));
   await import(new URL('../scripts/seed-fire-detections.mjs', process.env.TEST_MODULE_URL));
 }
 
@@ -259,6 +285,9 @@ test('real wildfire seeder persists failure history and keeps canonical/bootstra
       assert.equal(captured.calls.active, 2, 'a publish failure must not repeat upstream fetches');
       continue;
     }
+    const expiries = new Map(captured.expiries);
+    assert.equal(expiries.get('wildfire:cwfis-source:v1'), CWFIS_SNAPSHOT_TTL_SECONDS);
+    assert.equal(expiries.get('seed-meta:wildfire:cwfis-source'), CWFIS_SNAPSHOT_TTL_SECONDS);
     if (mode === 'firms-partial') {
       for (const target of [key, bootstrapKey]) assert.equal(store.get(target), new Map(previous).get(target));
       assert.equal(JSON.parse(store.get('wildfire:cwfis-source:v1')).consecutiveFailures, 2);
@@ -267,11 +296,11 @@ test('real wildfire seeder persists failure history and keeps canonical/bootstra
     for (const target of [key, bootstrapKey]) {
       const payload = JSON.parse(store.get(target)).data;
       assert.equal('_cwfisSnapshot' in payload, false);
-      assert.equal(payload.fireDetections.filter(row => row.source === 'cwfis').length, index === 3 ? 0 : 2);
+      assert.equal(payload.fireDetections.filter(row => row.source === 'cwfis').length, 2);
     }
     const snapshot = JSON.parse(store.get('wildfire:cwfis-source:v1'));
     const sourceMeta = JSON.parse(store.get('seed-meta:wildfire:cwfis-source'));
-    assert.equal(snapshot.fetchedAt, mode === 'ok' ? now : index === 3 ? null : NOW);
+    assert.equal(snapshot.fetchedAt, mode === 'ok' ? now : NOW);
     assert.equal(sourceMeta.fetchedAt, snapshot.fetchedAt);
     assert.equal(captured.calls.firms, 27);
     assert.equal(captured.calls.active, mode === 'ok' ? 1 : 2);
@@ -304,18 +333,33 @@ test('an all-source outage preserves the CWFIS streak even when its last-good sn
 
     const next = runSeedFixture(outage.store, NOW + 20 * MIN, 'fail', fixture);
     assert.equal(next.status, 0, next.output);
-    const store = new Map(next.store);
-    const second = JSON.parse(store.get('wildfire:cwfis-source:v1'));
+    const secondStore = new Map(next.store);
+    const second = JSON.parse(secondStore.get('wildfire:cwfis-source:v1'));
     assert.equal(second.consecutiveFailures, 2);
     assert.equal(second.firstFailureAt, first.firstFailureAt);
     assert.equal(second.fetchedAt, NOW);
+    const pending = health.classifyKey('wildfires', key, { allowOnDemand: false }, {
+      keyStrens: new Map([[key, secondStore.get(key).length]]), keyErrors: new Map(), keyMetaErrors: new Map(),
+      keyMetaValues: new Map([[metaKey, secondStore.get(metaKey)]]), now: NOW + 23 * MIN,
+    });
+    assert.equal(pending.status, 'SEED_ERROR');
+    assert.ok(pending.sourceFailurePendingUntil);
+    assert.equal(health.healthStatusBucket(pending, NOW + 23 * MIN), 'ok');
+
+    const thirdRun = runSeedFixture(next.store, NOW + 30 * MIN, 'fail', fixture);
+    assert.equal(thirdRun.status, 0, thirdRun.output);
+    const store = new Map(thirdRun.store);
+    const third = JSON.parse(store.get('wildfire:cwfis-source:v1'));
+    assert.equal(third.consecutiveFailures, 3);
+    assert.equal(third.firstFailureAt, first.firstFailureAt);
+    assert.equal(third.fetchedAt, NOW);
     const entry = health.classifyKey('wildfires', key, { allowOnDemand: false }, {
       keyStrens: new Map([[key, store.get(key).length]]), keyErrors: new Map(), keyMetaErrors: new Map(),
-      keyMetaValues: new Map([[metaKey, store.get(metaKey)]]), now: NOW + 23 * MIN,
+      keyMetaValues: new Map([[metaKey, store.get(metaKey)]]), now: NOW + 33 * MIN,
     });
     assert.equal(entry.status, 'SEED_ERROR');
     assert.equal(entry.sourceFailurePendingUntil, undefined);
-    assert.equal(health.healthStatusBucket(entry, NOW + 23 * MIN), 'warn');
+    assert.equal(health.healthStatusBucket(entry, NOW + 33 * MIN), 'warn');
   }
 });
 

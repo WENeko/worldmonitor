@@ -162,6 +162,48 @@ describe('api/mcp-proxy', () => {
 
   // ── Auth gate (issue #3723) ───────────────────────────────────────────────
 
+  for (const [name, makeResponse, expected] of [
+    ['transport', () => { throw new Error('fetch synthetic-secret'); }, 'MCP server request failed'],
+    ['stream', () => new Response(new ReadableStream({ start(controller) { controller.error(new Error('stream synthetic-secret')); } })), 'Invalid MCP server response'],
+    ['JSON parser', () => new Response('synthetic-secret', { headers: { 'Content-Type': 'application/json' } }), 'Invalid MCP server response'],
+  ]) {
+    it(`hides unexpected ${name} exception details`, async () => {
+      globalThis.fetch = async () => makeResponse();
+      const res = await handler(makeGetRequest({ serverUrl: 'https://mcp.example.com/mcp' }));
+      assert.equal(res.status, 422);
+      assert.deepEqual(await res.json(), { error: expected });
+    });
+  }
+
+  it('hides unexpected internal errors outside the upstream wrappers', async () => {
+    globalThis.fetch = async () => new Response(new ReadableStream({
+      start(controller) { controller.error(new Error('SSE synthetic-secret')); },
+    }), { headers: { 'Content-Type': 'text/event-stream' } });
+    const res = await handler(makeGetRequest({ serverUrl: 'https://mcp.example.com/sse' }));
+    assert.equal(res.status, 422);
+    assert.deepEqual(await res.json(), { error: 'MCP proxy request failed' });
+  });
+
+  it('preserves timeout status when reading the upstream body', async () => {
+    globalThis.fetch = async () => new Response(new ReadableStream({
+      start(controller) { controller.error(new DOMException('synthetic-secret', 'TimeoutError')); },
+    }));
+    const res = await handler(makeGetRequest({ serverUrl: 'https://mcp.example.com/mcp' }));
+    assert.equal(res.status, 504);
+    assert.deepEqual(await res.json(), { error: 'MCP server timed out' });
+  });
+
+  it('hides DNS failures during the dispatch recheck', async () => {
+    let lookups = 0;
+    setResolveHostnameForTest(async () => {
+      if (++lookups === 1) return [PUBLIC_TEST_ADDRESS];
+      throw new Error('DNS synthetic-secret');
+    });
+    const res = await handler(makeGetRequest({ serverUrl: 'https://mcp.example.com/mcp' }));
+    assert.equal(res.status, 422);
+    assert.deepEqual(await res.json(), { error: 'serverUrl DNS resolution failed' });
+  });
+
   describe('Auth gate', () => {
     it('returns 401 when no X-WorldMonitor-Key is provided', async () => {
       const res = await handler(makeGetRequest({ serverUrl: 'https://mcp.example.com/mcp' }, 'https://worldmonitor.app', { authed: false }));

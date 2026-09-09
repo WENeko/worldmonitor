@@ -7516,7 +7516,9 @@ async function seedSocialVelocity() {
       for (const p of posts) {
         // Deduplicate cross-subreddit reposts of the same article URL.
         const articleUrl = p.url || '';
-        const isExternal = articleUrl && !articleUrl.includes('reddit.com');
+        let articleHostname = '';
+        try { articleHostname = new URL(articleUrl).hostname; } catch { /* invalid URLs are not deduplicated */ }
+        const isExternal = articleHostname && articleHostname !== 'reddit.com' && !articleHostname.endsWith('.reddit.com');
         if (isExternal && seenUrls.has(articleUrl)) continue;
         if (isExternal) seenUrls.add(articleUrl);
         const ageSec = Math.max(1, nowSec - (p.created_utc || nowSec));

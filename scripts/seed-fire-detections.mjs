@@ -12,6 +12,7 @@ import { buildEnvelope } from './_seed-envelope-source.mjs';
 import { compactWildfireDashboardPayload, WILDFIRE_CANONICAL_DETECTION_LIMIT } from './_wildfire-dashboard.mjs';
 import {
   fetchCwfisFires,
+  CWFIS_SNAPSHOT_TTL_SECONDS,
   CWFIS_SNAPSHOT_KEY,
 } from './wildfire/cwfis-wfs.mjs';
 import {
@@ -104,14 +105,14 @@ async function fetchMergedWildfires() {
 async function persistCwfisSnapshot(data) {
   const snapshot = data._cwfisSnapshot;
   if (!snapshot) throw new Error('CWFIS recovery snapshot is missing');
-  await writeExtraKey(CWFIS_SNAPSHOT_KEY, snapshot, 7200);
+  await writeExtraKey(CWFIS_SNAPSHOT_KEY, snapshot, CWFIS_SNAPSHOT_TTL_SECONDS);
   await writeExtraKey('seed-meta:wildfire:cwfis-source', {
     fetchedAt: snapshot.fetchedAt,
     recordCount: snapshot.fireDetections.length,
     lastAttemptAt: snapshot.lastAttemptAt,
     sourceState: snapshot.consecutiveFailures ? 'degraded' : 'ok',
     sourceVersion: 'cwfis-recovery-v1',
-  }, 7200);
+  }, CWFIS_SNAPSHOT_TTL_SECONDS);
 }
 
 async function main() {

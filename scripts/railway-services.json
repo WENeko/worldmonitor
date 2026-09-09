@@ -1280,6 +1280,7 @@
       "UPSTASH_REDIS_REST_TOKEN"
     ],
     "watchPatterns": [
+      "scripts/_html-entities.mjs",
       "scripts/_proxy-utils.cjs",
       "scripts/_seed-contract.mjs",
       "scripts/_seed-envelope-source.mjs",

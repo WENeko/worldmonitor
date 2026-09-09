@@ -1,12 +1,56 @@
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import schema from "../schema";
+import http from "../http";
+import { ConvexError } from "convex/values";
 import {
   USER_PREFS_WRITE_RATE_LIMIT,
   USER_PREFS_WRITE_RATE_WINDOW_MS,
 } from "../constants";
 
 const modules = import.meta.glob("../**/*.ts");
+
+test('notification relay hides unexpected exceptions and retains server diagnostics', async () => {
+  vi.stubEnv('RELAY_SHARED_SECRET', 'synthetic-relay-secret');
+  const error = new Error('database synthetic-private-detail');
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const route = http.lookup('/relay/notification-channels', 'POST')![0];
+    const response = await (route as unknown as { _handler: (ctx: unknown, request: Request) => Promise<Response> })._handler({
+      runQuery: async () => { throw error; },
+    }, new Request('https://convex.test/relay/notification-channels', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer synthetic-relay-secret', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'get', userId: 'synthetic-user' }),
+    }));
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: 'Operation failed' });
+    expect(log).toHaveBeenCalledWith('[notification-channels] Operation failed', error);
+  } finally {
+    vi.unstubAllEnvs();
+    log.mockRestore();
+  }
+});
+
+test.each([['EMAIL_OWNERSHIP_REQUIRED', 400], ['PRO_REQUIRED', 402]] as const)(
+  'notification relay preserves %s', async (code, status) => {
+    vi.stubEnv('RELAY_SHARED_SECRET', 'synthetic-relay-secret');
+    try {
+      const route = http.lookup('/relay/notification-channels', 'POST')![0];
+      const response = await (route as unknown as { _handler: (ctx: unknown, request: Request) => Promise<Response> })._handler({
+        runQuery: async () => { throw new ConvexError({ code }); },
+      }, new Request('https://convex.test/relay/notification-channels', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer synthetic-relay-secret', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'get', userId: 'synthetic-user' }),
+      }));
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual({ error: code });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  },
+);
 
 const TEST_NOW = 1_700_000_000_000;
 const TEST_WINDOW_START = Math.floor(TEST_NOW / USER_PREFS_WRITE_RATE_WINDOW_MS) * USER_PREFS_WRITE_RATE_WINDOW_MS;

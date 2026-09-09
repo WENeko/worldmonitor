@@ -125,47 +125,34 @@ function replaceOgLocale(html: string, locale: string): string {
   return html;
 }
 
-function stripExistingDocsHreflang(html: string): string {
-  return html.replace(
-    /\s*<link\b[^>]*\brel=["']alternate["'][^>]*\bhreflang=["'][^"']+["'][^>]*>/gi,
-    '',
-  );
-}
-
-function replaceDocsCanonical(html: string, pathname: string): string {
+function rewriteDocsHeadLinks(html: string, pathname: string): string {
   const href = docsAbsoluteUrl(pathname).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   const canonical = `<link rel="canonical" href="${href}" />`;
-  return html.replace(/(<head\b[^>]*>)([\s\S]*?)(<\/head>)/i, (_match, open, head: string, close) => {
-    let replaced = false;
-    const rewritten = head.replace(
-      /<!--[\s\S]*?-->|<script\b[^>]*>[\s\S]*?<\/script\s*>|<link\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi,
-      (tag) => {
-        if (!/^<link\b/i.test(tag)) return tag;
-        const rel = [...tag.matchAll(/\s+([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g)]
-          .find((attribute) => attribute[1]?.toLowerCase() === 'rel');
-        if (!(rel?.[2] ?? rel?.[3] ?? rel?.[4] ?? '').toLowerCase().split(/\s+/).includes('canonical')) return tag;
-        if (replaced) return '';
-        replaced = true;
-        return canonical;
-      },
-    );
-    return `${open}${rewritten}${replaced ? '' : canonical}${close}`;
-  });
-}
-
-function injectAfterCanonical(html: string, linkTags: string[]): string {
-  if (linkTags.length === 0) return html;
-  const block = linkTags.join('');
-  if (/<link\b[^>]*\brel=["']canonical["'][^>]*>/i.test(html)) {
-    return html.replace(
-      /(<link\b[^>]*\brel=["']canonical["'][^>]*>)/i,
-      `$1${block}`,
-    );
-  }
-  if (/<\/head>/i.test(html)) {
-    return html.replace(/<\/head>/i, `${block}</head>`);
-  }
-  return `${html}${block}`;
+  const alternates = buildDocsHreflangLinkTags(pathname).join('');
+  let inHead = false;
+  let replaced = false;
+  let inserted = false;
+  const rewritten = html.replace(
+    /<!--[\s\S]*?-->|<(script|style)\b[^>]*>[\s\S]*?<\/\1(?:[\t\n\f\r ][^>]*|\/[^>]*)?>|<(?:head|\/head|link)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi,
+    (tag) => {
+      if (/^<head[\t\n\f\r >]/i.test(tag)) inHead = true;
+      if (/^<\/head[\t\n\f\r >]/i.test(tag) && inHead) {
+        inHead = false;
+        inserted = true;
+        return `${replaced ? '' : canonical}${alternates}${tag}`;
+      }
+      if (!inHead || !/^<link\b/i.test(tag)) return tag;
+      const attributes = [...tag.matchAll(/\s+([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g)];
+      const rel = attributes.find((attribute) => attribute[1]?.toLowerCase() === 'rel');
+      const relations = (rel?.[2] ?? rel?.[3] ?? rel?.[4] ?? '').toLowerCase().split(/\s+/);
+      if (relations.includes('alternate') && attributes.some((attribute) => attribute[1]?.toLowerCase() === 'hreflang')) return '';
+      if (!relations.includes('canonical')) return tag;
+      if (replaced) return '';
+      replaced = true;
+      return canonical;
+    },
+  );
+  return inserted ? rewritten : `${rewritten}${alternates}`;
 }
 
 const CANONICAL_WEBSITE_ID = WEBSITE_ID;
@@ -176,7 +163,7 @@ const DOCS_WEBSITE_IDS = new Set([
   `${DOCS_PUBLIC_ORIGIN}/docs/#website`,
 ]);
 const JSON_LD_SCRIPT_RE =
-  /<script\b(?=[^>]*\btype\s*=\s*["']application\/ld\+json["'])[^>]*>([\s\S]*?)<\/script>/gi;
+  /<script\b(?=[^>]*\btype\s*=\s*["']application\/ld\+json["'])[^>]*>([\s\S]*?)<\/script(?:[\t\n\f\r ][^>]*|\/[^>]*)?>/gi;
 
 /** `@type` may be a string or an array of strings in valid JSON-LD. */
 function hasJsonLdType(node: Record<string, unknown>, type: string): boolean {
@@ -195,7 +182,13 @@ function isMintlifyAgent(value: unknown): boolean {
   const agent = value as Record<string, unknown>;
   const name = typeof agent.name === 'string' ? agent.name.toLowerCase() : '';
   const url = typeof agent.url === 'string' ? agent.url.toLowerCase() : '';
-  return name.includes('mintlify') || url.includes('mintlify.com');
+  if (name.includes('mintlify')) return true;
+  try {
+    const hostname = new URL(url).hostname;
+    return hostname === 'mintlify.com' || hostname.endsWith('.mintlify.com');
+  } catch {
+    return false;
+  }
 }
 
 function isWebSiteNode(node: unknown): node is Record<string, unknown> {
@@ -493,7 +486,7 @@ export function rewriteDocsLocaleHtml(html: string, pathname: string): string {
   const pair = resolveDocsLocalePair(pathname);
   if (!pair) return html;
 
-  let next = replaceDocsCanonical(stripExistingDocsHreflang(html), pathname);
+  let next = rewriteDocsHeadLinks(html, pathname);
   if (pair.active === 'zh') {
     next = replaceHtmlLang(next, DOCS_ZH_HREFLANG);
     next = replaceOgLocale(next, 'zh_CN');
@@ -501,7 +494,6 @@ export function rewriteDocsLocaleHtml(html: string, pathname: string): string {
     next = replaceHtmlLang(next, DOCS_EN_HREFLANG);
     next = replaceOgLocale(next, 'en_US');
   }
-  next = injectAfterCanonical(next, buildDocsHreflangLinkTags(pathname));
   return rewriteDocsEntityGraph(next, pathname);
 }
 

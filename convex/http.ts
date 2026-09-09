@@ -993,8 +993,8 @@ http.route({
       if (code === "EMAIL_OWNERSHIP_REQUIRED" || code === "PRO_REQUIRED") {
         return new Response(JSON.stringify({ error: code }), { status: code === "PRO_REQUIRED" ? 402 : 400, headers: { "Content-Type": "application/json" } });
       }
-      const msg = err instanceof Error ? err.message : String(err);
-      return new Response(JSON.stringify({ error: msg }), { status: 500, headers: { "Content-Type": "application/json" } });
+      console.error('[notification-channels] Operation failed', err);
+      return new Response(JSON.stringify({ error: 'Operation failed' }), { status: 500, headers: { "Content-Type": "application/json" } });
     }
   }),
 });

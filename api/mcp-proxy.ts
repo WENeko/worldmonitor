@@ -235,15 +235,15 @@ function getResolveHostnameForTest() {
 }
 
 class McpProxySsrfError extends Error {
-  constructor(message) {
-    super(message);
+  constructor(message, options) {
+    super(message, options);
     this.name = 'McpProxySsrfError';
   }
 }
 
 export class McpProxyUpstreamError extends Error {
-  constructor(message) {
-    super(message);
+  constructor(message, options) {
+    super(message, options);
     this.name = 'McpProxyUpstreamError';
   }
 }
@@ -268,8 +268,7 @@ async function fetchMcpUpstream(input, init) {
     return await fetch(input, init);
   } catch (error) {
     if (proxyFailureFor(error).isTimeout) throw error;
-    const message = error instanceof Error ? error.message : String(error);
-    throw new McpProxyUpstreamError(message);
+    throw new McpProxyUpstreamError('MCP server request failed', { cause: error });
   }
 }
 
@@ -339,8 +338,7 @@ async function assertServerUrlSafe(url) {
   try {
     resolvedAddresses = await defaultResolveHostname(hostname);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new McpProxySsrfError(`serverUrl DNS resolution failed: ${message}`);
+    throw new McpProxySsrfError('serverUrl DNS resolution failed', { cause: error });
   }
 
   if (!resolvedAddresses.length) {
@@ -475,9 +473,11 @@ async function parseJsonRpcResponse(resp) {
     }
     return parseMcpProxyJson(text);
   } catch (error) {
-    if (error instanceof McpProxyUpstreamError) throw error;
-    const message = error instanceof Error ? error.message : String(error);
-    throw new McpProxyUpstreamError(message);
+    if (error instanceof McpProxyUpstreamError
+      || error instanceof ResponseBodyTooLargeError
+      || error instanceof McpProxyJsonDepthError
+      || proxyFailureFor(error).isTimeout) throw error;
+    throw new McpProxyUpstreamError('Invalid MCP server response', { cause: error });
   }
 }
 
@@ -907,7 +907,11 @@ export default async function handler(req, ctx) {
       response = jsonResponse({ error: 'Method not allowed' }, 405, cors);
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = err instanceof McpProxyUpstreamError
+      || err instanceof McpProxySsrfError
+      || err instanceof ResponseBodyTooLargeError
+      || err instanceof McpProxyJsonDepthError
+      ? err.message : 'MCP proxy request failed';
     const failure = proxyFailureFor(err);
     // Until now this catch swallowed EVERY handler fault into a 422/422-shaped
     // JSON body with no Sentry event, so a genuine proxy defect was visible

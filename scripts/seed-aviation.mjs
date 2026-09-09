@@ -24,6 +24,7 @@
  * hosts the /aviationstack live proxy for user-triggered flight lookups.
  */
 
+import { decodeHtmlEntities } from './_html-entities.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -831,7 +832,7 @@ function parseRssItems(xml, sourceName) {
   }
 }
 
-async function seedAviationNews() {
+export async function seedAviationNews() {
   const t0 = Date.now();
   const now = Date.now();
   const cutoff = now - 24 * 60 * 60 * 1000;
@@ -854,7 +855,7 @@ async function seedAviationNews() {
     let publishedAt = 0;
     if (item.pubDate) try { publishedAt = new Date(item.pubDate).getTime(); } catch { /* skip */ }
     if (publishedAt && publishedAt < cutoff) return null;
-    const snippet = (item.description || '').replace(/<[^>]+>/g, '').slice(0, 200);
+    const snippet = decodeHtmlEntities((item.description || '').replace(/<[^>]+>/g, '')).slice(0, 200);
     return {
       id: Buffer.from(item.link).toString('base64').slice(0, 32),
       title: item.title, url: item.link, sourceName: item._source,

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { after, afterEach, before, describe, it } from 'node:test';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
@@ -83,6 +84,46 @@ afterEach(() => {
 after(async () => { if (scratch) await rm(scratch, { recursive: true, force: true }); });
 
 describe('Sentry build and event release contract', () => {
+  it('bounds exception values before the real beforeSend filter runs', () => {
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import { BrowserClient } from '@sentry/browser';
+      import { Window } from 'happy-dom';
+      const window = new Window({ url: 'https://worldmonitor.app/' });
+      for (const key of ['window', 'document', 'location', 'navigator']) {
+        Object.defineProperty(globalThis, key, { value: key === 'window' ? window : window[key], configurable: true });
+      }
+      const options = await (await import(${JSON.stringify(pathToFileURL(join(scratch, 'dashboard-init.mjs')).href)})).default();
+      const observed = [];
+      const sent = [];
+      const client = new BrowserClient({
+        ...options, integrations: [], stackParser: () => [],
+        beforeSend(event, hint) {
+          observed.push(event.exception.values[0].value.length);
+          return options.beforeSend(event, hint);
+        },
+        transport: () => ({ send: async envelope => { sent.push(envelope[1][0][1]); return { statusCode: 200 }; }, flush: async () => true }),
+      });
+      for (const value of [
+        'Unexpected application error /assets/' + 'a-'.repeat(100000) + '!',
+        'Ordinary application failure',
+        'Failed to fetch dynamically imported module: https://worldmonitor.app/assets/main-AbC123.js',
+      ]) {
+        client.captureEvent({ exception: { values: [{ type: 'Error', value, stacktrace: { frames: [{ filename: '/assets/main-AbC123.js', lineno: 1, function: 'run' }] } }] } });
+        await client.flush(1000);
+      }
+      await client.close();
+      await window.happyDOM.close();
+      process.stdout.write(JSON.stringify({ observed, values: sent.map(event => event.exception.values[0].value) }));
+    `], { encoding: 'utf8', timeout: 5000 });
+    assert.equal(child.error?.code, undefined, 'SDK filtering must finish within five seconds');
+    assert.equal(child.status, 0, child.stderr);
+    const result = JSON.parse(child.stdout);
+    assert.equal(result.observed[0], 2051, 'SDK truncation includes its three-character suffix');
+    assert.equal(result.values.length, 2, 'the known owned chunk-load error is still filtered');
+    assert.ok(result.values[0].startsWith('Unexpected application error /assets/'));
+    assert.equal(result.values[1], 'Ordinary application failure');
+  });
+
   for (const target of ['production', 'preview', 'development']) {
     it(`aligns both bundles and source-map uploads in ${target}`, async () => {
       process.env.SENTRY_AUTH_TOKEN = 'test-only-never-sent';

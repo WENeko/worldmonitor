@@ -596,7 +596,9 @@ export function renderPreferences(host: PreferencesHost): PreferencesResult {
           hideImportError(errEl);
           if (preview) preview.style.display = 'none';
           const urlVal = urlInput.value.trim();
-          if (!urlVal.includes('agentskills.io')) {
+          let skillHostname = '';
+          try { skillHostname = new URL(urlVal).hostname; } catch { /* rejected below */ }
+          if (!['agentskills.io', 'www.agentskills.io', 'api.agentskills.io'].includes(skillHostname)) {
             showImportError(errEl, 'Only agentskills.io URLs are supported.');
             return;
           }

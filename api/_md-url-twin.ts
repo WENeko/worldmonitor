@@ -79,32 +79,37 @@ export function resolveMarkdownTwinPath(req: Request): string | null {
   return null;
 }
 
+const HTML_ENTITIES: Record<string, string> = {
+  nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"',
+};
+
 function decodeHtmlEntities(value: string): string {
-  return value
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&#(\d+);/g, (_, code) => {
-      const n = Number(code);
-      return Number.isFinite(n) && n >= 32 ? String.fromCharCode(n) : '';
-    });
+  return value.replace(/&(nbsp|amp|lt|gt|quot|#(\d+));/gi, (_, entity: string, code: string | undefined) => {
+    if (code === undefined) return HTML_ENTITIES[entity.toLowerCase()]!;
+    // `fromCodePoint`, not `fromCharCode`: the latter coerces with ToUint16, so
+    // a code point above 0xFFFF wraps back under the `>= 32` guard after passing
+    // it — `&#65596;` yielded a literal `<` and `&#65536;` a NUL. It also
+    // truncates astral characters, decoding `&#128512;` to a private-use glyph
+    // instead of the emoji. Same reasoning as src/utils/html-entities.ts.
+    const n = Number(code);
+    const decodable = Number.isInteger(n) && n >= 32 && n <= 0x10ffff
+      && !(n >= 0xd800 && n <= 0xdfff);
+    return decodable ? String.fromCodePoint(n) : '';
+  });
 }
 
 function stripTags(value: string): string {
-  return decodeHtmlEntities(value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
+  return value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 export function htmlToMarkdown(html: string, fallbackTitle: string): string {
   const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  const title = stripTags(titleMatch?.[1] ?? '') || fallbackTitle;
+  const title = decodeHtmlEntities(stripTags(titleMatch?.[1] ?? '')) || fallbackTitle;
 
   const body = html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ');
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script(?:[\t\n\f\r ][^>]*|\/[^>]*)?>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style(?:[\t\n\f\r ][^>]*|\/[^>]*)?>/gi, ' ')
+    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript(?:[\t\n\f\r ][^>]*|\/[^>]*)?>/gi, ' ');
 
   const main = body.match(/<main\b[\s\S]*?<\/main>/i)?.[0] ?? body;
 

@@ -631,7 +631,7 @@ const SEED_META = {
     sourceFailure: [
       { warnAfterConsecutive: 2, failureCodePattern: /^FIRMS_PARTIAL_COVERAGE$/ },
       {
-        warnAfterConsecutive: 2, maxPendingMin: 15,
+        warnAfterConsecutive: 3, maxPendingMin: 180,
         successAtField: 'lastSourceSuccessAt',
         sources: ['cwfis', 'firms', 'bc'],
         failureCodePattern: /^CWFIS_SOURCE_FAILED$/,
@@ -1384,7 +1384,7 @@ const SEED_META = {
   ieaOilStocks:         { key: 'seed-meta:energy:iea-oil-stocks',        maxStaleMin: 60 * 24 * 40 }, // monthly cron on 15th; 40d threshold = TTL_SECONDS
   oilStocksAnalysis:    { key: 'seed-meta:energy:oil-stocks-analysis',   maxStaleMin: 60 * 24 * 50 }, // afterPublish of ieaOilStocks; 50d = matches seed-meta TTL (exceeds 40d data TTL)
   eiaPetroleum:         { key: 'seed-meta:energy:eia-petroleum',         maxStaleMin: 4320 }, // daily bundle cron (seed-bundle-energy-sources); 72h = 3× interval, well under 7d data TTL
-  jodiGas:              { key: 'seed-meta:energy:jodi-gas',               maxStaleMin: 60 * 24 * 40, chinaRow: true }, // monthly 35d cadence; 40d = cadence + 5d late-publisher grace. Data/meta TTL is 70d (2× cadence) so last-good outlives this gate and one missed monthly publish.
+  jodiGas:              { key: 'seed-meta:energy:jodi-gas',               maxStaleMin: 60 * 24 * 40, chinaRow: true }, // 15d bundle interval; 40d allows missed runs. Data/meta TTL is 70d so last-good outlives this gate and several intervals.
   lngVulnerability:     { key: 'seed-meta:energy:jodi-gas',               maxStaleMin: 60 * 24 * 40, chinaRow: true }, // written by jodi-gas seeder afterPublish; shares seed-meta key and the 70d GAS_TTL
   chokepointBaselines:  { key: 'seed-meta:energy:chokepoint-baselines', maxStaleMin: 60 * 24 * 400 }, // 400 days
   // maxStaleMin is 120d = 2x the 60-day bundle interval, matching the repo's

@@ -97,9 +97,11 @@ function getNaturalSourceMeta(event) {
   const name = String(event?.sourceName || '').toLowerCase();
   const url = String(event?.sourceUrl || '').toLowerCase();
   const id = String(event?.id || '');
-  if (name === 'nasa firms' || name.startsWith('firms') || url.includes('firms.modaps.')) return { source: 'NASA FIRMS' };
-  if (name === 'gdacs' || name.startsWith('gdacs') || url.includes('gdacs.org') || id.startsWith('gdacs-')) return { source: 'GDACS' };
-  if (url.includes('eonet.') || id.startsWith('EONET_') || name.startsWith('eonet')) return { source: 'EONET' };
+  let hostname = '';
+  try { hostname = new URL(url).hostname; } catch { /* source name/id may still identify the provider */ }
+  if (name === 'nasa firms' || name.startsWith('firms') || hostname === 'firms.modaps.eosdis.nasa.gov') return { source: 'NASA FIRMS' };
+  if (name === 'gdacs' || name.startsWith('gdacs') || (hostname === 'gdacs.org' || hostname.endsWith('.gdacs.org')) || id.startsWith('gdacs-')) return { source: 'GDACS' };
+  if (hostname === 'eonet.gsfc.nasa.gov' || id.startsWith('EONET_') || name.startsWith('eonet')) return { source: 'EONET' };
   if (name || url) return { source: 'OTHER' };
   return null;
 }

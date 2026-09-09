@@ -216,3 +216,10 @@ describe('seed-climate-disasters helpers', () => {
     assert.equal(row.sourceUrl, 'https://www.gdacs.org/');
   });
 });
+
+it('does not infer GDACS provenance from host prefixes, suffixes or URL paths', () => {
+  for (const sourceUrl of ['https://notgdacs.org', 'https://gdacs.org.example.com', 'https://example.org/gdacs.org']) {
+    assert.equal(isClimateNaturalEvent({ category: 'severeStorms', title: 'Tropical cyclone', sourceUrl }), false);
+  }
+  assert.equal(isClimateNaturalEvent({ category: 'severeStorms', title: 'Tropical cyclone', sourceUrl: 'https://www.gdacs.org/' }), true);
+});

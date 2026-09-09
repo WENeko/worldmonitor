@@ -296,7 +296,8 @@ test('keeps legacy plain STALE relay responses non-cacheable during rollout', as
   assert.equal(calls.length, 2);
 });
 
-test('preserves the original direct-fetch error when the relay fallback itself throws (#5398)', async () => {
+test('preserves the original direct-fetch diagnostic when the relay fallback itself throws (#5398)', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
   // Both legs fail, but the relay's throw must not replace directError as the
   // reported failure — the #5378 suite only ever covered relay returning
   // null/Response, never throwing.
@@ -318,7 +319,8 @@ test('preserves the original direct-fetch error when the relay fallback itself t
 
     assert.equal(res.status, 502);
     assert.equal(body.error, 'Failed to fetch feed');
-    assert.equal(body.details, 'boom direct fetch');
+    assert.deepEqual(body, { error: 'Failed to fetch feed', url: feedUrl });
+    assert.ok(log.mock.calls.some(({ arguments: args }) => args[2] === 'boom direct fetch'));
     assert.equal(calls.length, 2);
   }
 });
@@ -761,23 +763,25 @@ test('maps a direct-fetch AbortError to 504 Feed timeout', async () => {
   const body = await res.json();
 
   assert.equal(res.status, 504);
-  assert.equal(body.error, 'Feed timeout');
-  assert.equal(body.url, 'https://techcrunch.com/feed');
+  assert.deepEqual(body, { error: 'Feed timeout', url: 'https://techcrunch.com/feed' });
   assert.equal(calls.length, 1);
 });
 
-test('maps a generic direct-fetch error to 502 Failed to fetch feed when no relay is configured', async () => {
+test('maps a generic direct-fetch error to 502 Failed to fetch feed when no relay is configured', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
   // Non-Abort throw + WS_RELAY_URL unset -> fetchViaRailway returns null ->
   // directError rethrows into the outer catch: the handler's generic-failure
   // branch and the ONLY captureSilentError call site. Untested before this.
-  const calls = spyFetch(() => { throw new Error('boom direct fetch'); });
+  const message = 'fetch failed https://internal.example/?key=synthetic-secret';
+  const calls = spyFetch(() => { throw new Error(message); });
 
   const res = await handler(makeRequest('https://techcrunch.com/feed'));
   const body = await res.json();
 
   assert.equal(res.status, 502);
   assert.equal(body.error, 'Failed to fetch feed');
-  assert.equal(body.details, 'boom direct fetch');
+  assert.deepEqual(body, { error: 'Failed to fetch feed', url: 'https://techcrunch.com/feed' });
+  assert.ok(log.mock.calls.some(({ arguments: args }) => args[2] === message));
   assert.equal(body.url, 'https://techcrunch.com/feed');
 });
 
@@ -791,7 +795,7 @@ test('maps a relay-only host to 502 when the relay is unavailable', async () => 
 
   assert.equal(res.status, 502);
   assert.equal(body.error, 'Failed to fetch feed');
-  assert.match(body.details, /Railway relay unavailable for relay-only domain: rss\.cnn\.com/);
+  assert.deepEqual(body, { error: 'Failed to fetch feed', url: 'https://rss.cnn.com/rss/edition.rss' });
   // No relay configured and direct fetch is skipped for relay-only hosts, so
   // nothing was ever fetched.
   assert.deepEqual(calls, []);

@@ -257,7 +257,6 @@ export default async function handler(req, ctx) {
     }
     return jsonResponse({
       error: isTimeout ? 'Feed timeout' : 'Failed to fetch feed',
-      details: error.message,
       url: feedUrl
     }, isTimeout ? 504 : 502, corsHeaders);
   }

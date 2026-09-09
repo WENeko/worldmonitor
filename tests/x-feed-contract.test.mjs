@@ -42,6 +42,20 @@ describe('api/x-feed contract normalization', () => {
     restoreEnv();
   });
 
+  for (const timedOut of [false, true]) {
+    it(`hides internal relay errors (timeout=${timedOut})`, async () => {
+      globalThis.fetch = async () => {
+        const error = new Error('https://internal.example/?key=synthetic-secret');
+        if (timedOut) error.name = 'AbortError';
+        throw error;
+      };
+      const handler = (await import(`../api/x-feed.js?error-test=${timedOut}`)).default;
+      const response = await handler(await makeRequest());
+      assert.equal(response.status, timedOut ? 504 : 502);
+      assert.deepEqual(await response.json(), { error: timedOut ? 'Relay timeout' : 'Relay request failed' });
+    });
+  }
+
   it('normalizes items[] into the first-party panel contract and ignores a stale count field', async () => {
     globalThis.fetch = async (url, options) => {
       assert.match(String(url), /\/x\/feed\?limit=50$/);

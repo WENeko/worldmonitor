@@ -1718,7 +1718,7 @@ async function dispatch(requestUrl, req, routes, context) {
         },
         resolvedAddress: pinned.address,
         resolvedFamily: pinned.family,
-      }, parsed.hostname.includes('news.google.com') ? 20000 : 12000);
+      }, parsed.hostname === 'news.google.com' ? 20000 : 12000);
       const rssBody = await response.text();
       return rssProxyResponse(rssBody || '', response.status);
     } catch (e) {

@@ -40,7 +40,9 @@ export const CWFIS_PAGE_SIZE = 1000;
 export const CWFIS_MAX_PAGES = 8;
 export const CWFIS_FETCH_TIMEOUT_MS = 30_000;
 export const CWFIS_SNAPSHOT_KEY = 'wildfire:cwfis-source:v1';
-export const CWFIS_RETAIN_MS = 30 * 60_000;
+export const CWFIS_RETAIN_MS = 3 * 60 * 60_000;
+export const CWFIS_SNAPSHOT_TTL_SECONDS = 4 * 60 * 60;
+export const CWFIS_WARN_AFTER_CONSECUTIVE_FAILURES = 3;
 // Live no-CQL GetFeature is 187,566 historical rows (2010+). Current-valid
 // record_end >= now is hundreds. Anything at this scale is the archive.
 export const CWFIS_ARCHIVE_MATCHED_REFUSAL = 20_000;
@@ -637,7 +639,9 @@ function failedCwfisSnapshot(previous, nowMs, errorCode, transient) {
     fetchedAt: usable ? previous.fetchedAt : null,
     retainedUntil: usable ? previous.fetchedAt + CWFIS_RETAIN_MS : null,
     fireDetections: usable ? previous.fireDetections : [],
-    consecutiveFailures: usable && transient ? nextCount : Math.max(2, nextCount),
+    consecutiveFailures: usable && transient && known
+      ? nextCount
+      : Math.max(CWFIS_WARN_AFTER_CONSECUTIVE_FAILURES, nextCount),
     firstFailureAt: known && sameFailure && count > 0 ? previous.firstFailureAt : nowMs,
     lastAttemptAt: nowMs,
     errorCode,

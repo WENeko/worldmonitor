@@ -54,6 +54,7 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const FETCH_CONCURRENCY = 4;
 const MAX_CATCHUP_FILES_PER_KIND = 8;
 const RECENT_GKG_WINDOW_MS = 2 * 60 * 60 * 1000;
+export const GDELT_BULK_MAX_CONTENT_AGE_MIN = 3 * 60;
 const GDELT_SNAPSHOT_INTERVAL_MS = 15 * 60 * 1000;
 const MAX_RECENT_GEO_RECORDS = 5_000;
 
@@ -510,6 +511,20 @@ function validate(data) {
   return Array.isArray(data?.topics) && data.topics.length === 6;
 }
 
+export function gdeltBulkContentMeta(data, nowMs = Date.now()) {
+  if (!Number.isFinite(nowMs)) return null;
+  const requiredSourceTimes = ['gkg', 'export'].map((kind) => {
+    const sourceClock = data?._state?.cursor?.[kind];
+    return typeof sourceClock === 'string' && /^\d{14}$/.test(sourceClock)
+      ? gdeltTimestampToMs(sourceClock)
+      : NaN;
+  });
+  if (requiredSourceTimes.some((timestamp) =>
+    !Number.isFinite(timestamp) || timestamp <= 0 || timestamp > nowMs)) return null;
+  const observedAt = Math.min(...requiredSourceTimes);
+  return { newestItemAt: observedAt, oldestItemAt: observedAt };
+}
+
 export function declareRecords(data) {
   return (data?.topics ?? []).reduce(
     (total, topic) => total + (Array.isArray(topic?.articles) ? topic.articles.length : 0),
@@ -650,6 +665,10 @@ export const RUN_SEED_OPTS = {
   declareRecords,
   schemaVersion: 1,
   maxStaleMin: 45,
+  contentMeta: gdeltBulkContentMeta,
+  // The fetch boundary accepts a source cohort up to two hours old. One more
+  // hour lets the 15-minute worker recover without flapping at that boundary.
+  maxContentAgeMin: GDELT_BULK_MAX_CONTENT_AGE_MIN,
   preserveKeyTtls: [
     ...GDELT_BULK_TOPICS.flatMap(({ id }) => [
       { key: timelineKey('tone', id), ttlSeconds: TIMELINE_TTL },

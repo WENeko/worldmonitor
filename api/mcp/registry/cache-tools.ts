@@ -1141,7 +1141,7 @@ export const CACHE_TOOLS: ToolDef[] = [
     // matching api/health.js.
     _freshnessChecks: [
       { key: 'seed-meta:news:insights',                    maxStaleMin: 30 },  // 15min cron × 2
-      { key: 'seed-meta:intelligence:gdelt-intel',         maxStaleMin: 45 },  // 15min materializer; matches api/health.js
+      { key: 'seed-meta:intelligence:gdelt-intel',         maxStaleMin: 45, honorContentAge: true }, // 15min materializer; matches api/health.js
       { key: 'seed-meta:intelligence:cross-source-signals', maxStaleMin: 60 }, // 30min cron × 2
     ],
     _apiPaths: [

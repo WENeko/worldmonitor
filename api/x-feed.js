@@ -265,7 +265,6 @@ export default async function handler(req) {
     const isTimeout = error?.name === 'AbortError';
     return jsonResponse({
       error: isTimeout ? 'Relay timeout' : 'Relay request failed',
-      details: error?.message || String(error),
     }, isTimeout ? 504 : 502, { 'Cache-Control': 'no-store', ...corsHeaders });
   }
 }

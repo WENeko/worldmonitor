@@ -13,16 +13,19 @@ const {
   countryIndexRecordCount,
   fetchGdeltBulkFiles,
   fetchMaterializedGdelt,
+  GDELT_BULK_MAX_CONTENT_AGE_MIN,
   GDELT_BULK_ARTICLES_KEY,
   GDELT_BULK_CONFLICT_KEY,
   GDELT_BULK_COUNTRY_ARTICLES_KEY,
   GDELT_BULK_STATE_KEY,
   GDELT_BULK_UNREST_KEY,
   GDELT_INTEL_KEY,
+  gdeltBulkContentMeta,
   POSITIVE_EVENTS_BOOTSTRAP_KEY,
   POSITIVE_EVENTS_RPC_KEY,
   RUN_SEED_OPTS,
 } = await import('../scripts/seed-gdelt-bulk-materializer.mjs');
+const { __testing__: { classifyKey } } = await import('../api/health.js');
 
 function gkgRow({
   id = 'gkg-1',
@@ -877,6 +880,64 @@ describe('gdelt materializer freshness constants stay in lockstep (#5864)', () =
       `seed-health intervalMin ${intervalMin} (alerts at ${intervalMin * 2}min) must track`
       + ` the ${maxStaleMin}min health budget, not the retired 4h cron`,
     );
+  });
+
+  it('dates active materializer content from both required bulk source clocks', () => {
+    const nowMs = Date.parse('2026-07-30T12:05:00Z');
+    const meta = gdeltBulkContentMeta({
+      _state: {
+        cursor: {
+          gkg: '20260730120000',
+          export: '20260730114500',
+        },
+      },
+    }, nowMs);
+    const olderRequiredSource = Date.parse('2026-07-30T11:45:00Z');
+    assert.deepEqual(meta, {
+      newestItemAt: olderRequiredSource,
+      oldestItemAt: olderRequiredSource,
+    });
+    assert.equal(RUN_SEED_OPTS.contentMeta, gdeltBulkContentMeta);
+    assert.equal(RUN_SEED_OPTS.maxContentAgeMin, GDELT_BULK_MAX_CONTENT_AGE_MIN);
+    assert.equal(GDELT_BULK_MAX_CONTENT_AGE_MIN, 180);
+  });
+
+  it('fails content age closed for a missing, malformed, or future source clock', () => {
+    const nowMs = Date.parse('2026-07-30T12:05:00Z');
+    assert.equal(gdeltBulkContentMeta({ _state: { cursor: { gkg: '20260730120000' } } }, nowMs), null);
+    assert.equal(gdeltBulkContentMeta({ _state: { cursor: { gkg: 'bad', export: '20260730120000' } } }, nowMs), null);
+    assert.equal(gdeltBulkContentMeta({
+      _state: { cursor: { gkg: '20260730120000junk', export: '20260730120000' } },
+    }, nowMs), null);
+    assert.equal(gdeltBulkContentMeta({
+      _state: { cursor: { gkg: 20260730120000, export: '20260730120000' } },
+    }, nowMs), null);
+    assert.equal(gdeltBulkContentMeta({
+      _state: { cursor: { gkg: '20260730121500', export: '20260730121500' } },
+    }, nowMs), null);
+  });
+
+  it('turns a frozen active GDELT cohort into STALE_CONTENT after the budget', () => {
+    const sourceClock = '20260730120000';
+    const contentMeta = gdeltBulkContentMeta({
+      _state: { cursor: { gkg: sourceClock, export: sourceClock } },
+    }, Date.parse('2026-07-30T15:01:00Z'));
+    const classifyAt = (now) => classifyKey('gdeltIntel', GDELT_INTEL_KEY, {}, {
+      keyStrens: new Map([[GDELT_INTEL_KEY, 1024]]),
+      keyErrors: new Map(),
+      keyMetaValues: new Map([['seed-meta:intelligence:gdelt-intel', JSON.stringify({
+        fetchedAt: now - 60_000,
+        recordCount: 6,
+        newestItemAt: contentMeta.newestItemAt,
+        oldestItemAt: contentMeta.oldestItemAt,
+        maxContentAgeMin: GDELT_BULK_MAX_CONTENT_AGE_MIN,
+      })]]),
+      keyMetaErrors: new Map(),
+      now,
+    });
+
+    assert.equal(classifyAt(Date.parse('2026-07-30T15:00:00Z')).status, 'OK');
+    assert.equal(classifyAt(Date.parse('2026-07-30T15:01:00Z')).status, 'STALE_CONTENT');
   });
 
   it('registers the per-country index as a standalone health dataset at the materializer budget (#7748)', () => {
