@@ -26,6 +26,35 @@ it('does not decode entities produced by numeric ampersands', () => {
     '# Title\n\n&amp; &#38; &lt;');
 });
 
+it('decodes hexadecimal and apostrophe entities once with the numeric safety bounds', () => {
+  assert.equal(htmlToMarkdown('<main><h1>It&#x27;s &apos;ready&apos;</h1><p>&#X1F600; &#x26;lt; a&#x7;b&#xD800;&#x110000;</p></main>', 'Title'),
+    "# It's 'ready'\n\n 😀 &lt; ab");
+});
+
+it('keeps definition labels and values together across adjacent stat cells', () => {
+  const markdown = htmlToMarkdown('<main><dl><div><dt>Providers</dt><dd><a href="/sources/?utm_source=hero">748</a></dd></div><div><dt>Alert origins</dt><dd>5</dd></div></dl></main>', 'Title');
+  assert.equal(markdown, '# Title\n\n- Providers: [748](/sources/)\n\n- Alert origins: 5');
+});
+
+it('removes only tracking query parameters and separates block links from following values', () => {
+  const markdown = htmlToMarkdown('<main><a href="/sources/?utm_source=hero&amp;country=US&amp;utm_content=proof#catalog"><div>748</div><div>Providers</div></a><div>5</div><a href="https://example.com/?q=two%20words&amp;utm_medium=ref">External</a><a href="#depth">Depth</a></main>', 'Title');
+  assert.match(markdown, /\[748 Providers\]\(\/sources\/\?country=US#catalog\)\n/);
+  assert.match(markdown, /https:\/\/example.com\/\?q=two%20words/);
+  assert.match(markdown, /\[Depth\]\(#depth\)/);
+  assert.doesNotMatch(markdown, /utm_/);
+});
+
+it('preserves functional queries and fragments encoded as numeric HTML entities', () => {
+  for (const separator of ['&#38;', '&#x26;', '&#X26;', '&amp;']) {
+    for (const query of [`q=1${separator}utm_source=a${separator}page=2`, `utm_source=a${separator}q=1${separator}page=2`]) {
+      assert.equal(htmlToMarkdown(`<a href="/x?${query}&#35;results">Results</a>`, 'Title'),
+        '# Title\n\n[Results](/x?q=1&page=2#results)');
+    }
+  }
+  assert.equal(htmlToMarkdown('<a href="/x?q=&amp;lt;value&amp;gt;&amp;utm_source=a">Results</a>', 'Title'),
+    '# Title\n\n[Results](/x?q=&lt;value&gt;)');
+});
+
 // stripTags no longer decodes, so the <title> path carries its own
 // decodeHtmlEntities() call. Dropping that wrapper is an easy refactor mistake
 // and every other <title> fixture in this file is plain text, so pin it here.

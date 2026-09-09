@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BrowserClient, defaultStackParser } from '@sentry/browser';
 import { isDebugBearRumScriptFrame } from '../src/bootstrap/debugbear-rum.ts';
 import { isIosLikeUserAgent } from '../src/bootstrap/platform-ua.ts';
 import { isolateNonProductionSentryEvent } from '../shared/sentry-build-metadata.ts';
@@ -423,6 +424,21 @@ describe('dynamic-module-import failures (stale chunk after deploy)', () => {
 // (WORLDMONITOR-66 / WORLDMONITOR-62).
 
 describe('zero-frame async-rejection patterns (timeout / DOMException / OOM / DOM-walker / wrapper-injected timeout)', () => {
+  for (const dispatch of ['direct', 'queued']) {
+    it(`preserves a zero-frame timeout explicitly reported by ${dispatch} panel dispatch`, async () => {
+      const client = new BrowserClient({ stackParser: defaultStackParser, integrations: [] });
+      const reason = new DOMException('signal timed out', 'TimeoutError');
+      // Model the browser timer boundary, without Node's constructor frames.
+      Object.defineProperty(reason, 'stack', { value: '' });
+      assert.ok(reason instanceof Error);
+      const event = await client.eventFromException(reason);
+      assert.equal(event.exception.values[0].stacktrace?.frames?.length ?? 0, 0);
+      event.tags = { kind: 'panel_call_rejected', panel: 'insights', method: 'updateInsights', dispatch };
+      assert.equal(isIgnored('signal timed out'), false);
+      assert.equal(beforeSend(event), event);
+    });
+  }
+
   const zeroFrameErrors = [
     ['signal timed out', 'TimeoutError'],
     ['NotSupportedError: The operation is not supported.', 'Error'],

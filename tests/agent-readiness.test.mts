@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import { load } from 'js-yaml';
 import middleware from '../middleware';
 import agentRequestPolicy from '../shared/agent-request-policy.json';
+import { decodeHtmlEntities } from '../src/utils/html-entities';
 import { guardProBuiltOutput, shouldSkipProBuiltOutput } from './_lib/pro-built-output.mjs';
 
 describe('public agent documents', () => {
@@ -77,6 +78,34 @@ describe('agent homepage routing', () => {
         assert.ok(markdown.includes(section), 'all rendered homepage sections must survive');
       }
     }
+  });
+
+  it('publishes clean homepage markdown with every rendered stat pair', { skip: shouldSkipProBuiltOutput() }, () => {
+    const html = readFileSync(new URL('../public/pro/welcome.html', import.meta.url), 'utf8');
+    const markdown = readFileSync(new URL('../public/pro/home.md', import.meta.url), 'utf8');
+    assert.equal([...markdown.matchAll(/^# /gm)].length, 1);
+    assert.doesNotMatch(markdown, /&(?:#(?:x[0-9a-f]+|\d+)|[a-z]+);/i);
+    assert.doesNotMatch(markdown, /[?&]utm_/i);
+    const band = html.match(/<section\b[^>]*\bid="depth"[^>]*>[\s\S]*?<\/section>/)?.[0];
+    assert.ok(band);
+    const pairs = [...band.matchAll(/<dt\b[^>]*>([^<]+)<\/dt>\s*<dd\b[^>]*>([^<]+)<\/dd>/g)];
+    assert.equal(pairs.length, 15, 'exercise every rendered stat, not just standalone numbers');
+    const section = markdown.slice(markdown.indexOf('Under the hood'));
+    const rows = section.match(/^- [^\n]+: \d+$/gm) ?? [];
+    assert.equal(rows.length, pairs.length);
+    for (const [, label, value] of pairs) {
+      const pair = `${decodeHtmlEntities(label)}: ${value}`;
+      assert.ok(rows.includes(`- ${pair}`), pair);
+    }
+  });
+
+  it('routes the advertised suffix to the complete negotiated document before the generic twin', async () => {
+    const config = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'));
+    const aliasIndex = config.rewrites.findIndex((rule: { source: string }) => rule.source === '/index.md');
+    const twinIndex = config.rewrites.findIndex((rule: { destination: string }) => rule.destination.startsWith('/api/md-twin?'));
+    const negotiated = await middleware(new Request('https://www.worldmonitor.app/', { headers: { Accept: 'text/markdown' } }));
+    assert.ok(aliasIndex >= 0 && aliasIndex < twinIndex);
+    assert.equal(config.rewrites[aliasIndex].destination, new URL(negotiated!.headers.get('x-middleware-rewrite')!).pathname);
   });
 
   it('honors explicit markdown media types and preserves HTML preferences', async () => {

@@ -304,8 +304,9 @@ for (const { file, content, rootAttributes } of PAGES) {
 const agentContext = readFileSync(resolve(__dirname, '../public/home.md'), 'utf8');
 const metadata = agentContext.match(/^---\n[\s\S]*?\n---\n/);
 if (!metadata) throw new Error('Homepage agent context must have document metadata');
+const supplement = agentContext.slice(metadata[0].length).trim().replace(/^# .+\n+/, '');
 writeFileSync(
   resolve(__dirname, '../public/pro/home.md'),
-  `${metadata[0].replace('https://www.worldmonitor.app/home.md', 'https://www.worldmonitor.app/')}\n${welcomeMarkdown}\n\n${agentContext.slice(metadata[0].length).trim()}\n`,
+  `${metadata[0].replace('https://www.worldmonitor.app/home.md', 'https://www.worldmonitor.app/')}\n${welcomeMarkdown}\n\n${supplement}\n`,
   'utf8',
 );

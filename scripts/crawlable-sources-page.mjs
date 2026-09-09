@@ -872,7 +872,9 @@ export function renderSourcesIndex({ sourceStats, sourceCatalog, catalogDatasets
       <span><strong>WORLD MONITOR</strong><small>Open-source global intelligence</small></span>
       <span class="source-footer-links"><a href="/sources/">Sources</a><a href="${docsHref('')}">Data docs</a><a href="${withUtmSource('/docs/source-attribution', 'seo-sources')}">Attribution ledger</a><a href="/docs/terms">Terms</a></span>
     </div>`;
-  const catalogNavigation = `<nav class="source-pages" aria-label="Source catalog pages">${(directoryPages || siblingPages).map((page) => `<a href="${page.path}"${page.path === path ? ' aria-current="page"' : ''}>${escapeHtml(page.name)}</a>`).join(' ')}</nav>`;
+  const catalogNavigation = directoryPages
+    ? `<ul class="source-pages source-directory">${directoryPages.map((page) => `<li><a href="${page.path}">${escapeHtml(page.name)}</a> (${page.providers.length} providers)</li>`).join('')}</ul>`
+    : `<nav class="source-pages" aria-label="Source catalog pages">${siblingPages.map((page) => `<a href="${page.path}"${page.path === path ? ' aria-current="page"' : ''}>${escapeHtml(page.name)}</a>`).join(' ')}</nav>`;
   const body = `      <section class="sources-hero">
         <div class="hero-copy">
           <p class="eyebrow"><span></span> Live provider inventory</p>
@@ -1020,6 +1022,8 @@ ${providerCards}
       .source-domain-card button, .domain-browse { width: 100%; min-height: 260px; padding: 20px; display: flex; flex-direction: column; align-items: flex-start; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
       .source-pages { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
       .source-pages a { padding: 8px; border: 1px solid var(--line); }
+      .source-directory { list-style: none; padding: 0; }
+      .source-directory a { display: inline-block; }
       .source-pages [aria-current="page"] { color: var(--accent); }
       .source-result { padding: 16px; border: 1px solid var(--line); overflow-wrap: anywhere; }
       .source-result small { display: block; color: var(--muted); }

@@ -24,6 +24,8 @@ import { COMPARISON_MATRIX_COLUMNS, comparisonDiscoveryEntries } from './build-c
 import { resolveLatestResilienceSnapshotPath, slugify } from './build-crawlable-corpus.mjs';
 import { CHOKEPOINT_CONTENT } from './chokepoint-page-content.mjs';
 import { SITE_ORIGIN } from './discover-content-corpus-pages.mjs';
+import { buildSourceCatalog, buildSourcePages } from './crawlable-sources-page.mjs';
+import { activeSourceAttributionEntries, loadManifest } from './source-attribution.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUTPUT_PATH = 'public/llms-full.txt';
@@ -238,6 +240,21 @@ export function renderComparisons() {
   ].join('\n');
 }
 
+function renderSourceDirectory(rootDir) {
+  const manifest = loadManifest(rootDir);
+  const catalog = buildSourceCatalog(activeSourceAttributionEntries(manifest), {
+    logicalProviders: manifest.logicalProviders || [],
+  });
+  const pages = buildSourcePages(catalog);
+  return [
+    '## Source provider directory',
+    '',
+    `World Monitor publishes ${catalog.length} named providers across ${pages.length} source catalog pages. Each linked page contains provider names, source hosts, origins and coverage in static HTML; no search or JavaScript is required.`,
+    '',
+    ...pages.map((page) => `- [${page.name}](${SITE_ORIGIN}${page.path}): ${page.providers.length} providers.`),
+  ].join('\n');
+}
+
 /**
  * Splice the generated Comparisons section into the hand-maintained
  * llms.txt: replace the existing section in place, or insert it ahead of
@@ -272,7 +289,9 @@ export function buildLlmsFullText({ rootDir = ROOT } = {}) {
   const introduction = [
     LLMS_FULL_GENERATED_HEADING,
     '',
-    'The sections below are produced by `npm run build:llms-full` from the comparison-page registry, glossary terms, chokepoint methodology, published chokepoint explainers, the Country Resilience Index methodology, the corrections log, and the current published ranking snapshot.',
+    'The sections below are produced by `npm run build:llms-full` from the source catalog, comparison-page registry, glossary terms, chokepoint methodology, published chokepoint explainers, the Country Resilience Index methodology, the corrections log, and the current published ranking snapshot.',
+    '',
+    renderSourceDirectory(rootDir),
     '',
     renderComparisons().trim(),
     '',

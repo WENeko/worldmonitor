@@ -4,11 +4,11 @@
 // snapshot frozen before a rule existed renders under the same rule as one
 // frozen after it.
 //
-// Plain .mjs importing only plain-JS shared modules: the freeze runs under
-// bare `node`.
+// The freeze imports this module under bare Node.js.
 
 import { publisherFamilyFor, publisherFamilyForDomain } from '../shared/publisher-families.js';
 import { validateNoHallucinatedProperNouns } from '../shared/brief-llm-core.js';
+import { resolveIso2 } from './_country-resolver.mjs';
 const BRIEF_SECTION_HEADERS = ['SITUATION NOW', 'KEY RISKS', 'OUTLOOK', 'WATCH ITEMS'];
 
 // Provenance stamp on a headline row the freeze took from the per-country
@@ -47,11 +47,10 @@ export function isBriefSectionHeader(line, { countryCode = '', countryName = '' 
   const upper = String(line || '').trim().toUpperCase().replace(/:\s*$/, '');
   if (BRIEF_SECTION_HEADERS.includes(upper)) return true;
   const country = upper.match(/^WHAT THIS MEANS FOR (.+)$/)?.[1];
-  // Legacy ISO headings are rewritten by the renderer. Named headings must
-  // equal the page's country; a section prefix alone is ordinary claim text.
   return Boolean(country && (/^[A-Z]{2}$/.test(country)
     || country === String(countryCode).trim().toUpperCase()
-    || country === String(countryName).trim().toUpperCase()));
+    || country === String(countryName).trim().toUpperCase()
+    || resolveIso2({ name: country }) === String(countryCode).trim().toUpperCase()));
 }
 
 // Briefs need grounding from at least this many DISTINCT PUBLISHERS before
@@ -153,10 +152,7 @@ export function hasBriefGrounding(rows) {
   return Array.isArray(rows) && briefGroundingGap(rows) === null;
 }
 
-// "WHAT THIS MEANS FOR NO" — the server interpolated the ISO code where the
-// name belongs (#7738). Repaired only when the code is this page's own code,
-// so a brief that genuinely discusses another country is left alone.
-const BARE_CODE_HEADING_RE = /^(WHAT THIS MEANS FOR)\s+([A-Z]{2})\s*:?$/i;
+const COUNTRY_HEADING_RE = /^(WHAT THIS MEANS FOR)\s+(.+?)\s*:?$/i;
 // Markdown the model emits and the corpus injects as text: bold/italic
 // marker pairs and ATX heading hashes. Kept as a list so the next marker is
 // one entry, not a new guard (the first round pinned `**` alone).
@@ -171,7 +167,7 @@ const MARKDOWN_HEADING_RE = /^#{1,6}\s+/;
  * - any preamble before the first contract section dropped ("INTELLIGENCE
  *   BRIEF: GE (GEORGIA) / CLASSIFICATION: CONFIDENTIAL" is model theatre, not
  *   content, and must not reach a public page);
- * - the "WHAT THIS MEANS FOR <CODE>" heading repaired to the country name.
+ * - exact country-code and country-alias headings repaired to the page name.
  * Idempotent: normalizing normalized text is a no-op.
  */
 export function normalizeBriefText(text, { countryCode = '', countryName = '' } = {}) {
@@ -189,8 +185,9 @@ export function normalizeBriefText(text, { countryCode = '', countryName = '' } 
     && !lines.slice(0, firstHeader).some((line) => /\[\d+\]/.test(line));
   const body = preambleIsTheatre ? lines.slice(firstHeader) : lines;
   const repaired = body.map((line) => {
-    const match = line.trim().match(BARE_CODE_HEADING_RE);
-    if (!match || !code || !name || match[2].toUpperCase() !== code) return line;
+    const match = line.trim().match(COUNTRY_HEADING_RE);
+    if (!match || !code || !name) return line;
+    if (match[2].toUpperCase() !== code && resolveIso2({ name: match[2] }) !== code) return line;
     return `${match[1].toUpperCase()} ${name.toUpperCase()}`;
   });
   return repaired.join('\n').trim();

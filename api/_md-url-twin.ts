@@ -80,18 +80,18 @@ export function resolveMarkdownTwinPath(req: Request): string | null {
 }
 
 const HTML_ENTITIES: Record<string, string> = {
-  nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"',
+  nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'",
 };
 
 function decodeHtmlEntities(value: string): string {
-  return value.replace(/&(nbsp|amp|lt|gt|quot|#(\d+));/gi, (_, entity: string, code: string | undefined) => {
+  return value.replace(/&(nbsp|amp|lt|gt|quot|apos|#(x[\da-f]+|\d+));/gi, (_, entity: string, code: string | undefined) => {
     if (code === undefined) return HTML_ENTITIES[entity.toLowerCase()]!;
     // `fromCodePoint`, not `fromCharCode`: the latter coerces with ToUint16, so
     // a code point above 0xFFFF wraps back under the `>= 32` guard after passing
     // it — `&#65596;` yielded a literal `<` and `&#65536;` a NUL. It also
     // truncates astral characters, decoding `&#128512;` to a private-use glyph
     // instead of the emoji. Same reasoning as src/utils/html-entities.ts.
-    const n = Number(code);
+    const n = /^x/i.test(code) ? Number.parseInt(code.slice(1), 16) : Number(code);
     const decodable = Number.isInteger(n) && n >= 32 && n <= 0x10ffff
       && !(n >= 0xd800 && n <= 0xdfff);
     return decodable ? String.fromCodePoint(n) : '';
@@ -100,6 +100,19 @@ function decodeHtmlEntities(value: string): string {
 
 function stripTags(value: string): string {
   return value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function withoutTrackingParams(href: string): string {
+  const hashIndex = href.indexOf('#');
+  const pathAndQuery = hashIndex < 0 ? href : href.slice(0, hashIndex);
+  const hash = hashIndex < 0 ? '' : href.slice(hashIndex);
+  const queryIndex = pathAndQuery.indexOf('?');
+  if (queryIndex < 0) return href;
+  // Preserve functional parameters and their URL encoding.
+  const params = pathAndQuery.slice(queryIndex + 1).split('&')
+    .filter(param => !/^utm_/i.test(new URLSearchParams(param).keys().next().value ?? ''));
+  const query = params.join('&');
+  return `${pathAndQuery.slice(0, queryIndex)}${query ? `?${query}` : ''}${hash}`;
 }
 
 export function htmlToMarkdown(html: string, fallbackTitle: string): string {
@@ -124,9 +137,16 @@ export function htmlToMarkdown(html: string, fallbackTitle: string): string {
       /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
       (_m, href: string, inner: string) => {
         const label = stripTags(inner) || href;
-        return `[${label}](${href})`;
+        // Parse decoded separators, then protect the URL from tag stripping and
+        // the document's final entity pass so each reference is decoded once.
+        const target = withoutTrackingParams(decodeHtmlEntities(href))
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const link = `[${label}](${target})`;
+        return /<div\b/i.test(inner) ? `\n\n${link}\n\n` : link;
       },
     )
+    .replace(/<dt\b[^>]*>([\s\S]*?)<\/dt>\s*<dd\b[^>]*>([\s\S]*?)<\/dd>/gi,
+      (_m, label: string, value: string) => `\n- ${stripTags(label)}: ${stripTags(value)}\n`)
     .replace(/<li\b[^>]*>([\s\S]*?)<\/li>/gi, (_m, inner: string) => `\n- ${stripTags(inner)}`)
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/p>/gi, '\n\n')

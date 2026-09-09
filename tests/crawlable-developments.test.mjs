@@ -370,3 +370,25 @@ describe('normalizeFrozenDevelopments', () => {
     assert.equal(normalizeFrozenDevelopments(undefined, {}), undefined);
   });
 });
+
+describe('brief heading country identity', () => {
+  it('rewrites exact aliases to the page name and is idempotent', () => {
+    for (const [countryCode, countryName, alias] of [
+      ['HK', 'Hong Kong', 'Hong Kong SAR China'],
+      ['CD', 'DR Congo', 'Congo - Kinshasa'],
+    ]) {
+      const input = `WHAT THIS MEANS FOR ${alias}\nA supported claim [1].`;
+      const expected = `WHAT THIS MEANS FOR ${countryName.toUpperCase()}\nA supported claim [1].`;
+      const country = { countryCode, countryName };
+      assert.equal(normalizeBriefText(input, country), expected);
+      assert.equal(normalizeBriefText(expected, country), expected);
+    }
+  });
+  it('leaves foreign names and prose unchanged', () => {
+    const country = { countryCode: 'CD', countryName: 'DR Congo' };
+    for (const heading of ['Congo - Brazzaville', 'Kinshasa', 'Congo - Kinshasa faces new risks [1]']) {
+      const input = `SITUATION NOW\nA claim [1].\nWHAT THIS MEANS FOR ${heading}`;
+      assert.equal(normalizeBriefText(input, country), input);
+    }
+  });
+});

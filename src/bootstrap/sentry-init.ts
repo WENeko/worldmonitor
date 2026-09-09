@@ -886,7 +886,9 @@ function buildSentryInitOptions(): Parameters<SentryNs['init']>[0] {
       if (
         !hasFirstParty
         && (
-          /signal timed out/.test(msg)
+          // Explicit panel reports identify an app failure even when the
+          // browser-created timeout has no first-party stack frames.
+          (/signal timed out/.test(msg) && event.tags?.kind !== 'panel_call_rejected')
           || /NotSupportedError/.test(msg)
           || /out of memory/i.test(msg)
           || /\.(?:toLowerCase|trim|indexOf|findIndex) is not a function/.test(msg)
