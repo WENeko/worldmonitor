@@ -248,6 +248,25 @@ describe('China decision-signal access tiers (#5580)', () => {
       const chinaMeta = {
         fetchedAt: Date.now() - 60_000,
         recordCount: expectation.recordCount,
+        groupStates: {
+          macro: 'available',
+          'policy-enforcement': 'available',
+          'cross-strait-activity': 'available',
+          'corporate-disclosures': expectation.recordCount === 6 ? 'available' : 'unavailable',
+          'corridor-conditions': 'available',
+          'activity-nowcast': 'available',
+        },
+        groupCounts: {
+          populated: expectation.recordCount,
+          partial: 0,
+          stale: 0,
+          unavailable: 6 - expectation.recordCount,
+          healthyQuiet: 0,
+          operationallyCovered: expectation.recordCount,
+        },
+        unavailableCauses: expectation.recordCount === 6
+          ? {}
+          : { 'corporate-disclosures': 'upstream_unavailable' },
       };
       const mainEntry = classifyMainHealth(chinaMeta);
       const { response, body } = await readSeedHealth(chinaMeta);
@@ -280,11 +299,11 @@ describe('China decision-signal access tiers (#5580)', () => {
       stale: 1,
       unavailable: 2,
       healthyQuiet: 1,
-      operationallyCovered: 5,
+      operationallyCovered: 4,
     };
     const { body } = await readSeedHealth({
       fetchedAt: Date.now() - 60_000,
-      recordCount: 5,
+      recordCount: 4,
       groupStates,
       groupCounts,
       unavailableCauses: {

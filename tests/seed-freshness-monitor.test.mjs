@@ -379,6 +379,10 @@ describe('scheduled seed freshness monitor', () => {
     }, true);
 
     assert.equal(isChinaCoveragePendingProblem(problem, now), true);
+    assert.equal(
+      isChinaCoveragePendingProblem({ ...problem, status: 'CHINA_DEGRADED' }, now),
+      true,
+    );
     assert.deepEqual(compact.pending, { chinaDecisionSignals: problem });
     assert.deepEqual(findOperationalProblems(compact, now), []);
     assert.deepEqual(findPendingDiagnostics(compact, now), [{

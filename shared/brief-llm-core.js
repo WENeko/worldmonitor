@@ -351,6 +351,7 @@ const PROPER_NOUN_JOINER = new Set(['of', 'the', 'for', 'de', 'du', 'der', 'van'
 // its canonical key for equivalence.
 const ACRONYM_EXPANSIONS = [
   ['WHO', 'World Health Organization'],
+  ['ICC', 'International Criminal Court'],
   ['UN', 'United Nations'],
   ['US', 'USA', 'United States', 'United States of America', 'America'],
   ['UK', 'United Kingdom', 'Britain', 'Great Britain'],
@@ -421,7 +422,7 @@ const DEMONYM_TO_NATION = new Map([
   ['Danish', 'Denmark'], ['Danes', 'Denmark'],
   ['Belgian', 'Belgium'], ['Belgians', 'Belgium'],
   ['Austrian', 'Austria'], ['Austrians', 'Austria'],
-  ['Filipino', 'Philippines'], ['Filipinos', 'Philippines'],
+  ['Philippine', 'Philippines'], ['Filipino', 'Philippines'], ['Filipinos', 'Philippines'],
   ['Thai', 'Thailand'], ['Thais', 'Thailand'],
   ['Indonesian', 'Indonesia'], ['Indonesians', 'Indonesia'],
   ['Nigerian', 'Nigeria'], ['Nigerians', 'Nigeria'],
@@ -496,6 +497,7 @@ const SENTENCE_START_AMBIGUOUS = new Set([
   'no', 'not', 'yes',
   'breaking', 'live', 'updated', 'latest', 'exclusive', 'just',
   'meanwhile', 'however', 'moreover', 'additionally', 'furthermore', 'still',
+  'simultaneously', 'concurrently', 'domestically',
   'with', 'without', 'on', 'in', 'at', 'by', 'for', 'over', 'under', 'about',
 ]);
 
@@ -574,7 +576,7 @@ function extractProperNounSequencesWithMeta(text) {
 
   // Normalize dotted acronyms BEFORE sentence-splitting so "U.S." isn't
   // misread as a sentence boundary or split into ['U', 'S'].
-  const preprocessed = normalizeDottedAcronyms(text);
+  const preprocessed = normalizeDottedAcronyms(text).replace(/[\u2010\u2011]/g, '-');
 
   // Split into sentences so sentence-start handling can run per-sentence.
   const sentences = preprocessed.split(/[.!?]+\s+|\n+/);
@@ -947,7 +949,7 @@ const NUMBER_FACT_WORD_SEQUENCE_RE = new RegExp(
   `\\b(?:${NUMBER_FACT_WORD_PATTERN})(?:[- ](?:${NUMBER_FACT_WORD_PATTERN}|and))*\\b(?:\\s+percent\\b)?`,
   'gi',
 );
-const DIGIT_FACT_RE = /\d[\d,]*(?:\.\d+)?(?:\s*(?:%|percent|thousands?|millions?|billions?|trillions?))?/gi;
+const DIGIT_FACT_RE = /\d[\d,]*(?:\.\d+)?(?:\s*(?:%|percent|thousands?|millions?|billions?|bil\b|trillions?))?/gi;
 const DATE_MONTH_PATTERN = 'Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?';
 const DATE_EXPRESSION_RE = new RegExp(
   `\\b(?:\\d{4}-\\d{1,2}-\\d{1,2}|\\d{1,2}[/-]\\d{1,2}(?:[/-]\\d{2,4})?|(?:${DATE_MONTH_PATTERN})\\.?\\s+\\d{1,2}(?:,?\\s+\\d{4})?|\\d{1,2}\\s+(?:${DATE_MONTH_PATTERN})\\.?\\s*(?:\\d{4})?)\\b`,
@@ -966,7 +968,7 @@ function formatNumericFact(value) {
 
 function normalizeDigitFact(raw) {
   const match = raw.trim().toLowerCase().replace(/,/g, '').match(
-    /^(\d+(?:\.\d+)?)(?:\s*(%|percent|thousands?|millions?|billions?|trillions?))?$/,
+    /^(\d+(?:\.\d+)?)(?:\s*(%|percent|thousands?|millions?|billions?|bil\b|trillions?))?$/,
   );
   if (!match) return `number:${raw.trim().toLowerCase()}`;
   const value = Number(match[1]);
@@ -974,7 +976,7 @@ function normalizeDigitFact(raw) {
   const unit = match[2];
   if (!unit) return `number:${formatNumericFact(value)}`;
   if (unit === '%' || unit === 'percent') return `number:${formatNumericFact(value)}%`;
-  const scale = NUMBER_FACT_WORD_VALUES.get(unit.replace(/s$/, ''));
+  const scale = NUMBER_FACT_WORD_VALUES.get(unit === 'bil' ? 'billion' : unit.replace(/s$/, ''));
   return scale ? `number:${formatNumericFact(value * scale)}` : `number:${formatNumericFact(value)} ${unit}`;
 }
 

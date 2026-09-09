@@ -172,15 +172,15 @@ const HEALTH_VERDICT_SNAPSHOT_TTL_SECONDS = 60;
 // Edge runtime mirror of scripts/china-coverage-manifest.mjs. Edge functions
 // cannot import scripts/; tests enforce key and status-projection parity.
 const CHINA_COVERAGE_SUMMARY_KEY = 'health:china-coverage:v1';
-// Consecutive non-healthy evaluations required before CHINA_DEGRADED is
-// reported. See projectChinaCoverageStatus for why the debounce lives here and
-// not in the summary's own `status` field.
-const CHINA_DEGRADED_MIN_CONSECUTIVE = 2;
-// The aggregate China evaluator runs hourly. Give that second observation one
-// full cycle plus one 15-minute derived-signal publication interval to arrive.
-// A repeated incident stops being pending as soon as the evaluator publishes
-// streak 2; this deadline is only the fail-closed backstop when it does not.
-const CHINA_DECISION_SIGNALS_PENDING_MS = 75 * 60 * 1_000;
+// China decision cards are useful for hours, not minutes. Keep health pending
+// for three hours after proven full operational coverage while the current partial
+// snapshot stays visible and the 15-minute producer records every attempt. The
+// same ceiling is enforced by the seed-age budget and freshness monitor.
+const CHINA_DECISION_SIGNALS_PENDING_MS = 3 * 60 * 60 * 1_000;
+const CHINA_TRANSIENT_COVERAGE_REASONS = new Set([
+  'CHINA_COVERAGE_PARTIAL',
+  'TRANSPORT_ERROR',
+]);
 const HEALTH_VERDICT_SNAPSHOT_TTL_MS = HEALTH_VERDICT_SNAPSHOT_TTL_SECONDS * 1_000;
 const HEALTH_VERDICT_REFRESH_LOCK_KEY = `${HEALTH_VERDICT_SNAPSHOT_KEY}:refresh-lock`;
 // The sweep can consume its full 8s timeout, followed by a 4s failure-log read
@@ -795,7 +795,7 @@ const SEED_META = {
   // but no other unavailable cause.
   chinaDecisionSignals: {
     key: 'seed-meta:intelligence:china-decision-signals',
-    maxStaleMin: 60,
+    maxStaleMin: 180,
     minRecordCount: 6,
     decisionGroups: CHINA_DECISION_SIGNAL_GROUP_IDS,
   },
@@ -2466,8 +2466,16 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
       partialGroups: decisionDiagnostics.partialGroups,
       staleGroups: decisionDiagnostics.staleGroups,
       unavailableGroups: decisionDiagnostics.unavailableGroups,
+      ...(decisionDiagnostics.coverageLastSuccessAt
+        ? { coverageLastSuccessAt: decisionDiagnostics.coverageLastSuccessAt }
+        : {}),
+      ...(decisionDiagnostics.coverageFailureInvalidReason
+        ? { coverageFailureInvalidReason: decisionDiagnostics.coverageFailureInvalidReason }
+        : {}),
     }
-    : null;
+    : seedCfg.decisionGroups
+      ? { coverageFailureInvalidReason: 'GROUP_DIAGNOSTICS_INVALID' }
+      : null;
   // Per-market coverage: optional { status, completedPages, failedPages, completionRatio, rejectedCount, failureReasons, retailers }
   // written by consumer-prices publish.ts and other seeders that track partial completion.
   // null when the seeder didn't write coverage fields.
@@ -2846,6 +2854,10 @@ function classifyKey(name, redisKey, opts, ctx) {
     seedCfg?.requiredRedistributionPolicyVersion != null
     && redistributionPolicyVersion !== seedCfg.requiredRedistributionPolicyVersion
   ) status = 'POLICY_INCOMPATIBLE';
+  else if (
+    decisionGroups?.coverageFailureInvalidReason
+    || decisionGroups?.staleGroups?.length > 0
+  ) status = 'COVERAGE_PARTIAL';
   // Coverage threshold: producers that know their canonical shape size can
   // declare minRecordCount. When the writer reports a count below threshold
   // (e.g., 10/13 chokepoints because portwatch dropped some), this degrades
@@ -2899,8 +2911,7 @@ function classifyKey(name, redisKey, opts, ctx) {
   // Fires AFTER all earlier failure paths so STALE_SEED, COVERAGE_PARTIAL,
   // EMPTY_*, etc. take precedence — STALE_CONTENT is "the seeder is healthy
   // and the data set is sized correctly, but the content itself is older than
-  // the seeder's content-age budget" (e.g. WHO Disease Outbreak News hasn't
-  // published in >9 days for the disease-outbreaks pilot).
+  // the seeder's content-age budget".
   // The opt-in signal is contentAge being non-null in seed-meta (presence of
   // meta.maxContentAgeMin); legacy seeders without it skip this branch.
   // 2026-05-04 health-readiness plan, Sprint 1.
@@ -3100,7 +3111,7 @@ const STATUS_COUNTS = {
 };
 
 function healthStatusBucket(entry, now) {
-  if (entry?.status === 'COVERAGE_PARTIAL'
+  if (['COVERAGE_PARTIAL', 'CHINA_DEGRADED'].includes(entry?.status)
     && typeof entry.chinaCoveragePendingUntil === 'string'
     && !isExpiredDeadline(entry.chinaCoveragePendingUntil, now)) return 'ok';
   if (entry?.status === 'SEED_ERROR'
@@ -3193,7 +3204,7 @@ function isValidChinaCoverageSummary(candidate) {
   return candidate.status === expectedStatus;
 }
 
-function projectChinaCoverageStatus(raw, readError = false) {
+function projectChinaCoverageStatus(raw, readError = false, now = Date.now()) {
   if (readError) {
     return { status: 'REDIS_PARTIAL', chinaStatus: null, reason: 'SUMMARY_READ_FAILED' };
   }
@@ -3204,37 +3215,33 @@ function projectChinaCoverageStatus(raw, readError = false) {
     return { status: 'CHINA_UNAVAILABLE', chinaStatus: 'unavailable', reason: 'SUMMARY_INVALID' };
   }
 
-  let status = {
+  const status = {
     healthy: 'OK',
     degraded: 'CHINA_DEGRADED',
     unavailable: 'CHINA_UNAVAILABLE',
   }[candidate.status] ?? 'CHINA_UNAVAILABLE';
-  // Debounce DEGRADED only. The evaluator samples 16 sources once an hour, so a
-  // source that is degraded at the sampling instant and healthy moments later
-  // pins CHINA_DEGRADED for a full cycle — measured at ~50 minutes for a
-  // two-minute miss on 2026-08-25. Requiring a second consecutive observation
-  // costs one cycle of detection latency on a real outage, which is affordable
-  // here: this is a warn, and every source underneath carries its own probe with
-  // its own budget.
-  //
-  // UNAVAILABLE is never debounced — it is the more severe verdict, and holding
-  // it back would be the expensive direction to be wrong in.
-  //
-  // A summary with NO streak field (written before the producer shipped this)
-  // alarms exactly as it did before. Absent evidence must not read as evidence
-  // of health, or the rollout window would silence a genuine outage.
-  if (
-    status === 'CHINA_DEGRADED'
-    && candidate.degradedStreak === CHINA_DEGRADED_MIN_CONSECUTIVE - 1
-    && typeof candidate.degradedProblemKey === 'string'
-  ) {
-    status = 'OK';
-  }
+  // Hold DEGRADED only while the last proven healthy evaluation remains valid.
+  // Failed evaluations never advance that clock. UNAVAILABLE and missing or
+  // malformed timing evidence remain immediate.
+  const evaluatedAt = Date.parse(candidate.evaluatedAt ?? '');
+  const validLastHealthy = status === 'CHINA_DEGRADED'
+    && Number.isSafeInteger(candidate.lastHealthyAt)
+    && candidate.lastHealthyAt > 0
+    && candidate.lastHealthyAt <= evaluatedAt
+    && evaluatedAt <= now;
+  const pendingUntil = validLastHealthy
+    ? candidate.lastHealthyAt + CHINA_DECISION_SIGNALS_PENDING_MS
+    : null;
   const problems = Array.isArray(candidate.entries)
     ? candidate.entries
       .filter((entry) => entry?.launchStatus === 'launched' && entry?.status !== 'healthy')
       .map((entry) => ({ id: entry.id, status: entry.status, reasonCodes: entry.reasonCodes ?? [] }))
     : [];
+  const transientCoverageOnly = problems.length > 0 && problems.every((problem) => (
+    problem.status === 'degraded'
+    && problem.reasonCodes.length > 0
+    && problem.reasonCodes.every((reason) => CHINA_TRANSIENT_COVERAGE_REASONS.has(reason))
+  ));
   return {
     status,
     chinaStatus: candidate.status,
@@ -3248,15 +3255,21 @@ function projectChinaCoverageStatus(raw, readError = false) {
     ...(typeof candidate.degradedProblemKey === 'string'
       ? { degradedProblemKey: candidate.degradedProblemKey }
       : {}),
+    ...(Number.isSafeInteger(candidate.lastHealthyAt)
+      ? { lastHealthyAt: candidate.lastHealthyAt }
+      : {}),
+    ...(transientCoverageOnly && pendingUntil !== null && now < pendingUntil
+      ? { chinaCoveragePendingUntil: new Date(pendingUntil).toISOString() }
+      : {}),
     ...(problems.length > 0 ? { problems } : {}),
   };
 }
 
-function composeChinaCoverageStatus(entry, raw, readError = false) {
+function composeChinaCoverageStatus(entry, raw, readError = false, now = Date.now()) {
   if (!entry || !['OK', 'STALE_SEED', 'SEED_ERROR'].includes(entry.status)) return entry;
 
   const seedStatus = entry.status;
-  const projected = projectChinaCoverageStatus(raw, readError);
+  const projected = projectChinaCoverageStatus(raw, readError, now);
   if (seedStatus === 'OK') return { ...entry, ...projected };
 
   // Preserve writer-health failures when the last summary was healthy, but do
@@ -3269,48 +3282,29 @@ function composeChinaCoverageStatus(entry, raw, readError = false) {
   return { ...entry, ...projected, seedStatus };
 }
 
-function composeChinaDecisionSignalsStatus(entry, chinaCoverageEntry, now) {
-  if (
-    entry?.status !== 'COVERAGE_PARTIAL'
-    || chinaCoverageEntry?.status !== 'OK'
-    || chinaCoverageEntry?.chinaStatus !== 'degraded'
-    || chinaCoverageEntry?.degradedStreak !== CHINA_DEGRADED_MIN_CONSECUTIVE - 1
-  ) return entry;
+function composeChinaDecisionSignalsStatus(entry, _chinaCoverageEntry, now) {
+  if (entry?.status !== 'COVERAGE_PARTIAL') return entry;
 
-  const chinaProblems = Array.isArray(chinaCoverageEntry.problems)
-    ? chinaCoverageEntry.problems
-    : [];
   const decisionProblems = Array.isArray(entry.decisionGroups?.unavailableGroups)
     ? entry.decisionGroups.unavailableGroups
     : [];
+  const lastSuccessAt = entry.decisionGroups?.coverageLastSuccessAt;
   const requiredDecisionGroups = SEED_META.chinaDecisionSignals.minRecordCount;
-  const [chinaProblem] = chinaProblems;
-  const [decisionProblem] = decisionProblems;
-  const sameHeldCorporateIncident = chinaProblems.length === 1
-    && chinaProblem?.id === 'market.china-corporate-disclosures'
-    && chinaProblem?.status === 'degraded'
-    && Array.isArray(chinaProblem?.reasonCodes)
-    && chinaProblem.reasonCodes.length === 1
-    && chinaProblem.reasonCodes[0] === 'CHINA_COVERAGE_PARTIAL'
-    && decisionProblems.length === 1
-    && decisionProblem?.id === 'corporate-disclosures'
-    && decisionProblem?.unavailableCause === 'upstream_unavailable'
+  const validCoverageShortfall = decisionProblems.length > 0
+    && !entry.decisionGroups?.coverageFailureInvalidReason
+    && !entry.decisionGroups?.staleGroups?.length
     && entry.minRecordCount === requiredDecisionGroups
-    && entry.records === requiredDecisionGroups - 1
-    && entry.decisionGroups?.operationallyCovered === entry.records;
-  if (!sameHeldCorporateIncident) return entry;
+    && entry.records === entry.decisionGroups?.operationallyCovered
+    && entry.records > 0
+    && entry.records < requiredDecisionGroups;
+  if (validCoverageShortfall) {
+    const pendingUntil = lastSuccessAt + CHINA_DECISION_SIGNALS_PENDING_MS;
+    if (Number.isSafeInteger(lastSuccessAt) && now < pendingUntil) {
+      return { ...entry, chinaCoveragePendingUntil: new Date(pendingUntil).toISOString() };
+    }
+  }
 
-  const evaluatedAt = Date.parse(chinaCoverageEntry.evaluatedAt);
-  const pendingUntil = evaluatedAt + CHINA_DECISION_SIGNALS_PENDING_MS;
-  if (!Number.isFinite(evaluatedAt) || evaluatedAt > now || now >= pendingUntil) return entry;
-
-  // chinaDecisionSignals is derived from the same corporate snapshot the
-  // aggregate evaluator just held for its first degraded observation. Keep the
-  // derived coverage diagnosis visible, but bucket both projections together;
-  // otherwise one source incident bypasses the debounce through a second key
-  // and flips the fleet verdict despite retained last-good data. The deadline
-  // prevents a stalled evaluator from holding this projection indefinitely.
-  return { ...entry, chinaCoveragePendingUntil: new Date(pendingUntil).toISOString() };
+  return entry;
 }
 
 function composeScorecardReadModelStatus(entry, raw, readError = false) {
@@ -3395,7 +3389,7 @@ const ENTRY_SOFTENING_DEADLINES = [
   { field: 'contentFreshnessPendingUntil', kind: 'content', status: null },
   { field: 'staleContentGraceUntil', kind: 'content', status: null },
   { field: 'sourceFailurePendingUntil', kind: 'source', status: 'SEED_ERROR' },
-  { field: 'chinaCoveragePendingUntil', kind: 'source', status: 'COVERAGE_PARTIAL' },
+  { field: 'chinaCoveragePendingUntil', kind: 'source', status: null },
 ];
 
 function entryDeadlineRaw(entry, { field, status }) {
@@ -3946,7 +3940,12 @@ export async function handleHealth(req, ctx, options = {}) {
       totalChecks++;
       let entry = classifyKey(name, redisKey, opts, classifyCtx);
       if (name === 'chinaCoverage') {
-        entry = composeChinaCoverageStatus(entry, chinaCoverageRaw, Boolean(chinaCoverageResult?.error));
+        entry = composeChinaCoverageStatus(
+          entry,
+          chinaCoverageRaw,
+          Boolean(chinaCoverageResult?.error),
+          evaluationNow,
+        );
       }
       if (name === 'scorecardFiveFactor') {
         entry = composeScorecardReadModelStatus(

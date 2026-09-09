@@ -90,11 +90,11 @@ export const STALE_CONTENT_GRACE_SKEW_SLACK_MS = 5 * 60 * 1000;
 export const MAX_STALE_CONTENT_GRACE_MS = 3 * 60 * 60 * 1000 + STALE_CONTENT_GRACE_SKEW_SLACK_MS;
 // Mirrors CHINA_DECISION_SIGNALS_PENDING_MS in api/health.js, with the same
 // cross-machine clock-skew allowance used for stale-content grace. The API
-// keeps a first corporate-disclosures miss diagnostic-only while the hourly
-// China evaluator confirms it; this monitor must consume that bounded verdict
-// instead of turning the pending entry back into an operational failure.
+// keeps health pending for three hours after proven full operational coverage
+// while producer retries remain diagnostic-only. This monitor must consume the
+// bounded verdict instead of turning it back into an operational failure.
 export const CHINA_COVERAGE_PENDING_SKEW_SLACK_MS = 5 * 60 * 1000;
-export const MAX_CHINA_COVERAGE_PENDING_MS = 75 * 60 * 1000
+export const MAX_CHINA_COVERAGE_PENDING_MS = 3 * 60 * 60 * 1000
   + CHINA_COVERAGE_PENDING_SKEW_SLACK_MS;
 
 function hasActiveBoundedDeadline(raw, now, maxWindowMs) {
@@ -119,7 +119,7 @@ export function isStaleContentGraceProblem(problem, now = Date.now()) {
 }
 
 export function isChinaCoveragePendingProblem(problem, now = Date.now()) {
-  if (problem?.status !== 'COVERAGE_PARTIAL') return false;
+  if (!['COVERAGE_PARTIAL', 'CHINA_DEGRADED'].includes(problem?.status)) return false;
   return hasActiveBoundedDeadline(
     problem.chinaCoveragePendingUntil,
     now,

@@ -197,7 +197,9 @@ const SEED_DOMAINS = {
   'economic:china-macro':     { key: 'seed-meta:economic:china-macro-transport', intervalMin: 2160 },
   'economic:china-release-calendar': { key: 'seed-meta:economic:china-release-calendar', intervalMin: 2160 },
   'china:policy-events':      { key: 'seed-meta:china:policy-events',      intervalMin: 360 },
-  'intelligence:china-decision-signals': { key: 'seed-meta:intelligence:china-decision-signals', intervalMin: 30, minRecordCount: 6 },
+  // The producer still runs every 15min. seed-health stales at intervalMin*2,
+  // so 90 mirrors the three-hour operational-coverage budget in api/health.js.
+  'intelligence:china-decision-signals': { key: 'seed-meta:intelligence:china-decision-signals', intervalMin: 90, minRecordCount: 6 },
   'economic:bis-dsr':                  { key: 'seed-meta:economic:bis-dsr',                  intervalMin: 720 }, // 12h cron; only written when DSR slice fetched fresh entries
   'economic:bis-property-residential': { key: 'seed-meta:economic:bis-property-residential', intervalMin: 720 }, // 12h cron; only written when SPP slice fetched fresh entries
   'economic:bis-property-commercial':  { key: 'seed-meta:economic:bis-property-commercial',  intervalMin: 720 }, // 12h cron; only written when CPP slice fetched fresh entries
@@ -658,6 +660,18 @@ export async function handleSeedHealth(req, options = {}) {
     const ageMs = evaluationNow - (meta.fetchedAt || 0);
     const recordCount = parseFiniteRecordCount(meta.recordCount);
     const rankableRecordCount = parseRankableRecordCount(meta);
+    const chinaDecisionDiagnostics = domain === 'intelligence:china-decision-signals'
+      ? projectChinaDecisionGroupDiagnostics(meta, {
+          groupIds: CHINA_DECISION_SIGNAL_GROUP_IDS,
+          allowedStates: CHINA_DECISION_SIGNAL_STATES,
+          healthyQuietCause: CHINA_DECISION_HEALTHY_QUIET_CAUSE,
+        })
+      : null;
+    const chinaDecisionDiagnosticsInvalid = domain === 'intelligence:china-decision-signals'
+      && chinaDecisionDiagnostics === null;
+    const chinaDecisionFailureEvidenceInvalid = Boolean(
+      chinaDecisionDiagnostics?.coverageFailureInvalidReason,
+    );
     const redistributionPolicyVersion = Number.isInteger(meta.redistributionPolicyVersion)
       ? meta.redistributionPolicyVersion
       : null;
@@ -671,7 +685,10 @@ export async function handleSeedHealth(req, options = {}) {
       && redistributionPolicyVersion !== cfg.requiredRedistributionPolicyVersion;
     const coveragePartial = recordCoveragePartial
       || rankableCoveragePartial
-      || poolCoveragePartial;
+      || poolCoveragePartial
+      || chinaDecisionDiagnosticsInvalid
+      || chinaDecisionFailureEvidenceInvalid
+      || (chinaDecisionDiagnostics?.staleGroups.length ?? 0) > 0;
     // Source-specific seed projections retain their last-good records while
     // reporting a current upstream failure through sourceState. Treat that as
     // an immediate operator error instead of waiting for the freshness window.
@@ -745,7 +762,7 @@ export async function handleSeedHealth(req, options = {}) {
       || probe?.ok === false
       || contentFreshnessInvalid
       || contentFreshnessStale;
-    if (stale || poolCoveragePartial) staleCount++;
+    if (stale || coveragePartial) staleCount++;
     // A policy mismatch is an operator error only once the producer has
     // actually activated. Before the first publish the field is legitimately
     // absent, so escalating then would drive `overall: degraded` (HTTP 503) for
@@ -819,12 +836,8 @@ export async function handleSeedHealth(req, options = {}) {
       seeds[domain].lastErrorCode = meta.lastErrorCode;
     }
     if (domain === 'intelligence:china-decision-signals') {
-      const diagnostics = projectChinaDecisionGroupDiagnostics(meta, {
-        groupIds: CHINA_DECISION_SIGNAL_GROUP_IDS,
-        allowedStates: CHINA_DECISION_SIGNAL_STATES,
-        healthyQuietCause: CHINA_DECISION_HEALTHY_QUIET_CAUSE,
-      });
-      if (diagnostics) Object.assign(seeds[domain], diagnostics);
+      if (chinaDecisionDiagnostics) Object.assign(seeds[domain], chinaDecisionDiagnostics);
+      else seeds[domain].coverageFailureInvalidReason = 'GROUP_DIAGNOSTICS_INVALID';
     }
   }
 

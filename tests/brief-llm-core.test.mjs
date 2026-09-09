@@ -17,6 +17,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
 import {
+  validateNoHallucinatedFacts,
+  validateNoHallucinatedProperNouns,
   WHY_MATTERS_SYSTEM,
   WHY_MATTERS_V1_MAX_CHARS,
   WHY_MATTERS_V1_MIN_CHARS,
@@ -392,6 +394,21 @@ describe('parseWhyMattersV2 — multi-sentence, analyst-path only', () => {
 });
 
 describe('validateNoHallucinatedProperNouns — May 19 regression + class', () => {
+  it('does not treat sentence-opening connective adverbs as invented names', async () => {
+    const { validateNoHallucinatedProperNouns: validate } = await import('../shared/brief-llm-core.js');
+    for (const adverb of ['Simultaneously', 'Concurrently', 'Domestically']) {
+      assert.equal(validate(`${adverb}, Finland faces disruption.`, 'Finland faces disruption.', { failClosed: true }).ok, true);
+      assert.equal(validate(`${adverb}, Tamar faces disruption.`, 'Finland faces disruption.', { failClosed: true }).ok, false);
+      assert.equal(validate(`The company ${adverb} faces disruption.`, 'Finland faces disruption.', { failClosed: true }).ok, false);
+    }
+  });
+  it('treats typographic hyphens in the same source name as equivalent', async () => {
+    const { validateNoHallucinatedProperNouns: validate } = await import('../shared/brief-llm-core.js');
+    for (const hyphen of ['\u2010', '\u2011']) {
+      assert.equal(validate(`The El Niño${hyphen}related flooding continues.`, 'El Niño-related flooding', { failClosed: true }).ok, true);
+      assert.equal(validate(`The El Niño${hyphen}related flooding continues.`, 'Tamar operations resume', { failClosed: true }).ok, false);
+    }
+  });
   let validateNoHallucinatedProperNouns;
   let extractProperNounSequences;
   before(async () => {
@@ -872,5 +889,19 @@ describe('coordinating and is grammar, not a name joiner', () => {
       ).ok,
       false,
     );
+  });
+});
+
+describe('captured country headline spelling', () => {
+  it('grounds Philippine adjectives and the ICC expansion without licensing other countries or courts', () => {
+    assert.equal(validateNoHallucinatedProperNouns('The Philippine defense chief called out China.', 'Philippines defence chief calls out China', { failClosed: true }).ok, true);
+    assert.equal(validateNoHallucinatedProperNouns('The International Criminal Court hears calls for reparations.', 'ICC hears calls for reparations', { failClosed: true }).ok, true);
+    assert.equal(validateNoHallucinatedProperNouns('The International Court of Justice hears calls for reparations.', 'ICC hears calls for reparations', { failClosed: true }).ok, false);
+    assert.equal(validateNoHallucinatedProperNouns('The Philippine defense chief called out China.', 'Sudan defence chief calls out China', { failClosed: true }).ok, false);
+  });
+  it('normalizes the captured bil abbreviation while rejecting a different amount', () => {
+    assert.equal(validateNoHallucinatedFacts('The plan costs US$34 billion.', 'Plan costs US$34bil').ok, true);
+    assert.equal(validateNoHallucinatedFacts('The plan costs US$35 billion.', 'Plan costs US$34bil').ok, false);
+    assert.equal(validateNoHallucinatedFacts('The plan costs US$34 billion.', 'Plan costs US$34').ok, false);
   });
 });

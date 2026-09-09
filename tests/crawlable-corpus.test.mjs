@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, it } from 'node:test';
+import { brotliCompressSync, constants as zlibConstants } from 'node:zlib';
 
 import { Window } from 'happy-dom';
 import ts from 'typescript';
@@ -213,6 +214,22 @@ function assertPulseFixtureShape(fixture, live) {
           }, `chokepoints.${id}`);
         }
       }
+      continue;
+    }
+    if (section === 'signalConvergence') {
+      for (const snapshot of [fixture, live]) {
+        assert.ok(Array.isArray(snapshot.signalConvergence.ciiGeoConvergenceLeaders));
+        for (const leader of snapshot.signalConvergence.ciiGeoConvergenceLeaders) {
+          assertPulseRecordFields(leader, {
+            code: 'string', geoConvergence: 'number', instabilityScore: 'string', asOf: 'string',
+          }, 'signalConvergence.ciiGeoConvergenceLeaders[]');
+        }
+      }
+      assert.deepEqual(
+        pulseSectionShape({ ...fixture[section], ciiGeoConvergenceLeaders: [] }),
+        pulseSectionShape({ ...live[section], ciiGeoConvergenceLeaders: [] }),
+        `fixture section ${section} nested shape must match the committed snapshot`,
+      );
       continue;
     }
     assert.deepEqual(
@@ -1766,6 +1783,7 @@ describe('crawlable corpus generator', () => {
 
   it('advances the sources lastmod for every catalog identity input', () => {
     assert.deepEqual(SOURCE_CATALOG_LASTMOD_PATHS, [
+      'scripts/crawlable-sources-search.mjs',
       'scripts/source-catalog-identity.mjs',
       'shared/source-geography.json',
       'shared/publisher-families.js',
@@ -1945,7 +1963,8 @@ describe('crawlable corpus generator', () => {
       assert.equal(manifest.sections.research.count, 1);
       assert.equal(manifest.sections.useCases.count, 3);
   assert.equal(manifest.sections.comparisons.count, 13);
-      assert.equal(manifest.sections.sources.count, 1);
+      assert.equal(manifest.sections.sources.count, manifest.sections.sources.routes.length + 1);
+      assert.ok(manifest.sections.sources.routes.length > 1);
       assert.equal(manifest.generatorContentVersion, '2026-09-01');
       const sitemapEntries = buildSitemapEntries({
         repoRoot,
@@ -1963,6 +1982,9 @@ describe('crawlable corpus generator', () => {
           .map((entry) => new URL(entry.loc).pathname),
       );
       assert.ok(corpusLocations.has('/sources/'), 'root sitemap must publish the sources catalog');
+      for (const route of manifest.sections.sources.routes) {
+        assert.ok(corpusLocations.has(route), `${route} must be published in the sitemap`);
+      }
       const manifestLocations = new Set([
         manifest.sections.countries.index,
         ...manifest.sections.countries.routes,
@@ -3665,50 +3687,51 @@ describe('crawlable corpus generator', () => {
       );
 
       const sourcesPage = read(outDir, 'sources/index.html');
+      const sourcePages = manifest.sections.sources.routes.map((route) => ({
+        route, html: read(outDir, `${route.slice(1)}index.html`),
+      }));
+      const sourcesCatalogHtml = sourcePages.map(({ html }) => html).join('\n');
+      for (const { route, html } of [{ route: '/sources/', html: sourcesPage }, ...sourcePages]) {
+        const rawBytes = Buffer.byteLength(html, 'utf8');
+        const brotliBytes = brotliCompressSync(Buffer.from(html), {
+          params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 11 },
+        }).length;
+        // After splitting: hub 60 KB; largest leaf 100 KB / 12.3 KB Brotli.
+        // New providers add pages automatically. These limits guard template bloat.
+        assert.ok(rawBytes <= 150_000, `${route} raw size ${rawBytes} B exceeds 150000 B`);
+        assert.ok(brotliBytes <= 20_000, `${route} Brotli size ${brotliBytes} B exceeds 20000 B`);
+        assert.ok((html.match(/<[a-z][^>]*>/gi) || []).length <= 1_200, `${route} exceeds the 1200 opening-tag rendering budget`);
+        assert.ok((html.match(/class="provider-card"/g) || []).length <= 60, `${route} must paginate beyond 60 providers`);
+        assert.ok(html.includes(`rel="canonical" href="https://www.worldmonitor.app${route}"`));
+      }
+      assert.doesNotMatch(sourcesPage, /class="provider-card"/, 'the directory must not eagerly render all provider cards');
       const sourceNodes = jsonLdObjects(sourcesPage);
-      const providerList = sourceNodes.find((node) => node['@type'] === 'CollectionPage').mainEntity;
-      assert.equal(providerList.itemListOrder, 'https://schema.org/ItemListUnordered');
-      // #7869: ListItems, not bare strings. Display names repeat across the real
-      // catalog (one publisher reached through several hosts), so the anchor url
-      // is what keeps the elements distinct and the count honest.
-      assert.deepEqual(
-        providerList.itemListElement.map((entry) => ({ type: entry['@type'], name: entry.name, position: entry.position })),
-        corpusData.sourceCatalog.map((provider, index) => ({ type: 'ListItem', name: provider.displayName, position: index + 1 })),
-      );
-      assert.equal(providerList.numberOfItems, providerList.itemListElement.length);
-      const providerAnchors = providerList.itemListElement.map((entry) => {
-        const url = new URL(entry.url);
-        assert.equal(url.pathname, '/sources/', `${entry.name} must point at the page that enumerates it`);
-        assert.ok(url.hash.startsWith('#provider-'), `${entry.name} must carry a provider fragment`);
-        return url.hash.slice(1);
-      });
-      assert.equal(new Set(providerAnchors).size, providerAnchors.length, 'two entries must never share one anchor');
-      // Land each fragment on the card for THAT provider, not merely on some
-      // card: an anchor map that permuted its urls across the catalog would
-      // satisfy "every fragment resolves" while sending every citation to the
-      // wrong source. data-provider is the card's own copy of the catalog key.
-      // Decode rather than re-escape: the generator's escapeHtml also covers `'`
-      // (L'Orient Today), and a second copy of that table in the test would be
-      // one more thing to keep in step with the one that matters.
-      const unescapeAttribute = (value) => value
-        .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-      const cardProviderByAnchor = new Map(
-        [...sourcesPage.matchAll(/<article class="provider-card" id="([^"]+)" data-provider="([^"]*)"/g)]
-          .map((match) => [match[1], unescapeAttribute(match[2])]),
-      );
-      providerAnchors.forEach((anchor, index) => {
-        const expected = corpusData.sourceCatalog[index].provider;
-        assert.ok(
-          cardProviderByAnchor.has(anchor),
-          `${anchor} must name a card in the rendered page, or the ListItem url is a dead fragment`,
-        );
-        assert.equal(
-          cardProviderByAnchor.get(anchor),
-          expected,
-          `the ListItem for ${expected} must point at that provider's own card`,
-        );
-      });
+      const directoryList = sourceNodes.find((node) => node['@type'] === 'CollectionPage').mainEntity;
+      assert.equal(directoryList.numberOfItems, sourcePages.length);
+      assert.deepEqual(directoryList.itemListElement.map((entry) => new URL(entry.url).pathname), manifest.sections.sources.routes);
+      const unescapeAttribute = decodeHtmlAttribute;
+      const listedProviders = [];
+      const listedUrls = [];
+      for (const { route, html } of sourcePages) {
+        assert.ok(sourcesPage.includes(`href="${route}"`), `${route} must be linked from the no-script directory`);
+        const list = jsonLdObjects(html).find((node) => node['@type'] === 'CollectionPage').mainEntity;
+        const cards = new Map([...html.matchAll(/<article class="provider-card" id="([^"]+)" data-provider="([^"]*)"/g)]
+          .map((match) => [match[1], unescapeAttribute(match[2])]));
+        assert.equal(list.numberOfItems, cards.size);
+        assert.equal(list.itemListOrder, 'https://schema.org/ItemListUnordered');
+        list.itemListElement.forEach((entry, index) => {
+          assert.equal(entry['@type'], 'ListItem');
+          assert.equal(entry.position, index + 1);
+          const url = new URL(entry.url);
+          assert.equal(url.pathname, route);
+          const provider = cards.get(url.hash.slice(1));
+          assert.ok(provider, `${entry.url} must resolve to its static provider card`);
+          assert.equal(entry.name, corpusData.sourceCatalog.find((item) => item.provider === provider).displayName);
+          listedProviders.push(provider);
+          listedUrls.push(url.pathname + url.hash);
+        });
+      }
+      assert.deepEqual([...listedProviders].sort(), corpusData.sourceCatalog.map((provider) => provider.provider).sort());
       const catalog = sourceNodes.find((node) => node['@type'] === 'DataCatalog');
       assert.equal(catalog.dataset.length, corpusData.crises.length + 1);
       for (const dataset of catalog.dataset) {
@@ -3747,7 +3770,7 @@ describe('crawlable corpus generator', () => {
       assert.match(sourcesPage, />Country covered</);
       assert.match(sourcesPage, /data-source-catalog/);
       assert.match(sourcesPage, /data-source-filter="all"/);
-      const renderedProviders = [...sourcesPage.matchAll(/data-provider="([^"]+)"/g)]
+      const renderedProviders = [...sourcesCatalogHtml.matchAll(/data-provider="([^"]+)"/g)]
         .map((match) => match[1]);
       assert.equal(
         renderedProviders.length,
@@ -3765,203 +3788,166 @@ describe('crawlable corpus generator', () => {
         'sources page must render the exact active provider set from the attribution manifest',
       );
       assert.match(
-        sourcesPage,
+        sourcesCatalogHtml,
         /data-provider="L&#39;Orient Today"[\s\S]*?lorientlejour\.com/,
         "sources page must list L'Orient Today under its own host",
       );
       assert.match(
-        sourcesPage,
+        sourcesCatalogHtml,
         /data-provider="Annahar"[\s\S]*?annahar\.com/,
         'sources page must list Annahar under its own host',
       );
       assert.match(
-        sourcesPage,
+        sourcesCatalogHtml,
         /data-provider="OKO.press"[\s\S]*?oko\.press/,
         'sources page must list OKO.press under its own host',
       );
       assert.match(
-        sourcesPage,
+        sourcesCatalogHtml,
         /data-provider="PAP"[\s\S]*?pap\.pl/,
         'sources page must list PAP under its own host',
       );
       assert.doesNotMatch(
-        sourcesPage,
+        sourcesCatalogHtml,
         /data-provider="news\.google\.com"|<h3>Google News<\/h3>/,
         'sources page must not list Google News as a publisher',
       );
       assert.doesNotMatch(
-        sourcesPage,
+        sourcesCatalogHtml,
         /FeedBurner-hosted publishers|<h3>FeedBurner/,
         'sources page must not list FeedBurner as a publisher',
       );
       assert.match(
-        sourcesPage,
+        sourcesCatalogHtml,
         /data-provider="NDTV"[\s\S]*?Origin: India[\s\S]*?Covers: India/,
         'NDTV must appear as an Indian publisher with India coverage',
       );
       assert.match(
-        sourcesPage,
+        sourcesCatalogHtml,
         /<h3>BBC<\/h3>[\s\S]*?Origin: United Kingdom[\s\S]*?Covers:[^<]*India/,
         'BBC Hindi must keep BBC origin while declaring India coverage',
       );
       assert.match(
-        sourcesPage,
+        sourcesCatalogHtml,
         /<h3>Reuters<\/h3>[\s\S]*?Origin: United Kingdom[\s\S]*?Covers:[^<]*India/,
         'India-focused Reuters routes must stay Reuters with India coverage',
       );
       assert.doesNotMatch(
-        sourcesPage,
+        sourcesCatalogHtml,
         /via Google News|acquisition transport/i,
         'the public catalog must not expose feed transport mechanics',
       );
-      const renderedDomains = [...sourcesPage.matchAll(/data-source-domain="([^"]+)"/g)]
+      const renderedDomains = [...sourcesCatalogHtml.matchAll(/data-source-domain="([^"]+)"/g)]
         .map((match) => match[1]);
       assert.equal(renderedDomains.length, activeProviderNames.size);
       assert.ok(renderedDomains.every((domain) => SOURCE_DOMAIN_IDS.has(domain)));
-      const renderedKinds = [...sourcesPage.matchAll(/data-source-kind="([^"]+)"/g)]
+      const renderedKinds = [...sourcesCatalogHtml.matchAll(/data-source-kind="([^"]+)"/g)]
         .map((match) => match[1]);
-      const renderedCountries = [...sourcesPage.matchAll(/data-source-country="([^"]+)"/g)]
+      const renderedCountries = [...sourcesCatalogHtml.matchAll(/data-source-country="([^"]+)"/g)]
         .map((match) => match[1]);
       assert.equal(renderedCountries.length, activeProviderNames.size);
       assert.ok(renderedCountries.every((country) => /^[a-z]{2}$|^intl$/.test(country)));
-      const renderedCoverage = [...sourcesPage.matchAll(/data-source-coverage="([^"]*)"/g)]
+      const renderedCoverage = [...sourcesCatalogHtml.matchAll(/data-source-coverage="([^"]*)"/g)]
         .map((match) => match[1]);
       assert.equal(renderedCoverage.length, activeProviderNames.size);
       assert.doesNotMatch(
-        sourcesPage,
+        sourcesCatalogHtml,
         /audited upstream|audited &amp; attributed/i,
         'inventory reconciliation must not be presented as completed rights review',
       );
+      const searchIndex = JSON.parse(read(outDir, 'sources/search-index.json'));
+      assert.equal(searchIndex.length, activeProviderNames.size);
+      assert.deepEqual(searchIndex.map((entry) => entry.url).sort(), listedUrls.sort(), 'search must index every static provider exactly once');
+      for (const entry of searchIndex) {
+        const url = new URL(entry.url, 'https://www.worldmonitor.app');
+        const html = read(outDir, `${url.pathname.slice(1)}index.html`);
+        assert.ok(html.includes(`id="${url.hash.slice(1)}"`), `${entry.url} must resolve`);
+      }
       const filterScript = [...sourcesPage.matchAll(/<script nonce="wm-static-bootstrap">([\s\S]*?)<\/script>/g)].at(-1)?.[1];
-      assert.ok(filterScript, 'sources page must ship its progressive filter script');
+      assert.ok(filterScript);
       const window = new Window({ url: 'https://www.worldmonitor.app/sources/' });
       window.document.write(sourcesPage);
-      window.HTMLElement.prototype.scrollIntoView = () => {};
+      let fetchCount = 0;
+      let failSearch = true;
+      window.fetch = async (url) => {
+        assert.equal(url, '/sources/search-index.json');
+        fetchCount += 1;
+        return { ok: !failSearch, json: async () => searchIndex };
+      };
       window.eval(filterScript);
-      const providerTitle = (provider) => (
-        window.document.querySelector(`.provider-card[data-provider="${provider}"] h3`)?.textContent
-      );
-      assert.equal(providerTitle('acleddata.com'), 'ACLED');
-      assert.equal(providerTitle('en.wikipedia.org'), 'Wikipedia');
-      assert.equal(providerTitle('it.usembassy.gov'), 'U.S. Embassy & Consulates in Italy');
-      assert.equal(providerTitle('airlinegeeks.com'), 'AirlineGeeks');
-      assert.equal(
-        window.document.querySelector('.provider-card[data-provider="acleddata.com"] .provider-hosts a')?.textContent,
-        'acleddata.com',
-        'the exact hostname must remain available as the traceability link',
-      );
-      const visibleProviderCount = () => (
-        [...window.document.querySelectorAll('.provider-card')].filter((card) => !card.hidden).length
-      );
-      const financeCount = renderedDomains.filter((domain) => domain === 'finance').length;
-      const financeButton = window.document.querySelector('[data-source-filter="finance"]');
-      financeButton.click();
-      assert.equal(visibleProviderCount(), financeCount, 'domain cards must filter the complete catalog');
-      assert.equal(financeButton.getAttribute('aria-pressed'), 'true');
-      const resetButton = window.document.querySelector('[data-source-filter="all"]');
-      resetButton.click();
-      assert.equal(visibleProviderCount(), activeProviderNames.size, 'reset must restore all providers');
-      const kindSelect = window.document.getElementById('source-kind');
-      kindSelect.value = 'structured';
-      kindSelect.dispatchEvent(new window.Event('change'));
-      assert.equal(
-        visibleProviderCount(),
-        renderedKinds.filter((kinds) => kinds.split(' ').includes('structured')).length,
-        'source type selection must filter the complete catalog',
-      );
-      resetButton.click();
-      const countrySelect = window.document.getElementById('source-country');
-      const countryNote = window.document.getElementById('source-country-note');
-      assert.equal(countryNote.hidden, true, 'country coverage note must stay hidden without a country filter');
-      countrySelect.value = 'hu';
-      countrySelect.dispatchEvent(new window.Event('change'));
-      assert.equal(
-        visibleProviderCount(),
-        renderedCountries.filter((country) => country === 'hu').length,
-        'country selection must filter the complete catalog',
-      );
-      assert.ok(visibleProviderCount() > 0, 'Hungary must have at least one classified source');
-      assert.equal(
-        window.document.querySelector('.provider-card[data-provider="24.hu"] .provider-country')?.textContent,
-        'Origin: Hungary',
-      );
-      assert.equal(countryNote.hidden, false, 'country selection must show the coverage clarification');
-      assert.equal(countryNote.textContent, SOURCE_COUNTRY_FILTER_NOTE);
-      for (const country of ['us', 'eu']) {
-        countrySelect.value = country;
-        countrySelect.dispatchEvent(new window.Event('change'));
-        assert.equal(countryNote.hidden, false, `${country} selection must show the coverage clarification`);
-        assert.equal(countryNote.textContent, SOURCE_COUNTRY_FILTER_NOTE);
-      }
-      countrySelect.value = 'intl';
-      countrySelect.dispatchEvent(new window.Event('change'));
-      assert.equal(countryNote.hidden, true, 'international selection must hide the coverage clarification');
-      assert.equal(countryNote.textContent, '', 'international selection must clear the coverage clarification');
-      countrySelect.value = 'eu';
-      countrySelect.dispatchEvent(new window.Event('change'));
-      resetButton.click();
-      assert.equal(countryNote.hidden, true, 'reset must hide the country coverage clarification');
-      assert.equal(countryNote.textContent, '', 'reset must clear the country coverage clarification');
-      const coverageSelect = window.document.getElementById('source-coverage');
-      coverageSelect.value = 'in';
-      coverageSelect.dispatchEvent(new window.Event('change'));
-      const indiaCoverageCount = [...window.document.querySelectorAll('.provider-card')].filter((card) => (
-        !card.hidden && (card.dataset.sourceCoverage || '').split(' ').includes('in')
-      )).length;
-      assert.equal(visibleProviderCount(), indiaCoverageCount, 'coverage selection must filter the complete catalog');
-      assert.ok(indiaCoverageCount > 0, 'India coverage must include at least one provider');
-      const bbcCard = [...window.document.querySelectorAll('.provider-card')]
-        .find((card) => card.querySelector('h3')?.textContent === 'BBC');
-      const ndtvCard = window.document.querySelector('.provider-card[data-provider="NDTV"]');
-      assert.ok(bbcCard && !bbcCard.hidden, 'BBC Hindi must remain visible under India coverage');
-      assert.ok(ndtvCard && !ndtvCard.hidden, 'NDTV must remain visible under India coverage');
-      const catalogSize = window.document.querySelectorAll('.provider-card').length;
-      resetButton.click();
-      assert.equal(coverageSelect.value, 'all', 'reset must clear the coverage filter');
-      assert.equal(visibleProviderCount(), catalogSize, 'reset from coverage must show the full catalog');
-      const countryOriginSelect = window.document.getElementById('source-country');
-      countryOriginSelect.value = 'in';
-      countryOriginSelect.dispatchEvent(new window.Event('change'));
-      assert.ok(ndtvCard && !ndtvCard.hidden, 'NDTV origin is India');
-      assert.ok(bbcCard?.hidden, 'BBC origin stays United Kingdom when filtering India origin');
-      resetButton.click();
-      const searchInput = window.document.getElementById('source-search');
-      searchInput.value = 'Hyperliquid';
-      searchInput.dispatchEvent(new window.Event('input'));
-      assert.equal(visibleProviderCount(), 1, 'search must match provider names and hosts');
-      searchInput.value = 'a provider that cannot exist';
-      searchInput.dispatchEvent(new window.Event('input'));
-      assert.equal(visibleProviderCount(), 0);
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+      await settle();
+      assert.equal(fetchCount, 0, 'initial render must not download the global search index');
+      const search = window.document.getElementById('source-search');
+      const results = () => [...window.document.querySelectorAll('.source-result')];
+      const change = async (id, value) => {
+        const field = window.document.getElementById(id);
+        field.value = value;
+        field.dispatchEvent(new window.Event(id === 'source-search' ? 'input' : 'change'));
+        await settle();
+      };
+      await change('source-search', 'Hyperliquid');
+      assert.match(window.document.getElementById('source-results').textContent, /Search is unavailable/);
+      assert.equal(window.document.getElementById('source-no-results').hidden, true, 'failure must not claim no matching providers');
+      failSearch = false;
+      await change('source-search', 'Hyperliquid');
+      assert.equal(results().length, 1, 'global search must find providers across domain pages');
+      assert.ok(results()[0].href.includes('/sources/finance/'));
+      await change('source-search', 'a provider that cannot exist');
+      assert.equal(results().length, 0);
       assert.equal(window.document.getElementById('source-no-results').hidden, false);
-      resetButton.click();
-      const composableCard = [...window.document.querySelectorAll('.provider-card')]
-        .find((card) => card.dataset.sourceKind.split(' ').length > 0);
-      assert.ok(composableCard, 'the catalog must contain a provider for the combined-filter test');
-      const combinedDomain = composableCard.dataset.sourceDomain;
-      const combinedKind = composableCard.dataset.sourceKind.split(' ')[0];
-      const combinedCountry = composableCard.dataset.sourceCountry;
-      const combinedQuery = composableCard.dataset.provider;
-      window.document.getElementById('source-domain').value = combinedDomain;
-      kindSelect.value = combinedKind;
-      countrySelect.value = combinedCountry;
-      searchInput.value = combinedQuery;
-      searchInput.dispatchEvent(new window.Event('input'));
-      const combinedMatches = [...window.document.querySelectorAll('.provider-card')].filter((card) => (
-        card.dataset.sourceDomain === combinedDomain
-        && card.dataset.sourceKind.split(' ').includes(combinedKind)
-        && card.dataset.sourceCountry === combinedCountry
-        && card.textContent.toLowerCase().includes(combinedQuery.toLowerCase())
-      ));
-      assert.ok(combinedMatches.length > 0, 'the selected filters must retain at least one provider');
-      assert.equal(
-        visibleProviderCount(),
-        combinedMatches.length,
-        'domain, type, country, and search filters must compose with AND semantics',
-      );
+      await change('source-search', '');
+      await change('source-domain', 'news');
+      assert.equal(results().length, 60, 'search must cap live result nodes');
+      const firstResults = results().map((link) => link.href);
+      window.document.getElementById('source-more').click();
+      await settle();
+      assert.equal(results().length, 60);
+      assert.ok(results().every((link) => !firstResults.includes(link.href)), 'next page must advance results');
+      window.document.querySelector('[data-source-filter="all"]').click();
+      await settle();
+      assert.equal(results().length, 0, 'reset must restore the small directory');
+      await change('source-country', 'hu');
+      assert.equal(results().length, searchIndex.filter((entry) => entry.country === 'hu').length);
+      assert.equal(window.document.getElementById('source-country-note').textContent, SOURCE_COUNTRY_FILTER_NOTE);
+      await change('source-country', 'all');
+      await change('source-coverage', 'in');
+      assert.ok(results().some((link) => link.textContent.startsWith('BBC')));
+      assert.ok(results().some((link) => link.textContent.startsWith('NDTV')));
+      await change('source-country', 'in');
+      assert.ok(results().some((link) => link.textContent.startsWith('NDTV')));
+      assert.ok(results().every((link) => !link.textContent.startsWith('BBC')));
+      await change('source-domain', 'news');
+      await change('source-kind', 'feed');
+      await change('source-search', 'NDTV');
+      const expected = searchIndex.filter((entry) => entry.search.includes('ndtv') && entry.country === 'in'
+        && entry.coverage.includes('in') && entry.domain === 'news' && entry.kinds.includes('feed'));
+      assert.deepEqual(results().map((link) => new URL(link.href).pathname + new URL(link.href).hash), expected.map((entry) => entry.url));
+      assert.ok(expected.length > 0, 'combined filters must retain a real provider');
+      assert.equal(fetchCount, 2, 'a failed fetch must retry, then filter changes reuse the index');
       window.close();
-      assert.doesNotMatch(sourcesPage, /[?&]ref=/, 'sources CTAs must never use the affiliate ref= param');
-      // Domain cards deep-link into the docs catalog with the query BEFORE the
-      // fragment (utm after the anchor would be swallowed by the fragment).
+      const bookmark = searchIndex.find((entry) => entry.name === 'Hyperliquid');
+      const bookmarkWindow = new Window({ url: `https://www.worldmonitor.app/sources/${new URL(bookmark.url, 'https://www.worldmonitor.app').hash}` });
+      bookmarkWindow.document.write(sourcesPage);
+      bookmarkWindow.fetch = async () => ({ ok: true, json: async () => searchIndex });
+      bookmarkWindow.eval(filterScript);
+      await settle();
+      assert.equal(bookmarkWindow.location.pathname + bookmarkWindow.location.hash, bookmark.url, 'old provider bookmarks must reach the new static card');
+      bookmarkWindow.close();
+      const raceWindow = new Window({ url: 'https://www.worldmonitor.app/sources/' });
+      raceWindow.document.write(sourcesPage);
+      let finishFetch;
+      raceWindow.fetch = () => new Promise((resolve) => { finishFetch = resolve; });
+      raceWindow.eval(filterScript);
+      const raceSearch = raceWindow.document.getElementById('source-search');
+      raceSearch.value = 'Hyperliquid';
+      raceSearch.dispatchEvent(new raceWindow.Event('input'));
+      raceWindow.document.querySelector('[data-source-filter="all"]').click();
+      finishFetch({ ok: true, json: async () => searchIndex });
+      await settle();
+      assert.equal(raceWindow.document.querySelectorAll('.source-result').length, 0, 'a late search response must not undo reset');
+      raceWindow.close();
+      assert.doesNotMatch(sourcesPage, /[?&]ref=/);
       assert.match(sourcesPage, /href="\/docs\/data-sources\?utm_source=seo-sources#finance-%26-economics"/);
       assert.match(sourcesPage, /href="\/docs\/source-attribution\?utm_source=seo-sources"/);
 
@@ -5137,6 +5123,16 @@ describe('live-pulse snapshot injection (#7533)', () => {
       () => assertPulseFixtureShape(drifted, fixture),
       /nested shape/,
     );
+  });
+
+  it('accepts an empty convergence leader list but rejects malformed leaders', () => {
+    const fixture = JSON.parse(readFileSync(join(repoRoot, FIXTURE_RELATIVE_PATH), 'utf8'));
+    const live = structuredClone(fixture);
+    live.signalConvergence.ciiGeoConvergenceLeaders = [];
+    assert.doesNotThrow(() => assertPulseFixtureShape(fixture, live));
+    assert.doesNotThrow(() => assertPulseFixtureShape(live, fixture));
+    live.signalConvergence.ciiGeoConvergenceLeaders = [{ code: 'FI', geoConvergence: 'bad' }];
+    assert.throws(() => assertPulseFixtureShape(fixture, live), /nested shape/);
   });
 
   it('accepts additional countries and a permitted country capture shortfall', () => {
@@ -7146,4 +7142,11 @@ describe('chokepoint disruption-score methodology', () => {
     }
     assert.match(scoreDriver, /Context only \(not score inputs\)/);
   });
+});
+
+it('checks rendered brief claims as visible text after HTML escaping', () => {
+  const sources = [{ title: "'Tomb Raider: Legacy Of Atlantis' shows the Greece level", url: 'https://example.com/news', source: 'Example' }];
+  const html = '<main><div data-intel-brief><p>The Greece level of &#39;Tomb Raider: Legacy Of Atlantis&#39; was shown. [1]</p></div></main>';
+  assert.doesNotThrow(() => assertCountryBriefPresentation({ pagePath: '/countries/greece/', html, sources }));
+  assert.throws(() => assertCountryBriefPresentation({ pagePath: '/countries/greece/', html: html.replace('Atlantis', 'Olympus'), sources }), /unsupported citation/);
 });
