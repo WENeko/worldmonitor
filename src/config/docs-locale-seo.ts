@@ -326,21 +326,21 @@ function docsSlugForPathname(pathname: string | undefined): string | null {
 }
 
 /**
- * Backfill dateModified onto upstream Article nodes that lack it, from the
+ * Backfill publication and modification dates onto upstream Article nodes from the
  * same build-time manifest the injection path uses. An upstream shape flip
  * that drops dates must not ship dateless articles silently; unknown slugs
  * stay untouched rather than invented.
  */
 function withDocsArticleDates(value: unknown, pathname?: string): unknown {
   const slug = docsSlugForPathname(pathname);
-  const dateModified = slug ? DOCS_PAGE_DATES[slug] : undefined;
-  if (!dateModified) return value;
+  const dates = slug ? DOCS_PAGE_DATES[slug] : undefined;
+  if (!dates) return value;
   for (const node of collectJsonLdNodes(value)) {
     if (
-      (hasJsonLdType(node, 'Article') || hasJsonLdType(node, 'TechArticle'))
-      && node.dateModified == null
+      hasJsonLdType(node, 'Article') || hasJsonLdType(node, 'TechArticle')
     ) {
-      node.dateModified = dateModified;
+      node.datePublished ??= dates.datePublished;
+      node.dateModified ??= dates.dateModified;
     }
   }
   return value;
@@ -348,7 +348,7 @@ function withDocsArticleDates(value: unknown, pathname?: string): unknown {
 /**
  * Inject a full Article node when upstream ships a bare WebPage. Every field
  * is derived, never invented: headline/description/url from the page node,
- * dateModified from the build-time manifest for this slug, publisher/author
+ * dates from the build-time manifest for this slug, publisher/author
  * from the canonical Organization. Missing page name or missing manifest date
  * means no injection — a dateless or nameless Article is worse than none.
  */
@@ -360,8 +360,8 @@ function withDocsArticleNode(value: unknown, pathname?: string): unknown {
   const page = nodes.find((node) => hasJsonLdType(node, 'WebPage'));
   if (!page || typeof page.name !== 'string' || page.name.trim().length === 0) return value;
   const slug = docsSlugForPathname(pathname);
-  const dateModified = slug ? DOCS_PAGE_DATES[slug] : undefined;
-  if (!dateModified) return value;
+  const dates = slug ? DOCS_PAGE_DATES[slug] : undefined;
+  if (!dates) return value;
   const pageUrl = typeof page.url === 'string' && page.url.length > 0
     ? page.url
     : `${DOCS_PUBLIC_ORIGIN}${pathname ?? '/docs/'}`;
@@ -369,7 +369,8 @@ function withDocsArticleNode(value: unknown, pathname?: string): unknown {
     '@type': ['Article', 'TechArticle'],
     '@id': `${pageUrl}#article`,
     headline: page.name,
-    dateModified,
+    datePublished: dates.datePublished,
+    dateModified: dates.dateModified,
     publisher: { '@id': ORGANIZATION_ID },
     author: { '@id': ORGANIZATION_ID },
   };

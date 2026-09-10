@@ -6,6 +6,7 @@ import { describe, it } from 'node:test';
 
 import middleware from '../middleware';
 import { rewriteDocsLocaleHtml } from '../src/config/docs-locale-seo';
+import { DOCS_PAGE_DATES } from '../src/config/docs-page-dates.generated';
 import { buildCorpus, WORLD_MONITOR_ORG } from '../scripts/build-crawlable-corpus.mjs';
 import {
   SOFTWARE_SHARED_PROPERTIES,
@@ -298,6 +299,28 @@ describe('canonical schema graph', () => {
       '@graph': [{ '@type': 'Organization', '@id': id, ...properties, logo: { '@type': 'ImageObject', url: logo } }],
     })}</script></head><body></body></html>`;
     documents.set('docs/about (middleware output)', rewriteDocsLocaleHtml(docsHtml, '/docs/about'));
+    // Exercise both upstream shapes for every docs slug, including localized pages.
+    for (const slug of Object.keys(DOCS_PAGE_DATES)) {
+      for (const type of ['WebPage', ['Article', 'TechArticle']]) {
+        const html = `<html><head><script type="application/ld+json">${JSON.stringify({
+          '@context': 'https://schema.org', '@type': type, name: slug, headline: slug,
+          url: `https://www.worldmonitor.app/docs/${slug}`,
+        })}</script></head><body></body></html>`;
+        const rewritten = rewriteDocsLocaleHtml(html, `/docs/${slug}`);
+        assert.equal(collectNodesOfType(rewritten, 'Article').length, 1, `${slug} must emit an Article`);
+        documents.set(`docs/${slug} (${JSON.stringify(type)} middleware output)`, rewritten);
+      }
+    }
+    for (const [path, html] of documents) {
+      const articles = ['Article', 'TechArticle', 'BlogPosting', 'NewsArticle']
+        .flatMap((type) => collectNodesOfType(html, type));
+      for (const article of articles) {
+        for (const field of ['datePublished', 'dateModified']) {
+          assert.equal(typeof article[field], 'string', `${path}: Article must carry ${field}`);
+          assert.ok(Number.isFinite(Date.parse(article[field])), `${path}: invalid ${field}`);
+        }
+      }
+    }
     const datasetIds = new Set([...documents.values()].flatMap((html) =>
       collectNodesOfType(html, 'Dataset').map((node) => node['@id']).filter((id): id is string => typeof id === 'string')));
     assert.ok(datasetIds.size > 0, 'build the corpus before checking Dataset identities');

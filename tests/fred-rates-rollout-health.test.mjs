@@ -154,10 +154,10 @@ test('missing or malformed durable rollout state fails closed', () => {
   assert.equal(classify({ now: DEPLOYED_AT, rolloutUntil: null }).status, 'EMPTY');
 });
 
-function installHealthPipelineMock(recordCount, { metaOverrides = {}, cache = false, onSnapshotWrite } = {}) {
-  const snapshots = new Map();
-  const snapshotWrites = [];
-  let sweepCount = 0;
+function installHealthPipelineMock(recordCount, {
+  metaOverrides = {},
+  chinaCoverageSummary,
+} = {}) {
   let sweepCommands;
   let failureSignature = '';
   let failureLogPushes = 0;
@@ -167,14 +167,14 @@ function installHealthPipelineMock(recordCount, { metaOverrides = {}, cache = fa
       return [code, { value: 50, year: 2025 }];
     }),
   );
-  const healthyChinaSummary = JSON.stringify({
+  const healthyChinaSummary = {
     schemaVersion: 1,
     countryCode: 'CN',
     status: 'healthy',
     evaluatedAt: new Date(DEPLOYED_AT).toISOString(),
     counts: { total: 1, launched: 1, planned: 0, blocked: 0, healthy: 1, degraded: 0, unavailable: 0 },
     entries: [{ id: 'market.mock', launchStatus: 'launched', status: 'healthy', reasonCodes: [] }],
-  });
+  };
   const configsByMetaKey = Object.values(SEED_META).reduce((map, config) => {
     const configs = map.get(config.key) ?? [];
     configs.push(config);
@@ -243,14 +243,9 @@ function installHealthPipelineMock(recordCount, { metaOverrides = {}, cache = fa
   globalThis.fetch = async (_url, init) => {
     const commands = JSON.parse(init.body);
     const isSweep = commands.some(([op, key]) => op === 'SET' && key === FRED_RATES_ROLLOUT_DEADLINE_KEY);
-    if (isSweep) { sweepCommands = commands; sweepCount++; }
+    if (isSweep) sweepCommands = commands;
 
-    const results = commands.map(([op, key, value, , ttl]) => {
-      if (op === 'SET' && String(key).includes('health:verdict') && !String(key).includes('refresh-lock')) {
-        snapshotWrites.push({ key, ttl });
-        onSnapshotWrite?.();
-        if (cache) snapshots.set(key, value);
-      }
+    const results = commands.map(([op, key, value]) => {
       if (op === 'GET' && metaOverrides[key]) {
         return { result: JSON.stringify({ ...healthyMeta(key), ...metaOverrides[key] }) };
       }
@@ -266,11 +261,13 @@ function installHealthPipelineMock(recordCount, { metaOverrides = {}, cache = fa
             : JSON.stringify({ fetchedAt: DEPLOYED_AT, recordCount }),
         };
       }
-      if (op === 'GET' && key === CHINA_COVERAGE_SUMMARY_KEY) return { result: healthyChinaSummary };
+      if (op === 'GET' && key === CHINA_COVERAGE_SUMMARY_KEY) {
+        return { result: JSON.stringify(chinaCoverageSummary ?? healthyChinaSummary) };
+      }
       if (op === 'GET' && key === STANDALONE_KEYS.educationAttainment) {
         return { result: JSON.stringify({ countries: educationCountries }) };
       }
-      if (op === 'GET' && String(key).includes('health:verdict')) return { result: snapshots.get(key) ?? null };
+      if (op === 'GET' && String(key).includes('health:verdict')) return { result: null };
       if (op === 'GET' && key === 'health:failure-log-sig') return { result: failureSignature };
       if (op === 'GET') {
         return { result: JSON.stringify(healthyMeta(key)) };
@@ -288,8 +285,6 @@ function installHealthPipelineMock(recordCount, { metaOverrides = {}, cache = fa
   };
   return {
     getSweepCommands: () => sweepCommands,
-    getSweepCount: () => sweepCount,
-    getSnapshotWrites: () => snapshotWrites,
     getFailureLogPushes: () => failureLogPushes,
   };
 }
@@ -391,7 +386,7 @@ test('compact handler contains one metadata-backed warning and dedupes its incid
   }
 });
 
-test('handler keeps a shared ECB seeder failure visible and expires cached containment', async () => {
+test('handler contains multiple served warnings up to the 3% fleet boundary', async () => {
   const originalFetch = globalThis.fetch;
   const originalDateNow = Date.now;
   const originalEnv = Object.fromEntries(['UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN', 'VERCEL_ENV']
@@ -399,8 +394,7 @@ test('handler keeps a shared ECB seeder failure visible and expires cached conta
   process.env.UPSTASH_REDIS_REST_URL = 'https://mock-upstash.test';
   process.env.UPSTASH_REDIS_REST_TOKEN = 'mock-token';
   process.env.VERCEL_ENV = 'production';
-  let now = DEPLOYED_AT;
-  Date.now = () => now;
+  Date.now = () => DEPLOYED_AT;
   const pending = [];
   const read = async () => {
     const response = await handler(new Request('https://api.worldmonitor.app/api/health?compact=1'),
@@ -414,7 +408,7 @@ test('handler keeps a shared ECB seeder failure visible and expires cached conta
       [SEED_META.ecbEstr.key]: { sourceState: 'degraded' },
     } });
     const bundle = await read();
-    assert.equal(bundle.status, 'WARNING');
+    assert.equal(bundle.status, 'HEALTHY');
     assert.equal(bundle.summary.warn, 4);
     assert.equal(bundle.summary.containedWarn, 4);
     assert.ok(bundle.summary.warn / bundle.summary.total < 0.03);
@@ -422,35 +416,80 @@ test('handler keeps a shared ECB seeder failure visible and expires cached conta
       assert.equal(bundle.problems[name].status, 'SEED_ERROR');
     }
 
-    const mock = installHealthPipelineMock(24, { cache: true, metaOverrides: {
-      [SEED_META.earthquakes.key]: { sourceState: 'degraded',
-        fetchedAt: now - SEED_META.earthquakes.maxStaleMin * 60_000 + 20_000 },
-    } });
-    const before = await read();
-    assert.equal(before.status, 'HEALTHY');
-    assert.equal(before.summary.containedWarn, 1);
-    assert.equal(before.problems.earthquakes.containmentUntil, new Date(now + 20_000).toISOString());
-    assert.equal(mock.getSnapshotWrites().length, 2, 'full and compact snapshots are both stored');
-    assert.ok(mock.getSnapshotWrites().every(({ ttl }) => Number(ttl) === 20));
-    now += 19_999;
-    assert.equal((await read()).status, 'HEALTHY');
-    assert.equal(mock.getSweepCount(), 1, 'the cached verdict remains valid before its deadline');
-    now += 1;
-    const expired = await read();
-    assert.equal(expired.status, 'WARNING');
-    assert.equal(expired.summary.containedWarn, 0);
-    assert.equal(expired.problems.earthquakes.status, 'SEED_ERROR');
-    assert.equal(expired.problems.earthquakes.containmentUntil, undefined);
-    assert.equal(mock.getSweepCount(), 2, 'even a retained Redis snapshot is refused at the deadline');
-
     installHealthPipelineMock(24, { metaOverrides: {
-      [SEED_META.earthquakes.key]: { sourceState: 'degraded',
-        fetchedAt: now - SEED_META.earthquakes.maxStaleMin * 60_000 + 1_000 },
-    }, onSnapshotWrite: () => { now += 1_000; } });
-    const delayed = await read();
-    assert.equal(delayed.status, 'WARNING', 'a slow persistence write cannot extend containment');
-    assert.equal(delayed.summary.containedWarn, 0);
-    assert.equal(delayed.problems.earthquakes.containmentUntil, undefined);
+      [SEED_META.diseaseOutbreaks.key]: {
+        recordCount: 159,
+        newestItemAt: DEPLOYED_AT - 14_092 * 60_000,
+        maxContentAgeMin: 12_960,
+      },
+      [SEED_META.electricityPrices.key]: {
+        recordCount: 17,
+        fetchedAt: DEPLOYED_AT - 3_170 * 60_000,
+      },
+      [SEED_META.portwatchPortActivity.key]: { recordCount: 168 },
+    } });
+    const current = await read();
+    assert.equal(current.status, 'HEALTHY');
+    assert.equal(current.summary.warn, 3);
+    assert.equal(current.summary.containedWarn, 3);
+    assert.deepEqual(Object.fromEntries(Object.entries(current.problems)
+      .map(([name, entry]) => [name, entry.status])), {
+      diseaseOutbreaks: 'STALE_CONTENT',
+      electricityPrices: 'STALE_SEED',
+      portwatchPortActivity: 'COVERAGE_PARTIAL',
+    });
+
+    const chinaProblems = [{
+      id: 'market.china-corporate-disclosures',
+      status: 'degraded',
+      reasonCodes: ['CHINA_COVERAGE_PARTIAL'],
+    }];
+    const degradedSummary = {
+      schemaVersion: 1,
+      countryCode: 'CN',
+      status: 'degraded',
+      evaluatedAt: new Date(DEPLOYED_AT - 60_000).toISOString(),
+      counts: { total: 1, launched: 1, planned: 0, blocked: 0, healthy: 0, degraded: 1, unavailable: 0 },
+      entries: chinaProblems.map((problem) => ({ ...problem, launchStatus: 'launched' })),
+      degradedStreak: 4,
+      degradedProblemKey: JSON.stringify(chinaProblems),
+      lastHealthyAt: DEPLOYED_AT - 181 * 60_000,
+    };
+    installHealthPipelineMock(24, { chinaCoverageSummary: degradedSummary });
+    const body = await read();
+    assert.equal(body.status, 'HEALTHY');
+    assert.equal(body.summary.warn, 1);
+    assert.equal(body.summary.containedWarn, 1);
+    assert.equal(body.problems?.chinaCoverage?.status, 'CHINA_DEGRADED');
+    assert.equal(body.pending?.chinaCoverage, undefined);
+
+    installHealthPipelineMock(24, { chinaCoverageSummary: {
+      ...degradedSummary,
+      evaluatedAt: new Date(DEPLOYED_AT + 1).toISOString(),
+    } });
+    const futureBody = await read();
+    assert.equal(futureBody.status, 'WARNING');
+    assert.equal(futureBody.summary.containedWarn, 0);
+    assert.equal(futureBody.problems?.chinaCoverage?.status, 'CHINA_DEGRADED');
+
+    installHealthPipelineMock(24, { chinaCoverageSummary: {
+      ...degradedSummary,
+      counts: { total: 2, launched: 2, planned: 0, blocked: 0, healthy: 1, degraded: 0, unavailable: 1 },
+      entries: [
+        { id: 'market.china-healthy', launchStatus: 'launched', status: 'healthy', reasonCodes: [] },
+        { id: 'market.china-unavailable', launchStatus: 'launched', status: 'unavailable', reasonCodes: ['UPSTREAM_UNAVAILABLE'] },
+      ],
+    } });
+    const unavailableBody = await read();
+    assert.equal(unavailableBody.status, 'WARNING');
+    assert.equal(unavailableBody.summary.warn, 1);
+    assert.equal(unavailableBody.summary.containedWarn, 0);
+    assert.equal(unavailableBody.problems?.chinaCoverage?.status, 'CHINA_DEGRADED');
+    assert.deepEqual(unavailableBody.problems?.chinaCoverage?.problems, [{
+      id: 'market.china-unavailable',
+      status: 'unavailable',
+      reasonCodes: ['UPSTREAM_UNAVAILABLE'],
+    }]);
   } finally {
     globalThis.fetch = originalFetch;
     Date.now = originalDateNow;

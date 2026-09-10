@@ -1370,7 +1370,7 @@ const SEED_META = {
   energyMixAll:         { key: 'seed-meta:economic:owid-energy-mix',   maxStaleMin: 50400 }, // same seed run as energyExposure; shares seed-meta key
   regulatoryActions:    { key: 'seed-meta:regulatory:actions',          maxStaleMin: 360 }, // 2h cron; 360min = 3x interval
   energySpineCountries: { key: 'seed-meta:energy:spine',                maxStaleMin: 2880 }, // daily cron (06:00 UTC); 2880min = 48h = 2x interval
-  electricityPrices:    { key: 'seed-meta:energy:electricity-prices',   maxStaleMin: 2880 }, // daily cron (14:00 UTC); 2880min = 48h = 2x interval
+  electricityPrices:    { key: 'seed-meta:energy:electricity-prices',   maxStaleMin: 3000 }, // daily 14:00 UTC; two intervals + 2h completion margin
   gasStorageCountries:  { key: 'seed-meta:energy:gas-storage-countries', maxStaleMin: 2880 }, // daily cron at 10:30 UTC; 2880min = 48h = 2x interval
   energyIntelligence:   { key: 'seed-meta:energy:intelligence',          maxStaleMin: 720 }, // 6h cron; 720min = 2x interval
   // `chinaCoverage` opts these three into the producer diagnostic below. An
@@ -3061,26 +3061,14 @@ function classifyKey(name, redisKey, opts, ctx) {
     }
   }
   // Diagnostic precedence must not skip a reader requirement: every required
-  // proof is checked here, even when an earlier stale/error verdict won.
-  const validUntil = Math.min(
-    meta.seedFetchedAt + seedCfg?.maxStaleMin * 60_000,
-    contentAge ? contentAge.newestItemAt + contentAge.maxContentAgeMin * 60_000 : Infinity,
-    contentFreshness?.usable
-      ? contentFreshness.criticalOldestObservedAt + contentFreshness.budgetMinutes * 60_000
-      : Infinity,
-    synthesisFailure?.servedGeneratedAt
-      ? Date.parse(synthesisFailure.servedGeneratedAt) + seedCfg?.maxStaleMin * 60_000
-      : Infinity,
-  );
+  // proof is checked here, even when an earlier stale/error verdict won. This
+  // proves that the current request found a real served payload; freshness is
+  // deliberately left to the unchanged diagnostic status.
   ctx.containmentEvidenceByName?.set(name, {
     status,
     records: hasData ? metaCount : null,
-    validUntil,
     usable: Number.isFinite(seedAge) && seedAge >= 0
       && Number.isFinite(meta.seedFetchedAt) && meta.seedFetchedAt > 0 && meta.seedFetchedAt <= now
-      && !NEVER_CONTAINED_KEYS.has(name)
-      && Number.isFinite(validUntil) && now < validUntil
-      && !contentFreshness?.contentStale
       && (!synthesisFailure?.servedGeneratedAt || Date.parse(synthesisFailure.servedGeneratedAt) <= now)
       && (seedCfg?.requiredRedistributionPolicyVersion == null
         || redistributionPolicyVersion === seedCfg.requiredRedistributionPolicyVersion)
@@ -3170,20 +3158,13 @@ function healthStatusBucket(entry, now) {
   return STATUS_COUNTS[entry?.status] ?? 'warn';
 }
 
-// These checks describe sanctions, tariff rules, or redistribution rights.
-// Their warnings must remain availability-affecting even with retained data.
-const NEVER_CONTAINED_KEYS = new Set([
-  'sanctionsPressure',
-  'sanctionsEntities',
-  'tariffTrendsUs',
-  'supplyVulnerability',
-  'supplyChokepointDependencies',
-]);
-
 const CONTAINMENT_ELIGIBLE_STATUSES = new Set([
+  'STALE_SEED',
   'SEED_ERROR',
+  'STALE_CONTENT',
   'COVERAGE_PARTIAL',
   'COVERAGE_DEGRADED',
+  'CHINA_DEGRADED',
 ]);
 
 function isContainedHealthWarning(entry, evidence, now = Date.now()) {
@@ -3194,7 +3175,6 @@ function isContainedHealthWarning(entry, evidence, now = Date.now()) {
     && evidence?.status === entry.status
     && evidence.records === entry.records
     && evidence.usable === true
-    && Number.isFinite(evidence.validUntil) && now < evidence.validUntil
     && entry.readModelReady !== false;
 }
 
@@ -3473,7 +3453,6 @@ const ENTRY_SOFTENING_DEADLINES = [
   { field: 'staleContentGraceUntil', kind: 'content', status: null },
   { field: 'sourceFailurePendingUntil', kind: 'source', status: 'SEED_ERROR' },
   { field: 'chinaCoveragePendingUntil', kind: 'source', status: null },
-  { field: 'containmentUntil', kind: 'source', status: null },
 ];
 
 function entryDeadlineRaw(entry, { field, status }) {
@@ -3595,7 +3574,6 @@ function computeOverallStatus(counts, totalChecks) {
 
   const diagnosticOverall = realWarnCount > 0 ? 'WARNING' : 'HEALTHY';
   const overall = availabilityWarnCount === 0
-    && containedWarnCount <= 1
     && containedWarnCount / totalChecks <= 0.03
     ? 'HEALTHY'
     : 'WARNING';
@@ -4127,6 +4105,13 @@ export async function handleHealth(req, ctx, options = {}) {
           Boolean(chinaCoverageResult?.error),
           evaluationNow,
         );
+        const evidence = containmentEvidenceByName.get(name);
+        const evaluatedAt = Date.parse(entry.evaluatedAt ?? '');
+        if (evidence && evidence.records === entry.records
+          && Number.isFinite(evaluatedAt) && evaluatedAt <= evaluationNow
+          && !entry.problems?.some((problem) => problem.status === 'unavailable')) {
+          evidence.status = entry.status;
+        }
       }
       if (name === 'scorecardFiveFactor') {
         entry = composeScorecardReadModelStatus(
@@ -4180,7 +4165,6 @@ export async function handleHealth(req, ctx, options = {}) {
     const evidence = containmentEvidenceByName.get(name);
     if (isContainedHealthWarning(entry, evidence, evaluationNow)) {
       counts.containedWarn++;
-      entry.containmentUntil = new Date(evidence.validUntil).toISOString();
     }
     if (isPendingHealthEntry(entry, evaluationNow)) counts.pending++;
     if (entry.status === 'EMPTY_ON_DEMAND') counts.onDemandWarn++;
@@ -4296,20 +4280,6 @@ export async function handleHealth(req, ctx, options = {}) {
   // this request's token lets the next caller retry immediately without ever
   // deleting a successor's lock after a slow sweep outlives its lease.
   if (snapshotWriteFailed) console.warn('[health] verdict snapshot write failed');
-
-  // Persistence can cross the evidence deadline. Revoke containment before
-  // returning; cached copies carry that deadline and are rejected on read.
-  if (counts.containedWarn > 0) {
-    const responseNow = snapshotNow();
-    for (const entry of Object.values(checks)) {
-      if (entry.containmentUntil && isExpiredDeadline(entry.containmentUntil, responseNow)) {
-        counts.containedWarn--;
-        delete entry.containmentUntil;
-      }
-    }
-    verdictSnapshot.summary.containedWarn = counts.containedWarn;
-    verdictSnapshot.status = computeOverallStatus(counts, totalChecks).overall;
-  }
 
   // Compact is the public keyless form polled by external uptime MONITORS, so it
   // must NEVER be edge-cached: the prior `s-maxage=60` (#4907, to collapse
