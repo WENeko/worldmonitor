@@ -72,6 +72,14 @@ The cable-health handler recomputes its response after 30 minutes but retains th
 
 Cache hits migrate legacy short TTLs to the snapshot's original 90-minute deadline and retry missing or incorrect metadata. The repair checks the current payload atomically before changing its expiry or metadata, so an older reader cannot alter a newer publication. Concurrent requests within one runtime share the full refresh, including cache publication when NGA data is already cached.
 
+### Contracts Finder refresh failures
+
+The hourly Global Tenders member runs within the half-hourly `seed-bundle-relay-backup` scheduler. Contracts Finder uses two 45-second attempts for its documented OCDS query; a valid response was observed taking 23.6 seconds to first byte, beyond the previous 20-second limit. This stays within the member's 180-second timeout.
+
+Failed refreshes retain only validated open Contracts Finder records less than 180 minutes after that source's last success. Attempts never advance the success clock, and successful sibling sources cannot renew this limit. Malformed releases, including active notices without a usable closing date, fail validation instead of replacing last-good data with an empty success. An actual successful response, including a verified empty result, clears the failure episode. Legacy failure metadata with no count does not qualify as a first failure.
+
+`globalTendersContractsFinder` keeps `SEED_ERROR`, the warning count, source error, attempt time, success time, and consecutive failure count visible. Availability can contain the first failed refresh only after reading and checking its records in the canonical tender snapshot. `containmentUntil` is the earliest of 90 minutes after the first failure, 180 minutes after source success, or a retained tender's closing time. The second failed refresh, missing or unreadable canonical data, malformed records, inconsistent metadata, or an expired deadline cannot qualify. Full and compact verdict caches expire at the same deadline; this does not change other sources' health policy.
+
 ### BC active evacuation lists
 
 `canadaAlertsBcSource` uses successful active-list ingestion with a 45-minute freshness budget. BC orders remain active until their status changes or they are removed. Their event modification age is not an expiry rule. See [BC evacuation guidance](https://www2.gov.bc.ca/gov/content/safety/wildfire-status/partners/evacuation).
@@ -362,6 +370,14 @@ health entries where those feeds publish seed metadata.
 `COVERAGE_PARTIAL` instead of `OK`; partial runs may still refresh per-country
 PortWatch cache entries, but the canonical country list and healthy seed-meta
 signal do not advance until full 174-country coverage returns.
+
+Port activity uses a rolling refresh: at most 30 countries per run, twice daily.
+Complete coverage can include retained country payloads strictly below the
+seven-day cache expiry; it does not require all countries to match the latest
+upstream date in one run. Country timestamps and content clocks remain unchanged
+when retained. Coverage diagnostics distinguish `currentCountryCount` from
+`retainedCountryCount` and expose `oldestCountryCacheWrittenAt`. Missing or expired
+countries and unresolved refresh failures still block a healthy publication.
 
 `portwatchPortActivity` additionally requires per-country **content**
 freshness, which is a different question from transport freshness and country

@@ -315,7 +315,7 @@ export const TEMPLATE_RESOURCE_REGISTRY: TemplateResourceDef[] = [
   {
     uriTemplate: 'worldmonitor://chokepoints/{slug}/status',
     name: 'Chokepoint Status',
-    description: 'Maritime chokepoint transit summary: today total / tanker / cargo counts, week-over-week change, risk level, incident count, disruption percentage, and risk narrative. URI param {slug} is one of the hand-curated kebab-case identifiers (suez, strait-of-malacca, strait-of-hormuz, bab-el-mandeb, panama-canal, taiwan-strait, cape-of-good-hope, strait-of-gibraltar, bosphorus, korea-strait, dover-strait, kerch-strait, lombok-strait).',
+    description: 'Maritime chokepoint transit summary: today total / tanker / cargo counts, week-over-week change, risk level, incident count, and disruption percentage. Generated riskSummary and riskReportAction prose is withheld as empty strings; this does not indicate low risk. URI param {slug} is one of the hand-curated kebab-case identifiers (suez, strait-of-malacca, strait-of-hormuz, bab-el-mandeb, panama-canal, taiwan-strait, cape-of-good-hope, strait-of-gibraltar, bosphorus, korea-strait, dover-strait, kerch-strait, lombok-strait).',
     mimeType: 'application/json',
     tool: 'get_chokepoint_status',
     paramExtractor: (uri: string) => {

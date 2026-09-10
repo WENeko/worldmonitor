@@ -5,6 +5,9 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { computeStats, validateCategoryExplainerCopy } from '../scripts/docs-stats.mjs';
+import { GLOSSARY_TERMS } from '../blog-site/src/data/glossary.ts';
+import { CHOKEPOINT_REGISTRY } from '../src/config/chokepoint-registry.ts';
+import { RESEARCH_REPORTS } from '../shared/research-reports/index.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
@@ -85,6 +88,48 @@ function assertNoUnsupportedVendorPrice(post, vendor) {
 }
 
 describe('blog SEO and GEO corpus contract', () => {
+  it('connects the worked editorial examples to their country, crisis, and waterway pages', () => {
+    const expectedLinks = JSON.parse(readFileSync(join(root, 'tests/fixtures/editorial-corpus-links.json'), 'utf8'));
+    for (const [slug, targets] of Object.entries(expectedLinks)) {
+      const article = posts.find((post) => post.file === `${slug}.md`);
+      const prose = article.body.replace(/```[\s\S]*?```/g, '');
+      for (const target of targets) {
+        const href = `https://www.worldmonitor.app${target}`;
+        assert.equal(prose.split(`](${href})`).length - 1, 1, `${slug} links ${target} once outside code examples`);
+      }
+    }
+  });
+  it('links all thirteen waterways from the maritime explainer and the existing glossary entries', () => {
+    const article = posts.find((post) => post.file === 'what-is-a-maritime-chokepoint.md');
+    const routes = [
+      'strait-of-hormuz', 'strait-of-malacca', 'suez-canal', 'bab-el-mandeb',
+      'panama-canal', 'taiwan-strait', 'cape-of-good-hope', 'strait-of-gibraltar',
+      'bosporus-strait', 'korea-strait', 'dover-strait', 'kerch-strait', 'lombok-strait',
+    ];
+    for (const route of routes) {
+      const href = `https://www.worldmonitor.app/chokepoints/${route}/`;
+      assert.equal(article.body.split(`](${href})`).length - 1, 1, `maritime explainer links ${route} once`);
+    }
+    for (const slug of ['suez-canal', 'strait-of-malacca']) {
+      const term = GLOSSARY_TERMS.find((entry) => entry.slug === slug);
+      assert.equal(term.learnMore?.filter((link) => link.href === `https://www.worldmonitor.app/chokepoints/${slug}/`).length ?? 0, 1);
+    }
+  });
+  it('connects the Hormuz glossary, energy article, and methodology to existing trackers and research', () => {
+    const tracker = 'https://www.worldmonitor.app/chokepoints/strait-of-hormuz/';
+    const report = RESEARCH_REPORTS.find((entry) => entry.focusChokepointId === 'hormuz_strait');
+    assert.ok(CHOKEPOINT_REGISTRY.some((entry) => entry.id === report.focusChokepointId));
+    const term = GLOSSARY_TERMS.find((entry) => entry.slug === 'strait-of-hormuz');
+    assert.equal(term.learnMore.filter((link) => link.href === tracker).length, 1);
+    const article = posts.find((post) => post.file === 'energy-shock-monitoring-chokepoints-worldmonitor.md');
+    const reportUrl = `https://www.worldmonitor.app/research/${report.slug}/`;
+    for (const href of [tracker, reportUrl]) {
+      assert.ok(article.body.includes(`](${href})`), `article content links ${href}`);
+    }
+    assert.match(article.body, /historical.*July 2026/i);
+    const methodology = readFileSync(join(root, 'docs/methodology/chokepoints.mdx'), 'utf8');
+    assert.ok(methodology.includes(`](${tracker})`));
+  });
   it('keeps every post complete, unique, current, and answer-first', () => {
     assert.ok(posts.length >= 53, 'expected the complete published blog corpus');
     const titles = new Set();

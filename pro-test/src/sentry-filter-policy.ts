@@ -149,24 +149,36 @@ export const MARKETING_IGNORE_ERRORS: RegExp[] = [
   // postMessage` entry above covers the same bridge from the other direction
   // (WORLDMONITOR-10W, whose dashboard-side copy is added in the same pass).
   /\bWKWebView_[A-Za-z]\w*/,
-  // Android WebView's Java-bridge teardown error. Chromium's `android_webview`
-  // emits this exact sentence — `Error invoking <method>: Java object is gone` —
-  // when injected JS calls a `@JavascriptInterface` method whose Java object has
-  // already been garbage-collected or detached, which is what happens when an
-  // in-app browser's own chrome script runs during `beforeunload`. The observed
-  // event is Instagram 415 on Android 13 calling its own
-  // `enableButtonsClickedMetaDataLogging` bridge; neither that method name nor
-  // the phrase appears anywhere in this bundle, and a pure-web bundle has no
-  // `@JavascriptInterface` object to lose, so it can never be ours. Already
-  // suppressed on the dashboard since #4005 (`/Java object is gone/` in
-  // `src/bootstrap/sentry-init.ts`); the two surfaces run separate Sentry
-  // clients, so the missing marketing copy is what let WORLDMONITOR-117 through
-  // with three infra-only frames (the `/pro/assets/sentry-*.js` chunk plus two
-  // `<anonymous>`), which `marketingBeforeSend`'s frame gates cannot act on.
+  // Android WebView's Java-bridge errors. Chromium's `android_webview` wraps a
+  // failed `@JavascriptInterface` call as `Error invoking <method>: <reason>`,
+  // where the reason is a `GinJavaBridgeError` member. Two have been observed
+  // in production, and both are enumerated here:
+  //   WORLDMONITOR-117  `Error invoking enableButtonsClickedMetaDataLogging: Java object is gone`
+  //   WORLDMONITOR-126  `Error invoking log: Java bridge method invocation error`
+  // The first is an in-app browser's chrome script calling a bridge whose Java
+  // object was already collected or detached, typically during `beforeunload`
+  // (Instagram 415 on Android 13). The second is an injected `scanForForms`
+  // autofill scan on Chrome Mobile 153 / Android 10, reaching Sentry through
+  // the SDK's `setTimeout` instrumentation. Neither method name nor either
+  // sentence appears anywhere in this bundle, and a pure-web bundle owns no
+  // `@JavascriptInterface` object at all, so neither can ever be ours.
   //
-  // Anchored to the whole sentence, unlike the dashboard's bare
-  // `/Java object is gone/`. `ignoreErrors` is frame-blind, so an unanchored
-  // substring also drops any first-party message that happens to CONTAIN the
+  // Already suppressed on the dashboard (`src/bootstrap/sentry-init.ts`, which
+  // enumerates both reasons); the two surfaces run separate Sentry clients, so
+  // a missing marketing copy is what lets these through with infra-only frames
+  // (the `/pro/assets/sentry-*.js` chunk plus `<anonymous>`), which
+  // `marketingBeforeSend`'s frame gates cannot act on. That gap produced
+  // WORLDMONITOR-117, and again WORLDMONITOR-126 after #7356 copied only the
+  // first reason across.
+  //
+  // The reasons stay ENUMERATED rather than matched by a slot: a Chromium
+  // reason we have not seen should surface as a new issue and be added
+  // deliberately, which is the safe failure direction — under-suppression
+  // announces itself, over-suppression does not.
+  //
+  // Anchored to the whole sentence, as the dashboard entry has been since
+  // #7357. `ignoreErrors` is frame-blind, so an unanchored substring also
+  // drops any first-party message that happens to CONTAIN the
   // phrase (`Our Java object is gone`) even when its stack points straight at
   // `/pro/assets/*.js` — the observability blind spot this array exists to
   // avoid. Only the complete Chromium shape is third-party by construction, so
@@ -179,10 +191,10 @@ export const MARKETING_IGNORE_ERRORS: RegExp[] = [
   // obtenirDonnées()` is legal, and Chromium emits the same sentence for it)
   // while JavaScript's `\w` is, so an ASCII slot silently misses them. Widening
   // it cannot loosen the rule — the envelope is anchored at both ends and the
-  // reason is fixed, so this matches only if our own bundle emits the whole
-  // Chromium sentence. Java method names hold no colon, so excluding one keeps
-  // the slot off the reason separator (PR #7356 review).
-  /^Error invoking [^\s:]+: Java object is gone$/,
+  // reasons are enumerated, so this matches only if our own bundle emits a
+  // whole Chromium sentence. Java method names hold no colon, so excluding
+  // one keeps the slot off the reason separator (PR #7356 review).
+  /^Error invoking [^\s:]+: (?:Java object is gone|Java bridge method invocation error)$/,
   // iOS in-app WebView native bridge. The host app injects `sendDataToNative` /
   // `sendPageHideMessage` into the document and they dereference
   // `window.webkit.messageHandlers`, which only exists when a WKWebView host

@@ -2499,7 +2499,8 @@ export const CACHE_TOOLS: ToolDef[] = [
             todayCargo: { type: ['number', 'null'] }, todayOther: { type: ['number', 'null'] },
             wowChangePct: { type: ['number', 'null'] }, riskLevel: { type: 'string' },
             incidentCount7d: { type: ['number', 'null'] }, disruptionPct: { type: ['number', 'null'] },
-            riskSummary: { type: 'string' }, riskReportAction: { type: 'string' },
+            riskSummary: { type: 'string', description: 'Generated prose is withheld as an empty string. This does not indicate low risk.' },
+            riskReportAction: { type: 'string', description: 'Operational advice is withheld as an empty string because it has no verified routing basis.' },
             anomaly: { type: 'object' }, dataAvailable: { type: 'boolean' },
             // null todayTotal means the relay's 24h AIS window was empty --
             // unsupplied, not a measured zero (#7457). dataAvailable is
@@ -2598,12 +2599,20 @@ export const CACHE_TOOLS: ToolDef[] = [
           }
         }
       }
+      mapNested(data, 'transit-summaries', 'summaries', (summaries) => {
+        if (!summaries || typeof summaries !== 'object' || Array.isArray(summaries)) return summaries;
+        return Object.fromEntries(Object.entries(summaries).map(([id, entry]) => [id,
+          entry && typeof entry === 'object'
+            ? { ...entry, riskSummary: '', riskReportAction: '' }
+            : entry,
+        ]));
+      });
       const cp = argStr(params.chokepoint);
       if (cp) {
         mapNested(data, 'transit-summaries', 'summaries', (m) => pickMapKeysLike(m, cp));
         mapNested(data, 'chokepoint_transits', 'transits', (m) => pickMapKeysLike(m, cp));
         data['chokepoint-flows'] = pickMapKeysLike(data['chokepoint-flows'], cp);
-        narrowNested(data, 'chokepoint-baselines', 'chokepoints', (c) => ciIncludes(c.id, cp) || ciIncludes(c.relayId, cp) || ciIncludes(c.name, cp));
+        narrowNested(data, 'chokepoint-baselines', 'chokepoints', (c) => ciIncludes(c?.id, cp) || ciIncludes(c?.relayId, cp) || ciIncludes(c?.name, cp));
       }
       const limit = argNum(params.limit) ?? DEFAULT_LIST_LIMIT;
       capNested(data, 'chokepoint-baselines', 'chokepoints', limit);

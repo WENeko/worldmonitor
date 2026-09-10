@@ -438,6 +438,62 @@ describe('marketing ignoreErrors — in-app-browser injected globals (2026-08-27
     assert.equal(isIgnored('Error', 'Java object is missing'), false);
     assert.equal(isIgnored('Error', 'Our Java gateway is gone'), false);
   });
+
+  it("drops the Java bridge's other Chromium reason (WORLDMONITOR-126)", () => {
+    // Verbatim production value: Chrome Mobile 153 on Android 10 at `/`, fired
+    // through Sentry's `setTimeout` instrumentation from an injected
+    // `scanForForms` autofill scan, with only the `/pro/assets/sentry-*.js`
+    // chunk and one `<anonymous>` on the stack.
+    //
+    // `GinJavaBridgeError` has more than one member, and the dashboard array
+    // enumerates two of them (`src/bootstrap/sentry-init.ts`). #7356 copied
+    // only `Java object is gone` to this surface, so the second reason fell
+    // through to a separate issue on the marketing client. The reasons stay
+    // ENUMERATED rather than slotted: a Chromium reason we have not seen should
+    // surface as a new issue and be added deliberately, because
+    // under-suppression announces itself and over-suppression does not.
+    assert.equal(
+      isIgnored('Error', 'Error invoking log: Java bridge method invocation error'),
+      true,
+    );
+    // The method slot is shape-matched here too, per the entry above.
+    assert.equal(
+      isIgnored('Error', 'Error invoking 获取设备信息: Java bridge method invocation error'),
+      true,
+    );
+  });
+
+  it('keeps a first-party message that merely CONTAINS the second reason', () => {
+    // Same control as the `Java object is gone` half: `ignoreErrors` is
+    // frame-blind, so only the complete anchored Chromium sentence may match.
+    assert.equal(isIgnored('Error', 'Java bridge method invocation error'), false);
+    assert.equal(
+      isIgnored('Error', 'Relay failed: Java bridge method invocation error'),
+      false,
+    );
+    assert.equal(
+      isIgnored('Error', 'Error invoking log: Java bridge method invocation error (retrying)'),
+      false,
+    );
+  });
+
+  it('keeps an unenumerated Chromium reason so it surfaces as a new issue', () => {
+    // The safe failure direction the entry documents: a reason we have never
+    // observed must still report rather than be swallowed by a widened slot.
+    assert.equal(isIgnored('Error', 'Error invoking log: Java exception was raised'), false);
+  });
+
+  it('pins the marketing surface as `Error invoking`-free, which is what licenses the rule', () => {
+    // What licenses matching the envelope at all: a pure-web bundle owns no
+    // `@JavascriptInterface` object, so it can never emit Chromium's sentence.
+    // The dashboard test pins the same scan for its own copy.
+    const offenders = marketingFirstPartySources()
+      .filter((f) => !f.rel.includes('sentry-filter-policy'))
+      .filter((f) => /Error invoking/.test(f.code))
+      .map((f) => f.rel);
+    assert.deepEqual(offenders, [],
+      'the marketing surface now emits `Error invoking` — re-derive the WORLDMONITOR-117/-126 rule');
+  });
 });
 
 describe('marketingBeforeSend — Safari-masked injected script (WORLDMONITOR-110)', () => {

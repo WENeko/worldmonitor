@@ -700,7 +700,7 @@ export function renderResearchReportPage({
   tpl,
   baseUrl,
   lastmod,
-  chokepointSlug,
+  chokepointSlugById,
   dataCatalog,
   includedInDataCatalog,
 }) {
@@ -709,11 +709,17 @@ export function renderResearchReportPage({
   if (!SLUG_PATTERN.test(report.slug) || !SLUG_PATTERN.test(report.id)) {
     throw new Error(`Report slug/id must match ${SLUG_PATTERN}: ${report.slug} / ${report.id}`);
   }
-  if (!chokepointSlug) {
-    throw new Error(
-      `Report ${report.id}: focusChokepointId ${report.focusChokepointId} has no entry in the chokepoint registry — refusing to render a /chokepoints/undefined/ handoff link`,
-    );
+  for (const [role, ids] of [
+    ['focusChokepointId', [report.focusChokepointId]],
+    ['contextChokepointId', report.contextChokepointIds],
+  ]) {
+    for (const id of ids) {
+      if (!SLUG_PATTERN.test(chokepointSlugById.get(id) ?? '')) {
+        throw new Error(`Report ${report.id}: ${role} ${id} has no valid route in the chokepoint registry`);
+      }
+    }
   }
+  const chokepointSlug = chokepointSlugById.get(report.focusChokepointId);
   const path = `/research/${report.slug}/`;
   const canonical = absoluteUrl(baseUrl, path);
   const focus = snapshot.chokepoints[report.focusChokepointId];
@@ -747,11 +753,11 @@ ${monthly.map((row) => `          <tr><td>${monthLabel(row.month)}${row.month ==
         </tbody>
       </table></div>`;
 
-  const contextRows = report.contextChokepointIds.map((id) => {
+  const contextRows = [...new Set(report.contextChokepointIds)].map((id) => {
     const chokepoint = snapshot.chokepoints[id];
     const history = chokepoint.history;
     const cell = (start, end) => round1(mean(inRange(history, start, end), 'total')).toFixed(1);
-    return `          <tr><td>${escapeHtml(chokepoint.portwatchName)}</td><td>${cell('2025-01-01', '2025-12-31')}</td><td>${cell('2026-02-01', '2026-02-28')}</td><td>${cell('2026-06-01', '2026-06-30')}</td><td>${cell('2026-07-01', focus.observationEnd)}</td></tr>`;
+    return `          <tr><td><a href="/chokepoints/${escapeHtml(chokepointSlugById.get(id))}/">${escapeHtml(chokepoint.portwatchName)}</a></td><td>${cell('2025-01-01', '2025-12-31')}</td><td>${cell('2026-02-01', '2026-02-28')}</td><td>${cell('2026-06-01', '2026-06-30')}</td><td>${cell('2026-07-01', focus.observationEnd)}</td></tr>`;
   }).join('\n');
   const contextTable = `<div style="overflow-x:auto"><table>
         <caption>Context chokepoints: average daily transits (same snapshot, same units)</caption>
@@ -1026,7 +1032,7 @@ export function writeResearchSection({ data, outDir, baseUrl, tpl, dataCatalog, 
         tpl,
         baseUrl,
         lastmod: data.lastmod.research,
-        chokepointSlug: chokepointSlugById.get(report.focusChokepointId),
+        chokepointSlugById,
         dataCatalog,
         includedInDataCatalog,
       }),

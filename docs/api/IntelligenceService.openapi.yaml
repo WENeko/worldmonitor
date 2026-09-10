@@ -8861,7 +8861,10 @@ components:
                     type: number
                     format: double
                 gasImpact:
+                    deprecated: true
                     $ref: '#/components/schemas/GasImpact'
+                gasSensitivity:
+                    $ref: '#/components/schemas/GasSensitivity'
         ProductImpact:
             type: object
             properties:
@@ -8912,6 +8915,56 @@ components:
                     type: number
                     format: double
                 bufferDays:
+                    type: number
+                    format: double
+                trend:
+                    type: string
+                date:
+                    type: string
+                scope:
+                    type: string
+        GasSensitivity:
+            type: object
+            properties:
+                lngShareOfImports:
+                    type: number
+                    format: double
+                    description: Fraction, not percent. Absent when the measurement is unavailable.
+                lngImportsTj:
+                    type: number
+                    format: double
+                lngDisruptionTj:
+                    type: number
+                    format: double
+                    description: Assumed monthly LNG loss against the route baseline, independent of current shipping flow.
+                totalDemandTj:
+                    type: number
+                    format: double
+                deficitPct:
+                    type: number
+                    format: double
+                    description: Loss as percent of recorded demand. May exceed 100; not a supply-shortage estimate.
+                dataAvailable:
+                    type: boolean
+                assessment:
+                    type: string
+                storage:
+                    $ref: '#/components/schemas/GasStorageObservation'
+                dataSource:
+                    type: string
+                dataMonth:
+                    type: string
+                    description: JODI observation month (YYYY-MM), or empty when unknown. Availability does not imply freshness.
+                modelBasis:
+                    type: string
+                    description: '"assumed_route_sensitivity". No country-specific supplier exposure is measured.'
+        GasStorageObservation:
+            type: object
+            properties:
+                fillPct:
+                    type: number
+                    format: double
+                gasTwh:
                     type: number
                     format: double
                 trend:

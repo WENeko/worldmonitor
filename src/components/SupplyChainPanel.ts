@@ -419,9 +419,6 @@ export class SupplyChainPanel extends Panel {
           : (ts?.riskLevel === 'elevated' || ts?.riskLevel === 'moderate') ? 'sc-disrupt-yellow' : 'sc-disrupt-green';
 
         const expanded = this.expandedChokepoint === cp.name;
-        const actionRow = expanded && ts?.riskReportAction
-          ? `<div class="sc-routing-advisory">${escapeHtml(ts.riskReportAction)}</div>`
-          : '';
         // Render the chart placeholder only when expanded AND upstream reported
         // data available for this chokepoint. If dataAvailable === false, the
         // per-id history key would also be zero (we skip the lazy-fetch).
@@ -543,7 +540,6 @@ export class SupplyChainPanel extends Panel {
               </div>` : ''}
             ${cp.description ? `<div class="trade-description">${escapeHtml(cp.description)}</div>` : ''}
             <div class="trade-affected">${cp.affectedRoutes.slice(0, 3).map(r => escapeHtml(r)).join(', ')}</div>
-            ${actionRow}
             ${chartPlaceholder}
             ${bypassSection}
             ${scenarioSection}

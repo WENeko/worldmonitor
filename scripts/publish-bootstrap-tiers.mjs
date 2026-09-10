@@ -188,6 +188,12 @@ export async function assembleBootstrapTierPayload(registry, options = {}) {
     // every client downloads. Compact at publish time; the canonical Redis
     // value stays intact for RPC / MCP (#7288).
     if (names[index] === 'naturalEvents') value = compactNaturalEventsDashboardPayload(value);
+    if (names[index] === 'chokepoints' && Array.isArray(value?.chokepoints)) {
+      value = { ...value, chokepoints: value.chokepoints.map(cp => cp?.transitSummary ? {
+        ...cp,
+        transitSummary: { ...cp.transitSummary, riskSummary: '', riskReportAction: '' },
+      } : cp) };
+    }
     data[names[index]] = value;
   }
 

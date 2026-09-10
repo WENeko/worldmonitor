@@ -412,6 +412,8 @@ This is the workhorse shape for "give me the top-N by some metric". The same sha
 
 **Intent.** From `get_chokepoint_status`, get the risk level + 7-day incident count for the Strait of Hormuz only.
 
+Generated `riskSummary` and `riskReportAction` prose is withheld as empty strings. Missing prose does not mean low risk. Use the structured risk fields and check measurement availability before interpreting counts.
+
 **Tool call:**
 
 ```json
@@ -429,8 +431,8 @@ This is the workhorse shape for "give me the top-N by some metric". The same sha
 {
   "transit-summaries": {
     "summaries": {
-      "suez":          { "riskLevel": "critical", "incidentCount7d": 28,  "wowChangePct":   4.5, "riskSummary": "..." },
-      "hormuz_strait": { "riskLevel": "critical", "incidentCount7d": 627, "wowChangePct": -72.5, "riskSummary": "..." },
+      "suez":          { "riskLevel": "critical", "incidentCount7d": 28,  "wowChangePct":   4.5, "riskSummary": "" },
+      "hormuz_strait": { "riskLevel": "critical", "incidentCount7d": 627, "wowChangePct": -72.5, "riskSummary": "" },
       "panama":        { "riskLevel": "",         "incidentCount7d": 0,   "wowChangePct":   0.4, "riskSummary": "" }
     }
   }

@@ -466,7 +466,7 @@ runSeed('infra', 'outages', CANONICAL_KEY, fetchAll, {
   // The companion keys are written by publishCompanion(), outside runSeed's own
   // extra-key phase, so runSeed does not know to retain them when the
   // annotations leg fails, times out or is SIGTERMed. Each is declared at its
-  // OWN TTL — the canonical 3h would quietly triple the anomalies key's 1h
+  // OWN TTL — the canonical 3h would extend the anomalies key's 2h
   // contract, and each meta key resolves through the same `resolveSeedMetaTtl`
   // that wrote it, so an EXPIRE can never shorten one. Meta is listed so a
   // retained payload can never outlive the clock that reports on it (see

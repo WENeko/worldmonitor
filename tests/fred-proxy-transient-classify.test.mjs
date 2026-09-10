@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 
 import { CHROME_UA, fredFetchJson, isTransientProxyError } from '../scripts/_seed-utils.mjs';
 
@@ -13,6 +14,56 @@ import { CHROME_UA, fredFetchJson, isTransientProxyError } from '../scripts/_see
 // Run: node --test tests/fred-proxy-transient-classify.test.mjs
 
 const originalFetch = globalThis.fetch;
+const proxyUtils = createRequire(import.meta.url)('../scripts/_proxy-utils.cjs');
+
+test('FRED retries a failed sticky exit on a different port before falling back direct', async (t) => {
+  const routes = [];
+  t.mock.method(proxyUtils, 'proxyFetch', async (_url, config) => {
+    routes.push(config);
+    if (config.port === 10001) throw new Error('Proxy CONNECT: HTTP/1.1 522 Server Error');
+    return { ok: true, buffer: Buffer.from('{"observations":[{"value":"1"}]}') };
+  });
+  t.mock.method(globalThis, 'fetch', async () => { throw new Error('direct must not be needed'); });
+  const result = await fredFetchJson('https://api.stlouisfed.org/fred/series/observations', 'https://fake:secret@gate.decodo.com:10001');
+  assert.deepEqual(routes.map((route) => route.port), [10001, 10002]);
+  assert.ok(routes.every((route) => route.host === 'gate.decodo.com' && route.tls && route.auth === 'fake:secret'));
+  assert.equal(result.observations[0].value, '1');
+});
+
+test('FRED exhausts three distinct sticky exits then retains the direct fallback', async (t) => {
+  const ports = [];
+  t.mock.method(proxyUtils, 'proxyFetch', async (_url, config) => {
+    ports.push(config.port);
+    throw new Error('Proxy CONNECT: HTTP/1.1 522 Server Error');
+  });
+  const direct = t.mock.method(globalThis, 'fetch', async () => new Response('{"observations":[]}'));
+  await fredFetchJson('https://api.stlouisfed.org/fred/series/observations', 'https://fake:secret@gate.decodo.com:49999');
+  assert.deepEqual(ports, [49999, 10001, 10002]);
+  assert.equal(direct.mock.callCount(), 1);
+});
+
+test('FRED leaves non-sticky and other-provider routes unchanged on retry', async (t) => {
+  for (const proxy of ['http://fake:secret@gate.decodo.com:7000', 'http://fake:secret@proxy.test:10001']) {
+    const routes = [];
+    const mocked = t.mock.method(proxyUtils, 'proxyFetch', async (_url, config) => {
+      routes.push(config);
+      if (routes.length === 1) throw new Error('HTTP 503');
+      return { ok: true, buffer: Buffer.from('{}') };
+    });
+    await fredFetchJson('https://api.stlouisfed.org/fred/series/observations', proxy);
+    assert.equal(routes.length, 2);
+    assert.deepEqual(routes[1], routes[0]);
+    assert.equal(routes[0].tls, false);
+    mocked.mock.restore();
+  }
+});
+
+test('FRED does not rotate or retry a permanent proxy authentication failure', async (t) => {
+  const proxy = t.mock.method(proxyUtils, 'proxyFetch', async () => { throw new Error('HTTP 407'); });
+  t.mock.method(globalThis, 'fetch', async () => new Response('{}'));
+  await fredFetchJson('https://api.stlouisfed.org/fred/series/observations', 'https://fake:secret@gate.decodo.com:10001');
+  assert.equal(proxy.mock.callCount(), 1);
+});
 
 // The direct leg is the LAST leg — when it drops a series, that series is gone
 // for the whole cycle. On 2026-08-26 FRED returned `direct: HTTP 502` for

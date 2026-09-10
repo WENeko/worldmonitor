@@ -597,6 +597,12 @@ export default async function handler(req, ctx) {
       }
       if (names[i] === 'wildfires') responseValue = compactWildfireBootstrapPayload(responseValue);
       if (names[i] === 'naturalEvents') responseValue = compactNaturalEventsDashboardPayload(responseValue);
+      if (names[i] === 'chokepoints' && Array.isArray(val?.chokepoints)) {
+        responseValue = { ...val, chokepoints: val.chokepoints.map(cp => cp?.transitSummary ? {
+          ...cp,
+          transitSummary: { ...cp.transitSummary, riskSummary: '', riskReportAction: '' },
+        } : cp) };
+      }
       data[names[i]] = responseValue;
     } else {
       missing.push(names[i]);

@@ -762,7 +762,9 @@ export interface ComputeEnergyShockScenarioResponse {
   degraded: boolean;
   chokepointConfidence: string;
   liveFlowRatio?: number;
+  /** @deprecated */
   gasImpact?: GasImpact;
+  gasSensitivity?: GasSensitivity;
 }
 
 export interface ProductImpact {
@@ -788,6 +790,28 @@ export interface GasStorageBuffer {
   fillPct: number;
   gasTwh: number;
   bufferDays: number;
+  trend: string;
+  date: string;
+  scope: string;
+}
+
+export interface GasSensitivity {
+  lngShareOfImports?: number;
+  lngImportsTj: number;
+  lngDisruptionTj: number;
+  totalDemandTj: number;
+  deficitPct: number;
+  dataAvailable: boolean;
+  assessment: string;
+  storage?: GasStorageObservation;
+  dataSource: string;
+  dataMonth: string;
+  modelBasis: string;
+}
+
+export interface GasStorageObservation {
+  fillPct: number;
+  gasTwh: number;
   trend: string;
   date: string;
   scope: string;

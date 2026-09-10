@@ -524,6 +524,10 @@ test('an optional slice that could not be confirmed is recorded on the success m
     JSON.parse(healthy.store.get(DDOS_KEY))._targetLocationsDegraded, undefined,
     'the diagnostic stays on seed-meta and never reaches the published payload',
   );
+  const healthyEntry = classifyCompanion('ddosAttacks', DDOS_KEY, DDOS_META_KEY, healthy.store);
+  const degradedEntry = classifyCompanion('ddosAttacks', DDOS_KEY, DDOS_META_KEY, degraded.store);
+  assert.equal(healthyEntry.status, 'OK');
+  assert.deepEqual(degradedEntry, { ...healthyEntry, targetLocationsDegraded: true });
 });
 
 test('runSeed retains both companion keys at their own TTLs when the fetch phase fails', () => {

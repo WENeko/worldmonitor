@@ -78,6 +78,30 @@ function classifyPresent(name, meta) {
   });
 }
 
+test('optional DDoS target degradation is diagnostic only across health states', () => {
+  for (const [classify, age, expected] of [
+    [classifyPresent, 1, 'OK'],
+    [classifyPresent, 61, 'STALE_SEED'],
+    [classifyMissing, 1, 'EMPTY'],
+  ]) {
+    const meta = { fetchedAt: NOW - age * 60_000, recordCount: 0 };
+    const baseline = classify('ddosAttacks', meta);
+    const degraded = classify('ddosAttacks', { ...meta, targetLocationsDegraded: true });
+    assert.equal(degraded.status, expected);
+    assert.deepEqual(degraded, { ...baseline, targetLocationsDegraded: true });
+  }
+  for (const value of [undefined, false, 'true', 1, {}]) {
+    const entry = classifyPresent('ddosAttacks', {
+      fetchedAt: NOW, recordCount: 0, targetLocationsDegraded: value,
+    });
+    assert.equal(Object.hasOwn(entry, 'targetLocationsDegraded'), false);
+  }
+  const unrelated = classifyPresent('trafficAnomalies', {
+    fetchedAt: NOW, recordCount: 0, targetLocationsDegraded: true,
+  });
+  assert.equal(Object.hasOwn(unrelated, 'targetLocationsDegraded'), false);
+});
+
 test('published strict projections escalate when their data key vanishes', () => {
   for (const name of STRICT_PROJECTIONS) {
     const seedCfg = SEED_META[name];

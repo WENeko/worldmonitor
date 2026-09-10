@@ -354,4 +354,56 @@ describe('chokepoint source availability', () => {
       /source coverage incomplete/,
     );
   });
+  it('withholds legacy generated prose while preserving the captured risk observations', async () => {
+    const capture = JSON.parse(await readFile('tests/fixtures/chokepoints-routing-advice-2026-09-10.json', 'utf8'));
+    const harness = redisHarness(async (url) => { throw new Error(`unexpected fetch: ${url}`); });
+    harness.values.set('supply_chain:chokepoints:v4', JSON.stringify(capture.body));
+    globalThis.fetch = harness.fetchImpl as typeof fetch;
+
+    const response = await getChokepointStatus({} as never, {});
+    const expected = structuredClone(capture.body);
+    for (const cp of expected.chokepoints) {
+      cp.transitSummary.riskSummary = '';
+      cp.transitSummary.riskReportAction = '';
+    }
+    assert.deepEqual(response, expected);
+    assert.doesNotMatch(JSON.stringify(response), /REROUTE|50-80K|Salalah/);
+  });
+
+  it('withholds generated prose from old transit summaries before caching a fresh response', async () => {
+    const capture = JSON.parse(await readFile('tests/fixtures/chokepoints-routing-advice-2026-09-10.json', 'utf8'));
+    const original = capture.body.chokepoints.find((cp: { id: string }) => cp.id === 'hormuz_strait');
+    const harness = redisHarness(async (url) => {
+      if (url.includes('msi.nga.mil')) return Response.json([]);
+      if (url.startsWith('https://relay.test/ais/snapshot')) return Response.json({
+        density: [], disruptions: [], snapshotAt: Date.now(), status: { connected: true, vessels: 10, messages: 20 },
+      });
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    const summaries = completeTransitSummaries();
+    const cases = [original.transitSummary.riskReportAction, undefined, null, { route: 'Suez', cost: '$50-80K' }];
+    for (const [index, advice] of cases.entries()) {
+      Object.assign(summaries[CHOKEPOINTS[index]!.id]!, {
+        riskSummary: advice, riskReportAction: advice, riskLevel: 'critical', incidentCount7d: 628,
+        todayTotal: null, todayTanker: null, todayCargo: null, todayOther: null,
+      });
+    }
+    harness.values.set('supply_chain:transit-summaries:v1', JSON.stringify({ summaries, fetchedAt: capture.retrievedAt }));
+    globalThis.fetch = harness.fetchImpl as typeof fetch;
+
+    const response = await getChokepointStatus({} as never, {});
+    assert.equal(response.upstreamUnavailable, false);
+    for (const cp of response.chokepoints.slice(0, cases.length)) {
+      assert.equal(cp.transitSummary?.riskReportAction, '');
+      assert.equal(cp.transitSummary?.riskSummary, '');
+      assert.equal(cp.transitSummary?.riskLevel, 'critical');
+      assert.equal(cp.transitSummary?.incidentCount7d, 628);
+      assert.equal(cp.transitSummary?.todayCountsAvailable, false);
+      assert.equal(cp.transitSummary?.dataAvailable, true);
+    }
+    const cached = harness.values.get('supply_chain:chokepoints:v4');
+    assert.ok(cached, 'the fresh response must be written to the shared cache');
+    assert.doesNotMatch(cached, /REROUTE|50-80K|Salalah/);
+  });
+
 });

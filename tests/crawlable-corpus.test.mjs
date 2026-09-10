@@ -73,6 +73,7 @@ import {
   MAX_LIVE_SNAPSHOT_AGE_MS,
 } from '../scripts/crawlable-live-tools.mjs';
 import {
+  CHOKEPOINT_CONTENT,
   CHOKEPOINT_SCORE_CONTEXT_ONLY,
   CHOKEPOINT_SCORE_INPUTS,
 } from '../scripts/chokepoint-page-content.mjs';
@@ -1121,6 +1122,20 @@ describe('JSON-LD @context guard', () => {
 });
 
 describe('crawlable corpus generator', () => {
+  it('rejects an invalid authored topic target before replacing generated pages', async () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'wm-invalid-topic-'));
+    const countryCodes = CHOKEPOINT_CONTENT.hormuz_strait.countryCodes;
+    try {
+      mkdirSync(join(outDir, 'countries'), { recursive: true });
+      writeFileSync(join(outDir, 'countries/index.html'), 'Existing country hub');
+      CHOKEPOINT_CONTENT.hormuz_strait.countryCodes = ['XX'];
+      await assert.rejects(buildCorpus({ rootDir: repoRoot, outDir }), /hormuz_strait.*countryCodes.*XX/);
+      assert.equal(read(outDir, 'countries/index.html'), 'Existing country hub');
+    } finally {
+      CHOKEPOINT_CONTENT.hormuz_strait.countryCodes = countryCodes;
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  });
   it('keeps decimal values inside one masked sentence', () => {
     assert.deepEqual(
       maskedSentences('Tuvalu reports 12.5% coverage. The inventory is partial.', ['Tuvalu']),
@@ -1789,6 +1804,7 @@ describe('crawlable corpus generator', () => {
       'scripts/source-catalog-identity.mjs',
       'shared/source-geography.json',
       'shared/publisher-families.js',
+      'shared/crawlable-crises.json',
       'src/config/feeds.ts',
       'server/worldmonitor/news/v1/_feeds.ts',
     ]);
@@ -2637,6 +2653,106 @@ describe('crawlable corpus generator', () => {
 
       const corpusData = await loadCorpusData({ rootDir: repoRoot });
       const countryByCode = new Map(corpusData.countries.map((country) => [country.code, country]));
+      const unavailableCoverage = new Set();
+      for (const crisis of corpusData.crises) {
+        const window = new Window();
+        try {
+          const crisisHtml = read(outDir, `crises/${crisis.slug}/index.html`);
+          window.document.write(crisisHtml);
+          for (const covered of crisis.coverage) {
+            const row = window.document.querySelector(`main [data-crisis-country][data-country-code="${covered.code}"]`);
+            assert.ok(row, `${crisis.slug} retains coverage for ${covered.code}`);
+            const country = countryByCode.get(covered.code);
+            if (!country) {
+              unavailableCoverage.add(covered.code);
+              assert.equal(row.querySelector('a'), null);
+              assert.ok(row.textContent.includes(covered.name));
+              continue;
+            }
+            const href = `/countries/${country.slug}/`;
+            assert.equal(row.querySelector('a')?.getAttribute('href'), href, `${crisis.slug} links ${covered.code} in coverage`);
+            assert.ok(existsSync(join(outDir, href, 'index.html')));
+            assert.ok(htmlToMarkdown(crisisHtml).includes(`](${href})`));
+            const countryWindow = new Window();
+            try {
+              countryWindow.document.write(read(outDir, `${href}index.html`));
+              assert.ok(countryWindow.document.querySelector(`main a[href="/crises/${crisis.slug}/"]`));
+            } finally {
+              countryWindow.close();
+            }
+          }
+        } finally {
+          window.close();
+        }
+      }
+      assert.deepEqual([...unavailableCoverage], ['PS']);
+      const topicWindow = new Window();
+      try {
+        const requiredPaths = [
+          ...Object.entries(JSON.parse(readFileSync(join(repoRoot, 'tests/fixtures/editorial-corpus-links.json'), 'utf8')))
+            .flatMap(([article, targets]) => targets.filter((target) => target.startsWith('/chokepoints/'))
+              .map((target) => [target, `/blog/posts/${article}/`])),
+          ...corpusData.chokepoints.map(({ slug }) => [
+            `/chokepoints/${slug}/`, '/blog/posts/what-is-a-maritime-chokepoint/',
+          ]),
+          ...Object.entries({
+            'suez-canal': ['egypt'],
+            'bab-el-mandeb': ['yemen', 'djibouti', 'eritrea'],
+            'strait-of-malacca': ['malaysia', 'indonesia', 'singapore'],
+            'panama-canal': ['panama'],
+            'taiwan-strait': ['taiwan', 'china'],
+            'strait-of-gibraltar': ['spain', 'morocco'],
+            'bosporus-strait': ['turkey'],
+            'korea-strait': ['south-korea', 'japan'],
+            'dover-strait': ['united-kingdom', 'france'],
+            'kerch-strait': ['ukraine', 'russia'],
+            'lombok-strait': ['indonesia'],
+            'cape-of-good-hope': ['south-africa'],
+          }).flatMap(([waterway, countries]) => countries.flatMap((country) => [
+            [`/chokepoints/${waterway}/`, `/countries/${country}/`],
+            [`/countries/${country}/`, `/chokepoints/${waterway}/`],
+          ])),
+          ...[
+            ['bab-el-mandeb', 'red-sea-security'],
+            ['kerch-strait', 'ukraine-war'],
+            ['suez-canal', 'red-sea-security'],
+            ['bosporus-strait', 'ukraine-war'],
+            ['strait-of-hormuz', 'iran-israel-escalation'],
+          ].flatMap(([waterway, crisis]) => [
+            [`/chokepoints/${waterway}/`, `/crises/${crisis}/`],
+            [`/crises/${crisis}/`, `/chokepoints/${waterway}/`],
+          ]),
+          ...['iran', 'oman', 'bahrain', 'kuwait', 'qatar', 'saudi-arabia', 'united-arab-emirates'].flatMap((slug) => [
+            [`/countries/${slug}/`, '/chokepoints/strait-of-hormuz/'],
+            ['/chokepoints/strait-of-hormuz/', `/countries/${slug}/`],
+          ]),
+          ['/chokepoints/strait-of-hormuz/', '/crises/hormuz-gulf-security/'],
+          ['/crises/hormuz-gulf-security/', '/chokepoints/strait-of-hormuz/'],
+          ['/chokepoints/strait-of-hormuz/', '/blog/posts/energy-shock-monitoring-chokepoints-worldmonitor/'],
+        ];
+        for (const [source, target] of requiredPaths) {
+          const html = read(outDir, `${source}index.html`);
+          topicWindow.document.body.innerHTML = html;
+          const links = topicWindow.document.querySelectorAll(`main a[href="${target}"]`);
+          assert.notEqual(source, target);
+          assert.equal(links.length, 1, `${source} links ${target} once in content`);
+          assert.ok(target.startsWith('/blog/posts/')
+            ? existsSync(join(repoRoot, 'blog-site/src/content/blog', `${target.split('/')[3]}.md`))
+            : existsSync(join(outDir, target, 'index.html')));
+          assert.equal(links[0].hasAttribute('target'), false);
+          assert.equal(links[0].relList.contains('nofollow'), false);
+          assert.equal(links[0].closest('[data-nosnippet]'), null);
+          assert.ok(htmlToMarkdown(html).includes(`](${target})`));
+          topicWindow.document.querySelector('header').append(links[0]);
+          assert.equal(topicWindow.document.querySelector(`main a[href="${target}"]`), null);
+          assert.equal(htmlToMarkdown(topicWindow.document.documentElement.outerHTML).includes(`](${target})`), false);
+        }
+        topicWindow.document.body.innerHTML = read(outDir, 'countries/norway/index.html');
+        assert.equal(topicWindow.document.querySelector('main a[href="/chokepoints/strait-of-hormuz/"]'), null);
+        assert.doesNotMatch(topicWindow.document.querySelector('main').textContent, /Related chokepoint trackers/);
+      } finally {
+        topicWindow.close();
+      }
       const microstateCohort = JSON.parse(readFileSync(
         join(repoRoot, 'server/worldmonitor/resilience/v1/cohorts/microstate-territories.json'),
         'utf8',
@@ -3748,11 +3864,19 @@ describe('crawlable corpus generator', () => {
       assert.equal(catalog.dataset.length, corpusData.crises.length + 1);
       for (const dataset of catalog.dataset) {
         assert.ok(dataset['@id'], `${dataset.name} must reuse its detail-page identity`);
-        assert.deepEqual(dataset, { '@id': dataset['@id'] }, 'catalog must reference the canonical Dataset');
+        assert.equal(dataset['@type'], 'Dataset');
+        for (const field of ['name', 'description']) {
+          assert.ok(typeof dataset[field] === 'string' && dataset[field].trim(),
+            `${dataset['@id']} must carry ${field} on the catalog page`);
+        }
         const detailPath = new URL(dataset['@id']).pathname.slice(1) + 'index.html';
         const details = jsonLdObjects(read(outDir, detailPath)).flatMap((node) => collectDatasets(node));
-        assert.ok(details.some((node) => node['@type'] === 'Dataset' && node['@id'] === dataset['@id']),
-          `${dataset['@id']} must identify a Dataset on the generated detail page`);
+        const detail = details.find((node) => node['@id'] === dataset['@id']);
+        assert.ok(detail, `${dataset['@id']} must identify a Dataset on the generated detail page`);
+        for (const field of ['name', 'description', 'url', 'creator', 'license', 'keywords', 'distribution']) {
+          assert.ok(dataset[field], `${dataset['@id']} must carry ${field}`);
+          assert.deepEqual(dataset[field], detail[field], `${dataset['@id']} ${field} must match its detail page`);
+        }
       }
       assert.match(sourcesPage, /<h1>See every source behind World Monitor\.<\/h1>/);
       assert.match(sourcesPage, /<link rel="canonical" href="https:\/\/www\.worldmonitor\.app\/sources\/">/);
@@ -4429,8 +4553,8 @@ describe('crawlable corpus generator', () => {
       });
       assert.equal(
         redSeaDataset.dateModified,
-        laterDate(corpus.lastmod.crises, DATASET_SCHEMA_CONTENT_VERSION.crisis),
-        'changed crisis Dataset schema must advance only the crisis family stamp',
+        laterDate(corpus.livePulse.crises['red-sea-security'].asOf.slice(0, 10), DATASET_SCHEMA_CONTENT_VERSION.crisis),
+        'page links must not advance the crisis Dataset observation clock',
       );
       assert.equal(
         pageLastmod(redSea),
@@ -4940,7 +5064,7 @@ describe('crawlable corpus generator', () => {
       laterDate(data.lastmod.countries, CII_COUNTRY_PAGE_CONTENT_VERSION),
       'the CII country clock must derive from the generic country clock',
     );
-    assert.equal(data.lastmod.research, '2026-09-03');
+    assert.equal(data.lastmod.research, RESEARCH_PAGE_CONTENT_VERSION);
     assert.equal(
       data.lastmod.chokepoints,
       laterDate(
@@ -4958,8 +5082,9 @@ describe('crawlable corpus generator', () => {
         originLastmod: gitFileLastmod(repoRoot, data.sources.sourceOrigin),
         catalogInputLastmods: data.sources.sourceCatalogInputs.map((path) => gitFileLastmod(repoRoot, path)),
         sharedTemplateLastmod: gitFileLastmod(repoRoot, data.sources.sharedPageTemplate),
+        snapshotDate: data.livePulse.capturedAt,
       }),
-      'source-page lastmod must include manifest, renderer, origin, catalog-input, and shared-template changes',
+      'source-page lastmod must include catalog inputs, templates and the pulse snapshot',
     );
     assert.equal(
       data.lastmod.comparisons,
@@ -5257,6 +5382,7 @@ describe('live-pulse snapshot injection (#7533)', () => {
       let data = await loadCorpusData({ rootDir: repoRoot, livePulseSnapshotPath: join(pulseDir, `crawlable-live-pulse-${today}.json`) });
       const latestOther = [
         data.resilience.capturedAt,
+        data.lastmod.sources,
         gitFileLastmod(repoRoot, data.sources.countryRegions),
         gitFileLastmod(repoRoot, data.sources.microstateTerritories),
         ...CHOKEPOINT_PAGE_LASTMOD_PATHS.map((path) => gitFileLastmod(repoRoot, path)),
@@ -5287,6 +5413,7 @@ describe('live-pulse snapshot injection (#7533)', () => {
           baseUrl: 'https://www.worldmonitor.app',
           livePulseSnapshotPath: join(pulseDir, `crawlable-live-pulse-${pulseDate}.json`),
         });
+        assert.equal(data.lastmod.sources, pulseDate, 'a newer pulse must advance the sources catalog clock');
         const pageFor = (route) => `${route.slice(1)}index.html`;
         for (const route of [manifest.sections.comparisons.index, ...manifest.sections.comparisons.routes]) {
           const document = htmlDocument(read(outDir, pageFor(route)), `https://www.worldmonitor.app${route}`);
@@ -5363,6 +5490,7 @@ describe('live-pulse snapshot injection (#7533)', () => {
               originLastmod: gitFileLastmod(repoRoot, data.sources.sourceOrigin),
               catalogInputLastmods: data.sources.sourceCatalogInputs.map((path) => gitFileLastmod(repoRoot, path)),
               sharedTemplateLastmod: gitFileLastmod(repoRoot, data.sources.sharedPageTemplate),
+              snapshotDate: data.livePulse.capturedAt,
             }),
             pageFor(manifest.sections.sources.index),
           ]],
@@ -5482,7 +5610,7 @@ describe('live-pulse snapshot injection (#7533)', () => {
   // #7533-allowlist: 2026-08-29 x5 — STORY_CAPTURED_AT synthetic story clock and static snapshot-path fixtures
   // #7533-allowlist: 2026-09-01 x4 — CORPUS_GENERATOR_CONTENT_VERSION and synthetic development fixtures
   // #7533-allowlist: 2026-09-02 x17 — synthetic developments timestamps (incl. the nofollow index-row render fixture, #7748)
-  // #7533-allowlist: 2026-09-03 x15 — genuinely static: research lastmod, DataCatalog and ItemList render fixtures, datasetObservationCoverage fixtures
+  // #7533-allowlist: 2026-09-03 x14. Static DataCatalog and ItemList render fixtures, datasetObservationCoverage fixtures.
   it('rejects undocumented calendar-date literals in this file', () => {
     const source = readFileSync(fileURLToPath(import.meta.url), 'utf8');
     assert.ok(calendarDateAllowances(source).size >= 20, 'the #7533-allowlist comment must stay populated');

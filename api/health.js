@@ -169,6 +169,7 @@ const HEALTH_VERDICT_COMPACT_SNAPSHOT_KEY = healthVerdictRedisKey(
   process.env.VERCEL_GIT_COMMIT_SHA,
 );
 const HEALTH_VERDICT_SNAPSHOT_TTL_SECONDS = 60;
+const CONTRACTS_FINDER_CANONICAL_KEY = 'economic:global-tenders:v1';
 // Edge runtime mirror of scripts/china-coverage-manifest.mjs. Edge functions
 // cannot import scripts/; tests enforce key and status-projection parity.
 const CHINA_COVERAGE_SUMMARY_KEY = 'health:china-coverage:v1';
@@ -2506,6 +2507,9 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
         ...finiteCoverageField('countrySpecificImportCountryCount'),
         ...finiteCoverageField('globalProductionCommodityCount'),
         ...finiteCoverageField('completeCountryCount'),
+        ...finiteCoverageField('currentCountryCount'),
+        ...finiteCoverageField('retainedCountryCount'),
+        ...finiteCoverageField('oldestCountryCacheWrittenAt'),
         ...finiteCoverageField('rankableCountryCount'),
         ...finiteCoverageField('rankableRecordCount'),
         ...finiteCoverageField('freshRankableRecordCount'),
@@ -2579,6 +2583,7 @@ function readSeedMeta(seedCfg, keyMetaValues, keyMetaErrors, now) {
   return {
     hasMeta: meta != null,
     seedFetchedAt: fetchedAt,
+    targetLocationsDegraded: meta?.targetLocationsDegraded === true,
     seedAge,
     seedStale,
     seedError: sourceDegraded || failedDatasets.length > 0,
@@ -2935,6 +2940,8 @@ function classifyKey(name, redisKey, opts, ctx) {
   else status = 'OK';
 
   const entry = { status, records };
+  // Target locations are optional; expose their failure without changing status.
+  if (name === 'ddosAttacks' && meta.targetLocationsDegraded) entry.targetLocationsDegraded = true;
   // Source-level on-demand marker: "this key is RPC-populated or awaiting its
   // first producer run", NOT "any failure here is acceptable". The status suffix
   // (`EMPTY_ON_DEMAND`) cannot carry that, because it only covers the
@@ -3175,7 +3182,70 @@ function isContainedHealthWarning(entry, evidence, now = Date.now()) {
     && evidence?.status === entry.status
     && evidence.records === entry.records
     && evidence.usable === true
+    && (entry.containmentUntil === undefined || !isExpiredDeadline(entry.containmentUntil, now))
     && entry.readModelReady !== false;
+}
+
+function composeContractsFinderHealth(entry, meta, snapshot, readFailed, now) {
+  // Source-status bytes prove a diagnostic exists, not that its tender rows
+  // still exist. Replace the generic containment proof with the served data.
+  const evidence = { status: entry.status, records: entry.records, usable: false };
+  const source = Array.isArray(snapshot?.sourceStatuses)
+    ? snapshot.sourceStatuses.find((status) => status?.source === 'contracts-finder') : null;
+  const error = meta?.error ?? source?.error;
+  const lastAttemptAt = meta?.lastAttemptAt ?? source?.fetchedAt;
+  const lastSuccessAt = meta?.lastSuccessfulAt ?? source?.lastSuccessfulAt;
+  entry = { ...entry };
+  if (typeof meta?.sourceState === 'string') entry.sourceState = meta.sourceState;
+  if (typeof error === 'string') entry.error = error.slice(0, 200);
+  if (typeof lastAttemptAt === 'string') entry.lastAttemptAt = lastAttemptAt;
+  if (typeof lastSuccessAt === 'string') entry.lastSuccessAt = lastSuccessAt;
+  if (typeof meta?.firstFailureAt === 'string') entry.firstFailureAt = meta.firstFailureAt;
+  if (Number.isSafeInteger(meta?.consecutiveFailures) && meta.consecutiveFailures >= 0) {
+    entry.consecutiveSourceFailures = meta.consecutiveFailures;
+  }
+  if (readFailed) return { entry: { ...entry, status: 'REDIS_PARTIAL' }, evidence };
+  if (snapshot === null) return { entry: { ...entry, status: 'EMPTY', records: 0 }, evidence };
+  if (meta?.sourceState === 'ok') return { entry, evidence };
+  if (['OK', 'NOT_CONFIGURED'].includes(entry.status)) entry.status = 'SEED_ERROR';
+  if (snapshot.dataAvailable !== true || !Array.isArray(snapshot.tenders) || !Array.isArray(snapshot.sourceStatuses)) {
+    return { entry: { ...entry, status: 'EMPTY_DATA', records: 0 }, evidence };
+  }
+  const sourceRows = snapshot.tenders.filter((tender) => tender?.source === 'contracts-finder');
+  const records = sourceRows.filter((tender) => {
+    if (typeof tender.id !== 'string' || !tender.id.trim()
+      || typeof tender.title !== 'string' || !tender.title.trim()
+      || ![tender.categoryCodes, tender.sectors].every((values) => Array.isArray(values) && values.every((value) => typeof value === 'string'))
+      || !['active', 'open'].includes(tender.status) || !(Date.parse(tender.deadline) > now)) return false;
+    try {
+      const url = new URL(tender.officialUrl);
+      return url.protocol === 'https:' && !url.username && !url.password
+        && (url.hostname === 'contractsfinder.service.gov.uk' || url.hostname.endsWith('.contractsfinder.service.gov.uk'));
+    } catch { return false; }
+  });
+  // Count only the currently usable rows; expiry or corruption must not be
+  // hidden by the count written at the previous scheduled attempt.
+  entry.records = records.length;
+  const success = Date.parse(meta?.lastSuccessfulAt || '');
+  const first = Date.parse(meta?.firstFailureAt || '');
+  const attempt = Date.parse(meta?.lastAttemptAt || '');
+  const validEpisode = success > 0 && success <= first && first <= attempt && attempt <= now
+    && meta.fetchedAt === success && meta.consecutiveFailures === 1;
+  const aligned = source?.state === 'stale' && meta?.sourceState === 'stale'
+    && source.lastSuccessfulAt === meta.lastSuccessfulAt && source.fetchedAt === meta.lastAttemptAt
+    && source.firstFailureAt === meta.firstFailureAt && source.consecutiveFailures === meta.consecutiveFailures
+    && source.recordCount === records.length && meta.recordCount === records.length
+    && sourceRows.length === records.length && new Set(records.map((tender) => tender.id)).size === records.length;
+  const deadline = validEpisode && records.length > 0
+    ? Math.min(first + 90 * 60_000, success + SEED_META.globalTendersContractsFinder.maxStaleMin * 60_000,
+      ...records.map((tender) => Date.parse(tender.deadline))) : NaN;
+  if (entry.status === 'SEED_ERROR' && aligned && now < deadline) {
+    entry.containmentUntil = new Date(deadline).toISOString();
+    evidence.usable = true;
+  }
+  evidence.status = entry.status;
+  evidence.records = entry.records;
+  return { entry, evidence };
 }
 
 // Orders the buckets above so classifyKey can compare two candidate verdicts
@@ -3453,6 +3523,7 @@ const ENTRY_SOFTENING_DEADLINES = [
   { field: 'staleContentGraceUntil', kind: 'content', status: null },
   { field: 'sourceFailurePendingUntil', kind: 'source', status: 'SEED_ERROR' },
   { field: 'chinaCoveragePendingUntil', kind: 'source', status: null },
+  { field: 'containmentUntil', kind: 'source', status: null },
 ];
 
 function entryDeadlineRaw(entry, { field, status }) {
@@ -3952,6 +4023,7 @@ export async function handleHealth(req, ctx, options = {}) {
   for (const key of CANADA_ALERTS_CUTOVER_FALLBACK_KEYS) {
     if (!allDataKeys.includes(key)) allDataKeys.push(key);
   }
+  if (!allDataKeys.includes(CONTRACTS_FINDER_CANONICAL_KEY)) allDataKeys.push(CONTRACTS_FINDER_CANONICAL_KEY);
   const allMetaKeys = Object.values(SEED_META).map(s => s.key);
   const activationEntries = Object.entries(ACTIVATION_MARKERS);
   const fredRolloutCommands = fredRatesRolloutCommands(now);
@@ -4001,6 +4073,19 @@ export async function handleHealth(req, ctx, options = {}) {
   // sweep finished, so a request that spends time awaiting Redis cannot keep a
   // grace it has already outlived. Injected clocks stay fixed so unit tests
   // remain deterministic.
+  // Only a failed Contracts Finder refresh needs a row-level proof. Keep
+  // ordinary sweeps on STRLEN; a failure reads this one canonical snapshot.
+  const contractsFinderMetaResult = results[allDataKeys.length + allMetaKeys.indexOf(SEED_META.globalTendersContractsFinder.key)];
+  const contractsFinderMeta = unwrapEnvelope(parseRedisValue(contractsFinderMetaResult?.result)).data;
+  const contractsFinderDataResult = results[allDataKeys.indexOf(CONTRACTS_FINDER_CANONICAL_KEY)];
+  const contractsFinderHasData = keyHasData(CONTRACTS_FINDER_CANONICAL_KEY, contractsFinderDataResult?.result ?? 0);
+  let contractsFinderSnapshot = contractsFinderHasData ? undefined : null;
+  let contractsFinderReadFailed = Boolean(contractsFinderMetaResult?.error || contractsFinderDataResult?.error);
+  if (!contractsFinderReadFailed && contractsFinderHasData && contractsFinderMeta?.sourceState !== 'ok') {
+    const payload = await redisPipeline([['GET', CONTRACTS_FINDER_CANONICAL_KEY]], 4_000, true).catch(() => null);
+    contractsFinderReadFailed = !payload || Boolean(payload[0]?.error);
+    contractsFinderSnapshot = unwrapEnvelope(parseRedisValue(payload?.[0]?.result)).data;
+  }
   const evaluationNow = snapshotNow();
 
   // keyStrens: byte length per data key (0 = missing/empty/sentinel)
@@ -4098,6 +4183,11 @@ export async function handleHealth(req, ctx, options = {}) {
     for (const [name, redisKey] of Object.entries(registry)) {
       totalChecks++;
       let entry = classifyKey(name, redisKey, opts, classifyCtx);
+      if (name === 'globalTendersContractsFinder') {
+        const composed = composeContractsFinderHealth(entry, contractsFinderMeta, contractsFinderSnapshot, contractsFinderReadFailed, evaluationNow);
+        entry = composed.entry;
+        containmentEvidenceByName.set(name, composed.evidence);
+      }
       if (name === 'chinaCoverage') {
         entry = composeChinaCoverageStatus(
           entry,
@@ -4290,6 +4380,15 @@ export async function handleHealth(req, ctx, options = {}) {
   // only the verdict payload is reused, for at most 60 seconds. All other
   // responses already carry the no-store defaults from `headers` (a cached
   // 401 pins an auth failure; a cached 503 masks REDIS_DOWN recovery).
+  // Persistence can cross a tender deadline after classification. The cached
+  // snapshot is already rejected at that deadline; recheck the cold response too.
+  const contractsFinder = checks.globalTendersContractsFinder;
+  if (contractsFinder?.containmentUntil
+    && isContainedHealthWarning(contractsFinder, containmentEvidenceByName.get('globalTendersContractsFinder'), evaluationNow)
+    && isExpiredDeadline(contractsFinder.containmentUntil, snapshotNow())) {
+    verdictSnapshot.summary.containedWarn--;
+    verdictSnapshot.status = computeOverallStatus({ ...counts, containedWarn: verdictSnapshot.summary.containedWarn }, totalChecks).overall;
+  }
   return healthResponse(verdictSnapshot, compact, headers);
 }
 
@@ -4302,6 +4401,7 @@ export default async function handler(req, ctx) {
 // the classifier without standing up the full bootstrap-keys + Redis pipeline.
 // 2026-05-04 health-readiness plan, Sprint 1 test plan (Codex round 2 P1).
 export const __testing__ = {
+  composeContractsFinderHealth,
   readSeedMeta,
   classifyKey,
   healthResponseBody,

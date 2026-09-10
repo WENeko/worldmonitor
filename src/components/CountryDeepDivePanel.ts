@@ -1738,6 +1738,10 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
         .then((r) => r.json() as Promise<ComputeEnergyShockScenarioResponse>)
         .then((result) => {
           resultArea.replaceChildren();
+          if (result.gasImpact || (result.gasSensitivity && result.gasSensitivity.modelBasis !== 'assumed_route_sensitivity')) {
+            resultArea.append(this.el('div', 'cdp-economic-source', 'Gas scenario uses an outdated model. Retry after the cached response expires.'));
+            return;
+          }
           resultArea.append(this.renderShockResult(result));
           const lvl = result.coverageLevel ?? '';
           if (lvl) {
@@ -1767,7 +1771,7 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
   private renderShockResult(result: ComputeEnergyShockScenarioResponse): HTMLElement {
     const container = this.el('div', '');
 
-    if (!result.dataAvailable && !(result as any).gasImpact?.dataAvailable) {
+    if (!result.dataAvailable && !result.gasSensitivity?.dataAvailable) {
       container.append(this.el('div', 'cdp-economic-source', result.assessment));
       return container;
     }
@@ -1775,7 +1779,9 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     if (result.degraded) {
       const warn = this.el('div', '');
       warn.style.cssText = 'font-size:calc(10px * var(--wm-panel-effective-scale, 1));color:#f59e0b;margin-bottom:6px;padding:3px 6px;background:#1c1400;border-radius:3px';
-      warn.textContent = 'Live flow data unavailable — using historical baseline';
+      warn.textContent = result.gasSensitivity && !result.jodiOilCoverage
+        ? 'Shipping flow data unavailable. Gas sensitivity uses an assumed route baseline.'
+        : 'Live flow data unavailable — using historical baseline';
       container.append(warn);
     }
 
@@ -1863,31 +1869,34 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
       container.append(details);
     }
 
-    if (result.gasImpact?.dataAvailable) {
-      const gi = result.gasImpact;
+    if (result.gasSensitivity?.dataAvailable) {
+      const gi = result.gasSensitivity;
       const gasSection = this.el('div', '');
       gasSection.style.cssText = 'margin-top:10px;border-top:1px solid #374151;padding-top:8px';
 
       const gasTitle = this.el('div', '');
       gasTitle.style.cssText = 'font-size:calc(11px * var(--wm-panel-effective-scale, 1));font-weight:600;color:#e5e7eb;margin-bottom:4px';
-      gasTitle.textContent = 'Gas / LNG Impact';
+      gasTitle.textContent = 'Gas / LNG assumed sensitivity';
       gasSection.append(gasTitle);
 
       const metrics = this.el('div', 'cdp-economic-source');
-      metrics.textContent = `LNG share: ${(gi.lngShareOfImports * 100).toFixed(0)}% | Disruption: ${gi.lngDisruptionTj.toFixed(0)} TJ | Deficit: ${gi.deficitPct.toFixed(1)}%`;
+      const lngShare = gi.lngShareOfImports == null ? 'unknown' : `${(gi.lngShareOfImports * 100).toFixed(0)}%`;
+      const loss = gi.lngDisruptionTj > 0 && gi.lngDisruptionTj < 0.1 ? '<0.1' : gi.lngDisruptionTj.toFixed(1);
+      const demandPct = gi.deficitPct > 0 && gi.deficitPct < 0.1 ? '<0.1' : gi.deficitPct.toFixed(1);
+      metrics.textContent = `Recorded LNG share: ${lngShare} | Assumed monthly loss: ${loss} TJ | Share of recorded demand: ${demandPct}%`;
       gasSection.append(metrics);
 
       if (gi.storage) {
         const s = gi.storage;
         const storageDiv = this.el('div', 'cdp-economic-source');
         storageDiv.style.cssText += ';margin-top:4px';
-        storageDiv.textContent = `Gas storage: ${s.fillPct.toFixed(1)}% full (${s.gasTwh.toFixed(0)} TWh), buffer ~${s.bufferDays} days, ${s.trend} (${s.scope})`;
+        storageDiv.textContent = `GIE gas storage: ${s.fillPct.toFixed(1)}% full (${s.gasTwh.toFixed(1)} TWh), observed ${s.date || 'date unknown'}. Operational endurance is not estimated.`;
         gasSection.append(storageDiv);
       }
 
       const srcBadge = this.el('div', '');
       srcBadge.style.cssText = 'font-size:calc(10px * var(--wm-panel-effective-scale, 1));color:#9ca3af;margin-top:2px';
-      srcBadge.textContent = `Source: ${gi.dataSource === 'gie_daily' ? 'GIE (daily, Europe)' : 'JODI (monthly, global)'}`;
+      srcBadge.textContent = `Gas inputs: JODI, observation month ${gi.dataMonth || 'unknown'}. Availability does not establish freshness.`;
       gasSection.append(srcBadge);
 
       const gasAssess = this.el('div', '');

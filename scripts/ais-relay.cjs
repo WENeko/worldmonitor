@@ -7015,8 +7015,9 @@ async function seedCorridorRisk() {
         eventCount7d: Number(corridor.event_count_7d ?? 0),
         disruptionPct: Number(corridor.disruption_pct ?? 0),
         vesselCount: Number(corridor.vessel_count ?? 0),
-        riskSummary: String(corridor.risk_summary || '').slice(0, 200),
-        riskReportAction: String((corridor.risk_report?.action) || '').slice(0, 500),
+        // Generated prose has no verified routing or cost basis.
+        riskSummary: '',
+        riskReportAction: '',
       };
     }
     if (Object.keys(result).length === 0) {
@@ -7033,7 +7034,7 @@ async function seedCorridorRisk() {
       const label = corridorId.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
       publishNotificationEvent({
         eventType: 'corridor_risk',
-        payload: { title: `${label}: risk score ${c.riskScore}${c.riskSummary ? ' — ' + c.riskSummary.slice(0, 80) : ''}`, source: 'Corridor Risk' },
+        payload: { title: `${label}: risk score ${c.riskScore}`, source: 'Corridor Risk' },
         severity: c.riskScore >= 70 ? 'critical' : 'high',
         variant: undefined,
         dedupTtl: 3600,
@@ -9782,8 +9783,9 @@ async function seedTransitSummaries() {
       riskLevel: cr?.riskLevel ?? '',
       incidentCount7d: cr?.incidentCount7d ?? 0,
       disruptionPct: cr?.disruptionPct ?? 0,
-      riskSummary: cr?.riskSummary ?? '',
-      riskReportAction: cr?.riskReportAction ?? '',
+      // Persisted corridor data can predate prose suppression.
+      riskSummary: '',
+      riskReportAction: '',
       anomaly,
       dataAvailable: Boolean(cpData),
     };

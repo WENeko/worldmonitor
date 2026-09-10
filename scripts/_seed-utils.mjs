@@ -1418,14 +1418,14 @@ export function curlFetch(
 //                  "http://user:pass@host:port"  (explicit plain TCP)
 // Bare/undeclared-scheme proxies always use TLS (Decodo gate.decodo.com requires it).
 // Explicit http:// proxies use plain TCP to avoid breaking non-TLS setups.
-async function httpsProxyFetchJson(url, proxyAuth) {
-  const { buffer } = await httpsProxyFetchRaw(url, proxyAuth, { accept: 'application/json' });
+async function httpsProxyFetchJson(url, proxyAuth, proxyAttempt = 0) {
+  const { buffer } = await httpsProxyFetchRaw(url, proxyAuth, { accept: 'application/json', proxyAttempt });
   return JSON.parse(buffer.toString('utf8'));
 }
 
-export async function httpsProxyFetchRaw(url, proxyAuth, { accept = '*/*', timeoutMs = 20_000, signal } = {}) {
-  const { proxyFetch, parseProxyConfig } = createRequire(import.meta.url)('./_proxy-utils.cjs');
-  const proxyConfig = parseProxyConfig(proxyAuth);
+export async function httpsProxyFetchRaw(url, proxyAuth, { accept = '*/*', timeoutMs = 20_000, signal, proxyAttempt = 0 } = {}) {
+  const { proxyFetch, parseProxyConfigForAttempt } = createRequire(import.meta.url)('./_proxy-utils.cjs');
+  const proxyConfig = parseProxyConfigForAttempt(proxyAuth, proxyAttempt);
   if (!proxyConfig) throw new Error('Invalid proxy auth string');
   const result = await proxyFetch(url, proxyConfig, { accept, timeoutMs, signal, headers: { 'User-Agent': CHROME_UA } });
   if (!result.ok) throw Object.assign(new Error(`HTTP ${result.status}`), { status: result.status });
@@ -1489,12 +1489,13 @@ async function fredDirectFetchJson(url) {
 // so try proxy first to avoid 20s timeout on every direct attempt.
 export async function fredFetchJson(url, proxyAuth) {
   if (proxyAuth) {
-    // Retry the proxy (rotates exit IP per attempt) before falling back direct.
+    // Advance Decodo sticky ports before falling back direct. Reusing port
+    // 10001 kept all retries on the failed exit during the 2026-09-10 outage.
     // isTransientProxyError covers TLS-handshake tears — see its doc comment.
     let lastProxyErr;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        return await httpsProxyFetchJson(url, proxyAuth);
+        return await httpsProxyFetchJson(url, proxyAuth, attempt - 1);
       } catch (proxyErr) {
         lastProxyErr = proxyErr;
         const transient = isTransientProxyError(proxyErr.message);
@@ -1940,7 +1941,7 @@ export async function readSeedSnapshot(canonicalKey, { strict = false, includeEn
   if (!url || !token) return null;
   try {
     const resp = await fetch(`${url}/get/${encodeURIComponent(canonicalKey)}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token}`, 'User-Agent': CHROME_UA },
       signal: AbortSignal.timeout(5_000),
     });
     if (!resp.ok) {

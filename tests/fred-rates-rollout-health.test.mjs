@@ -187,6 +187,7 @@ function installHealthPipelineMock(recordCount, {
       fetchedAt: DEPLOYED_AT,
       recordCount: Math.max(10_000, ...configs.map((config) => config.minRecordCount ?? 0)),
     };
+    if (key === SEED_META.globalTendersContractsFinder.key) meta.sourceState = 'ok';
     for (const config of configs) {
       if (config.requiredRedistributionPolicyVersion != null) {
         meta.redistributionPolicyVersion = config.requiredRedistributionPolicyVersion;

@@ -14,6 +14,17 @@ function request(method: string, params: Record<string, unknown> = {}, id = 1): 
 }
 
 describe('Skills Over MCP extension', () => {
+  it('serves gas sensitivity semantics and omitted endurance through the skill resource', async () => {
+    const read = await handler(request('resources/read', { uri: 'skill://assess-energy-shock/SKILL.md' }));
+    const body = await read.json() as { result: { contents: Array<{ text: string }> } };
+    assert.equal(read.status, 200);
+    const content = body.result.contents[0]!.text;
+    assert.match(content, /assumed_route_sensitivity/);
+    assert.match(content, /`gasImpact` is deprecated and omitted/);
+    assert.match(content, /`gasSensitivity.dataMonth`/);
+    assert.match(content, /Current shipping flow does not scale it/);
+  });
+
   it('advertises the extension and anonymously enumerates complete skill entries', async () => {
     const initialized = await handler(request('initialize', {
       protocolVersion: '2026-07-28', capabilities: {}, clientInfo: { name: 'test', version: '1' },
