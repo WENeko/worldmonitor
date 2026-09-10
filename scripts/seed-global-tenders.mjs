@@ -85,7 +85,7 @@ function samIpv4ResponseTransport(httpsGetFn = httpsGet) {
 // Callers with a long per-attempt timeout must lower maxRetries accordingly.
 // Sources run in parallel, so the section pays the slowest source, not the sum.
 async function fetchResponse(url, options = {}, transport = fetchResponseTransport) {
-  const { timeoutMs = 20_000, maxRetries = 2, retry429 = true, ...fetchOptions } = options;
+  const { timeoutMs = 20_000, maxRetries = 2, retryDelayMs = 1000, retry429 = true, ...fetchOptions } = options;
   return withRetry(async () => {
     const response = await transport(url, {
       ...fetchOptions,
@@ -103,7 +103,7 @@ async function fetchResponse(url, options = {}, transport = fetchResponseTranspo
       throw error;
     }
     return response;
-  }, maxRetries, 1000);
+  }, maxRetries, retryDelayMs);
 }
 
 async function fetchJson(url, options = {}) {
@@ -325,7 +325,7 @@ export async function fetchWorldBank({ now = Date.now(), fetchJsonFn = fetchJson
   url.searchParams.set('srce', 'both');
   url.searchParams.set('notice_type_exact', 'Invitation for Bids^Invitation for Prequalification^Request for Expression of Interest');
   url.searchParams.set('deadline_strdate', new Date(now).toISOString().slice(0, 10));
-  const payload = await fetchJsonFn(url);
+  const payload = await fetchJsonFn(url, { retryDelayMs: 5000 });
   const rawNotices = payload?.procnotices;
   if (!rawNotices || (typeof rawNotices !== 'object' && !Array.isArray(rawNotices))) {
     throw new Error('World Bank response is missing procnotices');
@@ -399,6 +399,7 @@ export function sourceHealthMeta(status) {
       lastSuccessfulAt: status.lastSuccessfulAt || '',
       consecutiveFailures: status.consecutiveFailures,
       firstFailureAt: status.firstFailureAt,
+      ...(status.confirmedEmpty === true ? { confirmedEmpty: true } : {}),
       ...(status.error ? { error: status.error } : {}),
     } : {}),
   };

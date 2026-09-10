@@ -2848,5 +2848,20 @@
   "widgets.saveFailed": "Widget could not be saved. Please try again.",
   "widgets.send": "Send",
   "widgets.serverError": "Server error: {{status}}",
-  "widgets.unknownError": "Unknown error"
+  "widgets.unknownError": "Unknown error",
+  "components.decisionBrief.title": "Decision brief",
+  "components.decisionBrief.fuel": "Fuel",
+  "components.decisionBrief.chokepoint": "Chokepoint",
+  "components.decisionBrief.baseline": "Baseline disruption",
+  "components.decisionBrief.comparison": "Comparison disruption",
+  "components.decisionBrief.capture": "Capture / refresh both",
+  "components.decisionBrief.downloadHtml": "Download decision HTML",
+  "components.decisionBrief.downloadJson": "Download decision JSON",
+  "components.decisionBrief.back": "← Back to brief",
+  "components.decisionBrief.select": "Select an energy disruption, then capture both scenarios.",
+  "components.decisionBrief.changed": "Selection changed. Capture both scenarios before exporting.",
+  "components.decisionBrief.loading": "Capturing both scenarios…",
+  "components.decisionBrief.captured": "Captured. Review observation dates and constraints before downloading.",
+  "components.decisionBrief.failed": "Could not capture the scenarios. Check your access and retry. No result is available to export.",
+  "components.decisionBrief.locked": "Decision brief is available on Pro."
 }

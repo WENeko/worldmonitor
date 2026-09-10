@@ -246,6 +246,39 @@ describe('proxy utilities', () => {
     );
   });
 
+  it('sanitizes a hostile attempt index instead of leaving the sticky range', () => {
+    // The clamp lives HERE rather than at each entry point because this is now
+    // a second door into the same arithmetic: #7963 exposed it through
+    // httpsProxyFetchRaw's `proxyAttempt` option, and that helper is injected
+    // into seeders that run their own 1-based retry loops. Its sibling
+    // resolveProxyStringForAttempt has always clamped (see 'reads the attempt
+    // as the first argument' above), so before this the guarantee depended on
+    // which door the caller came through.
+    //
+    // Unclamped, `+` concatenates before `%` coerces: attempt '2' on port 10005
+    // computes 4 + '2' === '42' and lands on 10043, a live exit nobody asked
+    // for. A negative index resolves BELOW the sticky floor (10000), which is
+    // not a sticky exit at all.
+    const sticky = 'gate.decodo.com:10005:proxy-user:proxy-secret';
+    assert.equal(
+      parseProxyConfigForAttempt(sticky, '2').port,
+      10007,
+      'a numeric string is an index, not a suffix',
+    );
+    for (const badAttempt of [undefined, null, NaN, 'two', {}, [], Infinity, -5]) {
+      assert.equal(
+        parseProxyConfigForAttempt(sticky, badAttempt).port,
+        10005,
+        `attempt=${String(badAttempt)} must degrade to the configured exit`,
+      );
+    }
+    assert.equal(
+      parseProxyConfigForAttempt(sticky, 2.9).port,
+      10007,
+      'a fractional attempt truncates rather than producing a fractional port',
+    );
+  });
+
   it('rejects a response stream as soon as it exceeds the byte limit', async () => {
     await assert.rejects(
       _readBoundedResponseStream(

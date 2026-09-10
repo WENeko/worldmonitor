@@ -2808,6 +2808,23 @@
       "succeeded": "Cheia de acces a fost salvată. O poți folosi data viitoare când te autentifici.",
       "retryable": "Nu s-a finalizat. Poți încerca din nou.",
       "failed": "Nu am putut salva o cheie de acces pe acest dispozitiv."
+    },
+    "decisionBrief": {
+      "title": "Sinteză pentru decizie",
+      "fuel": "Combustibil",
+      "chokepoint": "Punct de trecere critic",
+      "baseline": "Perturbare de referință",
+      "comparison": "Perturbare comparată",
+      "capture": "Încarcă / actualizează ambele",
+      "downloadHtml": "Descarcă sinteza în HTML",
+      "downloadJson": "Descarcă sinteza în JSON",
+      "back": "← Înapoi la sinteza țării",
+      "select": "Selectați o perturbare energetică, apoi încărcați ambele scenarii.",
+      "changed": "Selecția s-a schimbat. Încărcați ambele scenarii înainte de export.",
+      "loading": "Se încarcă ambele scenarii…",
+      "captured": "Încărcare completă. Verificați datele observațiilor și constrângerile înainte de descărcare.",
+      "failed": "Scenariile nu au putut fi încărcate. Verificați accesul și încercați din nou. Nu există rezultate de exportat.",
+      "locked": "Sinteza pentru decizie este disponibilă cu Pro."
     }
   },
   "popups": {

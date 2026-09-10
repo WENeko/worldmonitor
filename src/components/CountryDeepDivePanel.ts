@@ -2839,7 +2839,17 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
       }
       this.exportEvidenceBundle();
     });
-    right.append(shareBtn, maxBtn, storyButton, exportButton, evidenceButton);
+    const decisionButton = this.el('button', 'cdp-action-btn', t('components.decisionBrief.title')) as HTMLButtonElement;
+    decisionButton.type = 'button';
+    decisionButton.addEventListener('click', () => {
+      if (!hasPremiumAccess(getAuthState())) {
+        trackGateHit('decision-brief');
+        showToast(t('components.decisionBrief.locked'));
+        return;
+      }
+      void this.openDecisionBrief(decisionButton);
+    });
+    right.append(shareBtn, maxBtn, storyButton, exportButton, decisionButton, evidenceButton);
     header.append(left, right);
 
     const scoreCard = this.el('section', 'cdp-card cdp-score-card');
@@ -3765,6 +3775,39 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
           : undefined,
       this.currentName ?? undefined,
     );
+  }
+
+  private async openDecisionBrief(trigger: HTMLButtonElement): Promise<void> {
+    const code = this.currentCode;
+    const name = this.currentName;
+    const signal = this.signal;
+    if (!code || !name || this.outputClose || this.outputRequestSignal === signal) return;
+    this.outputRequestSignal = signal;
+    trigger.disabled = true;
+    try {
+      const [{ createDecisionBriefOutput }, { captureDecisionBrief }, { buildDecisionBrief }] = await Promise.all([
+        import('./CountryBriefOutput'), import('@/services/decision-brief'), import('@/utils/decision-brief'),
+      ]);
+      if (signal.aborted || this.signal !== signal || this.currentCode !== code || !this.isVisible() || this.outputClose) return;
+      const shell = this.content.querySelector<HTMLElement>('.cdp-shell')!;
+      const scrollTop = this.content.scrollTop;
+      const outputController = new AbortController();
+      const output = createDecisionBriefOutput({ code, name }, AbortSignal.any([signal, outputController.signal]),
+        async (selection, requestSignal) => buildDecisionBrief(selection, await captureDecisionBrief(selection, requestSignal)),
+        () => this.outputClose?.());
+      this.outputClose = () => {
+        outputController.abort();
+        output.remove(); shell.hidden = false; this.outputClose = null;
+        this.content.scrollTop = scrollTop; trigger.focus({ preventScroll: true });
+      };
+      shell.hidden = true; this.content.append(output); this.content.scrollTop = 0;
+      output.querySelector<HTMLButtonElement>('button')?.focus();
+    } catch {
+      showToast('Could not prepare the decision brief. Please retry.');
+    } finally {
+      if (this.outputRequestSignal === signal) this.outputRequestSignal = null;
+      trigger.disabled = false;
+    }
   }
 
   private async openOutput(kind: 'story' | 'report', trigger: HTMLButtonElement): Promise<void> {

@@ -2194,3 +2194,9 @@
   .cdp-output-paper { padding: 20px 16px; }
   .cdp-output-controls label { width: auto; }
 }
+
+.cdp-decision-paper h2 { margin: 22px 0 8px; font-size: 21px; }
+.cdp-decision-paper h3 { margin: 14px 0 4px; font-size: 16px; }
+.cdp-decision-paper p { margin: 0 0 10px; }
+.cdp-decision-paper ul { padding-inline-start: 20px; }
+.cdp-decision-paper li { margin-bottom: 8px; }

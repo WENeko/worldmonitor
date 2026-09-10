@@ -2992,8 +2992,9 @@ describe('quantified cross-Strait activity (#5575)', () => {
     );
   });
 
+  for (const failureMessage of ['request timeout', 'fetch failed']) {
   for (const failure of ['none', 'list', 'detail'] as const) {
-    it(`uses MND proxy only after a timeout (${failure}) and resets the route each run`, async () => {
+    it(`uses MND proxy after ${failureMessage} (${failure}) and resets the route each run`, async () => {
       const direct: string[] = [];
       const proxied: string[] = [];
       const list = mndListWithCount(MND_MAX_DETAIL_REQUESTS_PER_RUN);
@@ -3006,7 +3007,7 @@ describe('quantified cross-Strait activity (#5575)', () => {
           if (url.includes('mod.go.jp')) return new Response(usableJapanEnglishIndex);
           direct.push(url);
           if (failure === 'list' || (failure === 'detail' && !url.includes('plaactlist'))) {
-            throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+            throw new TypeError(failureMessage);
           }
           return new Response(url.includes('plaactlist') ? list : fixture('mnd-detail.html'));
         },
@@ -3038,6 +3039,7 @@ describe('quantified cross-Strait activity (#5575)', () => {
       }
     });
   }
+  }
 
   it('uses direct retry when a preferred proxy later times out on an MND list page', async () => {
     const transports: string[] = [];
@@ -3049,7 +3051,7 @@ describe('quantified cross-Strait activity (#5575)', () => {
         if (url.includes('mod.go.jp')) return new Response(usableJapanEnglishIndex);
         transports.push(`direct:${new URL(url).pathname}`);
         if (url === CROSS_STRAIT_SOURCE_CONTRACTS.taiwanMnd.listUrl) {
-          throw new Error('request timeout');
+          throw new TypeError('fetch failed');
         }
         if (url.endsWith('/plaactlist/2')) return new Response(mndListWithCount(1, 90_100));
         return new Response(fixture('mnd-detail.html'));
@@ -3338,7 +3340,47 @@ describe('quantified cross-Strait activity (#5575)', () => {
     assert.equal(clock, 20_000);
   });
 
-  it('publishes recovered MND proxy data and retains the true success clock when both routes later fail', async () => {
+  it('does not retry a buffered MND proxy body failure as a direct header failure', async () => {
+    const direct: string[] = [];
+    const proxied: string[] = [];
+    const list = mndListWithCount(MND_MAX_DETAIL_REQUESTS_PER_RUN);
+    const snapshot = await fetchCrossStraitActivitySnapshot({
+      now: Date.parse(retrievedAt), proxyUrl: '', mndProxyUrl: 'https://proxy.test',
+      sleepFn: async () => {},
+      fetchFn: async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.includes('mod.go.jp')) return new Response(usableJapanEnglishIndex);
+        direct.push(url);
+        throw new TypeError('fetch failed');
+      },
+      proxyRequestFn: (url, config, options) => {
+        proxied.push(url);
+        return proxyFetch(url, config, {
+          ...options,
+          connectTunnel: async () => ({ socket: {}, destroy: () => {} }),
+          requestFn: (_options, onResponse) => Object.assign(new EventEmitter(), {
+            end() {
+              const body = Object.assign(new PassThrough(), { headers: {}, statusCode: 200 });
+              onResponse(body);
+              if (url.includes('plaactlist')) body.end(list);
+              else body.destroy(new Error('response stream reset'));
+            },
+          }),
+        });
+      },
+    });
+    const mnd = snapshot.sources.find(source => source.id === 'taiwan-mnd');
+    assert.deepEqual(direct, [CROSS_STRAIT_SOURCE_CONTRACTS.taiwanMnd.listUrl]);
+    assert.equal(proxied.length, 1 + MND_MAX_DETAIL_REQUESTS_PER_RUN);
+    assert.equal(new Set(proxied).size, proxied.length);
+    assert.equal(mnd.transportStatus, 'error');
+    assert.equal(mnd.lastSuccessAt, null);
+    assert.deepEqual(mnd.errorCodes, ['SOURCE_ERROR']);
+    assert.equal(mnd.requestDiagnostics.filter(row => row.purpose === 'detail').length,
+      MND_MAX_DETAIL_REQUESTS_PER_RUN);
+  });
+
+  it('recovers MND header failures and keeps repeated unusable coverage actionable', async () => {
     const stored = new Map();
     const writer = async (key, value) => { stored.set(key, value); };
     const reader = async key => stored.get(key) ?? null;
@@ -3355,7 +3397,7 @@ describe('quantified cross-Strait activity (#5575)', () => {
         sleepFn: async () => {},
         fetchFn: async (input: string | URL | Request) => {
           if (String(input).includes('mod.go.jp')) return new Response(usableJapanEnglishIndex);
-          throw new Error('request timeout');
+          throw new TypeError('fetch failed');
         },
         proxyRequestFn: async (url: string) => {
           if (!recovers) throw new Error('proxy timeout');
@@ -3367,6 +3409,8 @@ describe('quantified cross-Strait activity (#5575)', () => {
       const meta = stored.get(metaKey);
       assert.equal(meta.fetchedAt, recovers ? now : Date.parse(retrievedAt));
       assert.equal(meta.consecutiveSourceFailures, recovers ? 0 : attempt);
+      assert.equal(snapshot.sources.find(source => source.id === 'taiwan-mnd')
+        .requestDiagnostics[0].errorCode, 'SOURCE_ERROR');
       assert.ok(snapshot.observations.some(row => row.sourceId === 'taiwan-mnd'));
       const entry = classifyKey(name, dataKey, { allowOnDemand: true }, {
         keyStrens: new Map([[dataKey, Buffer.byteLength(JSON.stringify(stored.get(dataKey)))]]),
@@ -3378,6 +3422,32 @@ describe('quantified cross-Strait activity (#5575)', () => {
       previousSnapshot = snapshot;
     }
   });
+
+  for (const response of ['http-error', 'body-error', 'empty-list'] as const) {
+    it(`does not retry an MND ${response} as a header transport failure`, async () => {
+      let directCalls = 0;
+      let proxyCalls = 0;
+      const snapshot = await fetchCrossStraitActivitySnapshot({
+        now: Date.parse(retrievedAt), proxyUrl: '', mndProxyUrl: 'https://proxy.test',
+        sleepFn: async () => {},
+        fetchFn: async (input: string | URL | Request) => {
+          if (String(input).includes('mod.go.jp')) return new Response(usableJapanEnglishIndex);
+          directCalls += 1;
+          if (response === 'http-error') return new Response('unavailable', { status: 503 });
+          if (response === 'body-error') return new Response(new ReadableStream({
+            start(controller) { controller.error(new TypeError('terminated')); },
+          }));
+          return new Response('<html></html>');
+        },
+        proxyRequestFn: async () => { proxyCalls += 1; throw new Error('must not proxy'); },
+      });
+      const mnd = snapshot.sources.find(source => source.id === 'taiwan-mnd');
+      assert.equal(directCalls, response === 'empty-list' ? MND_MAX_LIST_PAGES_PER_BACKFILL_RUN : 1);
+      assert.equal(proxyCalls, 0);
+      assert.equal(mnd.transportStatus, 'error');
+      assert.equal(mnd.lastSuccessAt, null);
+    });
+  }
 
   for (const failure of ['metadata', 'timeout'] as const) it(`retries transient MND detail ${failure} within the detail request cap`, async () => {
     const list = mndListWithCount(MND_MAX_DETAIL_REQUESTS_PER_RUN);

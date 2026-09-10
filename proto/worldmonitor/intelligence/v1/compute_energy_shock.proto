@@ -79,7 +79,7 @@ message ComputeEnergyShockScenarioResponse {
   repeated ProductImpact products = 6;
   int32  effective_cover_days = 7;
   string assessment           = 8;
-  bool   data_available       = 9;  // oil mode: equals jodi_oil_coverage; gas mode: equals gas data available; both mode: true if either has data. Use per-source coverage fields 11-14 for precise checks.
+  bool   data_available       = 9;  // oil mode: requires finite nonnegative observed crude imports; jodi_oil_coverage indicates row presence only. Gas mode: equals gas data available. Both mode: true if either fuel has usable inputs.
 
   // field 10 reserved for future use
 

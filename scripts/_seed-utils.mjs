@@ -1432,14 +1432,59 @@ export async function httpsProxyFetchRaw(url, proxyAuth, { accept = '*/*', timeo
   return { buffer: result.buffer, contentType: result.contentType };
 }
 
-// Whether a proxy error should be retried (the Decodo proxy rotates exit IP per
-// attempt). Covers 5xx/522, DNS/socket errors, AND mid-handshake TLS tears — the
+// Whether a proxy error should be retried. A retry reaches a DIFFERENT exit IP
+// only because the caller advances its attempt index (see fredFetchJson) — a
+// Decodo sticky port pins one exit for the life of the session and never
+// rotates on its own. Reading it the other way round is what let three retries
+// pile onto one dead exit during the 2026-09-10 outage (#7963).
+// Covers 5xx/522, DNS/socket errors, AND mid-handshake TLS tears — the
 // last group is load-bearing: if a TLS-tear isn't classified transient, the
 // retry loop breaks on attempt 1 and falls to a direct FRED fetch, which a
 // datacenter IP gets rate-limited/blocked on → the whole batch fails. Exported
 // for unit testing (the proxy fetch itself is network-bound and not injectable).
 export function isTransientProxyError(message) {
   return /HTTP 5\d{2}|522|timeout|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|EPIPE|socket (disconnected|hang up)|TLS connection|tls_get_more_records|packet length too long|SSL routines|secure TLS connection/i.test(message || '');
+}
+
+// Whether the ORIGIN refused this particular egress IP — a failure that a
+// different sticky exit can actually fix. FRED blocks datacenter IPs, which is
+// why the proxy leg exists at all (#2911), so a 403 served through a healthy
+// tunnel says "this exit is unwelcome" and the next sticky exit may be fine.
+//
+// 403 ONLY, deliberately. 429 was in the first draft and came out under review.
+// Nothing in this repo establishes that FRED's rate limit is scoped to the
+// source IP — #2911 cites direct-fetch TIMEOUTS as the observed motivation, not
+// IP-keyed 429s — and `api_key` travels in the query string (_fred-seeder.mjs),
+// which is how quota is conventionally scoped. If the limit is per-key,
+// rotating exits cannot clear it and merely triples the request count against a
+// quota that is already exhausted, while the Retry-After FRED sends is
+// discarded anyway because httpsProxyFetchRaw drops `result.headers` when it
+// throws. Widen to 429 only with evidence that FRED's 429 is IP-scoped, and
+// plumb Retry-After first — _proxy-utils.cjs already preserves those headers
+// through the tunnel for exactly this reason (#6241).
+//
+// Deliberately separate from isTransientProxyError rather than folded into it:
+// that predicate is shared by other seeders whose retry budgets are tuned to
+// their own upstreams, and widening it would change their behaviour too. Kept
+// status-based rather than message-based because proxyConnectTunnel and
+// httpsProxyFetchRaw both collapse to `HTTP <status>` text, and only the
+// structured fields tell the two apart.
+//
+// Gateway-layer rejections are excluded: proxyConnectTunnel marks its own
+// failures `proxyConnect: true` for exactly this decision — see its comment in
+// _proxy-utils.cjs, "only the origin case can be helped by a different exit". A
+// 407, or a gateway 403 for a port outside the account's allocation, means the
+// credentials or plan are wrong and no exit fixes that. Other origin 4xx are
+// excluded too: every exit answers a bad series id identically, so rotating on
+// one would just burn the proxy budget before the direct leg gets its turn.
+//
+// Takes the ERROR OBJECT, not a message string — it reads structured fields, so
+// a mistaken isExitRefusalError(err.message) would silently return false
+// forever and quietly disable rotation. The typeof guard makes that loud-ish
+// rather than accidental, and a regression test pins it.
+export function isExitRefusalError(error) {
+  if (!error || typeof error !== 'object' || error.proxyConnect) return false;
+  return error.status === 403;
 }
 
 const FRED_JSON_HEADERS = { Accept: 'application/json', 'User-Agent': CHROME_UA };
@@ -1492,21 +1537,36 @@ export async function fredFetchJson(url, proxyAuth) {
     // Advance Decodo sticky ports before falling back direct. Reusing port
     // 10001 kept all retries on the failed exit during the 2026-09-10 outage.
     // isTransientProxyError covers TLS-handshake tears — see its doc comment.
+    //
+    // The exits are recorded so the warning below can name them. Rotation
+    // no-ops silently for any host outside parseProxyConfigForAttempt's sticky
+    // map (us.decodo.com, an ISP or city-targeted endpoint) or any port outside
+    // its range, and a healthy run looks identical whether rotation engaged or
+    // the configured exit simply recovered. Three identical ports in that line
+    // is the operator's one-line proof the rotation is inert for the deployed
+    // PROXY_URL — without it the next outage reads exactly like the last one.
+    const { parseProxyConfigForAttempt } = createRequire(import.meta.url)('./_proxy-utils.cjs');
+    const triedExits = [];
     let lastProxyErr;
     for (let attempt = 1; attempt <= 3; attempt++) {
+      triedExits.push(parseProxyConfigForAttempt(proxyAuth, attempt - 1)?.port ?? '?');
       try {
         return await httpsProxyFetchJson(url, proxyAuth, attempt - 1);
       } catch (proxyErr) {
         lastProxyErr = proxyErr;
-        const transient = isTransientProxyError(proxyErr.message);
-        if (attempt < 3 && transient) {
+        // Two different reasons to try the next exit: the hop broke (transient),
+        // or this exit's IP is the thing FRED is refusing (403/429). The second
+        // is what the rotation above is FOR, and it used to break the loop after
+        // one attempt because the transient predicate matches no 4xx.
+        const rotatable = isTransientProxyError(proxyErr.message) || isExitRefusalError(proxyErr);
+        if (attempt < 3 && rotatable) {
           await new Promise((r) => setTimeout(r, 400 * attempt + Math.random() * 300));
           continue;
         }
         break;
       }
     }
-    console.warn(`  [fredFetch] proxy failed after retries (${lastProxyErr?.message}) — retrying direct`);
+    console.warn(`  [fredFetch] proxy failed after retries on exits [${triedExits.join(', ')}] (${lastProxyErr?.message}) — retrying direct`);
     try {
       return await fredDirectFetchJson(url);
     } catch (directErr) {

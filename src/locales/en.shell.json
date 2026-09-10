@@ -808,6 +808,9 @@
     },
     "supplyVulnerability": {
       "title": "Commodity Vulnerability"
+    },
+    "decisionBrief": {
+      "title": "Decision brief"
     }
   },
   "modals": {

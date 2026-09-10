@@ -2858,6 +2858,23 @@
       "succeeded": "Passkey mentve. Használhatod a következő bejelentkezéskor.",
       "retryable": "Ez nem fejeződött be. Megpróbálhatod újra.",
       "failed": "Erre az eszközre nem sikerült passkey-t menteni."
+    },
+    "decisionBrief": {
+      "title": "Döntési összefoglaló",
+      "fuel": "Tüzelőanyag",
+      "chokepoint": "Szűk keresztmetszet",
+      "baseline": "Alapeseti zavar",
+      "comparison": "Összehasonlító zavar",
+      "capture": "Mindkettő betöltése / frissítése",
+      "downloadHtml": "Összefoglaló letöltése HTML-ben",
+      "downloadJson": "Összefoglaló letöltése JSON-ban",
+      "back": "← Vissza az országjelentéshez",
+      "select": "Válasszon energiaellátási zavart, majd töltse be mindkét forgatókönyvet.",
+      "changed": "A kiválasztás módosult. Exportálás előtt töltse be mindkét forgatókönyvet.",
+      "loading": "Mindkét forgatókönyv betöltése…",
+      "captured": "Betöltve. Letöltés előtt ellenőrizze a megfigyelési dátumokat és a korlátokat.",
+      "failed": "Nem sikerült betölteni a forgatókönyveket. Ellenőrizze hozzáférését, és próbálja újra. Nincs exportálható eredmény.",
+      "locked": "A döntési összefoglaló Pro csomaggal érhető el."
     }
   },
   "popups": {

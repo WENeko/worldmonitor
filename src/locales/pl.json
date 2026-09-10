@@ -2827,6 +2827,23 @@
       "succeeded": "Klucz dostępu zapisany. Możesz go użyć przy następnym logowaniu.",
       "retryable": "To się nie powiodło. Możesz spróbować ponownie.",
       "failed": "Nie udało się zapisać klucza dostępu na tym urządzeniu."
+    },
+    "decisionBrief": {
+      "title": "Raport decyzyjny",
+      "fuel": "Paliwo",
+      "chokepoint": "Wąskie gardło",
+      "baseline": "Zakłócenie bazowe",
+      "comparison": "Zakłócenie porównawcze",
+      "capture": "Pobierz / odśwież oba",
+      "downloadHtml": "Pobierz raport w HTML",
+      "downloadJson": "Pobierz raport w JSON",
+      "back": "← Powrót do raportu kraju",
+      "select": "Wybierz zakłócenie dostaw energii, a następnie pobierz oba scenariusze.",
+      "changed": "Wybór zmieniony. Pobierz oba scenariusze przed eksportem.",
+      "loading": "Pobieranie obu scenariuszy…",
+      "captured": "Pobrano. Przed pobraniem pliku sprawdź daty obserwacji i ograniczenia.",
+      "failed": "Nie udało się pobrać scenariuszy. Sprawdź dostęp i spróbuj ponownie. Brak wyniku do eksportu.",
+      "locked": "Raport decyzyjny jest dostępny w Pro."
     }
   },
   "popups": {

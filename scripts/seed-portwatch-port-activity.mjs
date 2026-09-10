@@ -19,6 +19,8 @@ import {
   isCriticalContentRefreshDue,
   orderColdFetchQueue,
   PORTWATCH_CONTENT_FRESHNESS_ACTIVATION_KEY,
+  PORTWATCH_CONTENT_FRESHNESS_CADENCE_MINUTES,
+  PORTWATCH_DECISION_CRITICAL_COUNTRIES,
 } from './_portwatch-content-freshness.mjs';
 
 export {
@@ -156,7 +158,8 @@ const BATCH_BACKOFF_MS = 5_000;
 const BATCH_LOG_EVERY = 5;
 const RATE_LIMIT_RETRY_DELAY_MS = 2_000;
 const MAX_RATE_LIMIT_RETRIES = 1;
-// Cache hygiene: force a full refetch if the cached payload is older than 7 days
+// Hard publication expiry: reject cached payloads at seven days. Queue a full
+// refetch earlier so the bounded rotation can finish before this deadline,
 // even when upstream maxDate is unchanged. Protects against window-shift drift
 // (cached aggregates were computed against a window that's now 7+ days offset
 // from today's last30/prev30 cutoffs) and serves as a belt-and-braces refresh
@@ -1251,7 +1254,7 @@ export async function fetchAll(progress, { signal, expectedCountries = [] } = {}
   // `cacheWrittenAt` (ms epoch). We re-use them as-is when both of the
   // following hold:
   //   1. upstream max(date) for the country is unchanged since `asof`
-  //   2. `cacheWrittenAt` is within MAX_CACHE_AGE_MS
+  //   2. `cacheWrittenAt` leaves enough time for a bounded refresh rotation
   // Either check failing → fall through to the expensive paginated fetch.
   //
   // Cold run (no cache / legacy payloads without asof) always falls through.
@@ -1302,6 +1305,14 @@ export async function fetchAll(progress, { signal, expectedCountries = [] } = {}
   let needsFetch = [];
   let cacheHits = 0;
   const now = Date.now();
+  // Reserve a full sweep plus one missed cron before the seven-day expiry.
+  // Critical countries can consume their slots on every run. Without this
+  // lead, unchanged upstream dates keep a synchronized cohort cached until
+  // all countries expire together, when only 30 can recover per run.
+  const rotationSlots = MAX_COLD_FETCH_PER_RUN - PORTWATCH_DECISION_CRITICAL_COUNTRIES.length;
+  const refreshLeadMs = (Math.ceil(eligibleIso3.length / rotationSlots) + 1)
+    * PORTWATCH_CONTENT_FRESHNESS_CADENCE_MINUTES * 60_000;
+  const refreshAgeMs = Math.max(0, MAX_CACHE_AGE_MS - refreshLeadMs);
   for (let i = 0; i < eligibleIso3.length; i++) {
     const iso3 = eligibleIso3[i];
     const iso2 = iso3ToIso2.get(iso3);
@@ -1321,6 +1332,7 @@ export async function fetchAll(progress, { signal, expectedCountries = [] } = {}
         : prev?.asof === null && prev?.zeroActivity === true);
     const cacheFresh = !criticalRefreshDue
       && classifyDeferredPayload(prev, now).status === 'stale'
+      && now - prev.cacheWrittenAt < refreshAgeMs
       && observationMatches;
     if (cacheFresh) {
       const { refreshFailure: _failure, staleAsof: _stale, ...confirmed } = prev;

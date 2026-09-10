@@ -2426,6 +2426,23 @@
       "succeeded": "Chave de acesso salva. Você pode usá-la na próxima vez que entrar.",
       "retryable": "Isso não foi concluído. Você pode tentar novamente.",
       "failed": "Não conseguimos salvar uma chave de acesso neste dispositivo."
+    },
+    "decisionBrief": {
+      "title": "Resumo de decisão",
+      "fuel": "Combustível",
+      "chokepoint": "Ponto de passagem crítico",
+      "baseline": "Interrupção de referência",
+      "comparison": "Interrupção de comparação",
+      "capture": "Capturar / atualizar ambos",
+      "downloadHtml": "Baixar resumo em HTML",
+      "downloadJson": "Baixar resumo em JSON",
+      "back": "← Voltar ao resumo do país",
+      "select": "Selecione uma interrupção energética e capture os dois cenários.",
+      "changed": "Seleção alterada. Capture os dois cenários antes de exportar.",
+      "loading": "Capturando os dois cenários…",
+      "captured": "Captura concluída. Verifique as datas de observação e as restrições antes de baixar.",
+      "failed": "Não foi possível capturar os cenários. Verifique seu acesso e tente novamente. Nenhum resultado disponível para exportar.",
+      "locked": "O resumo de decisão está disponível no Pro."
     }
   },
   "popups": {

@@ -59,6 +59,7 @@ export function computeGulfShare(flows: ComtradeFlowLike[]): { share: number; ha
   let totalImports = 0;
   let gulfImports = 0;
   for (const flow of flows) {
+    if (/^0+$/.test(String(flow.partnerCode))) continue;
     const val = Number.isFinite(flow.tradeValueUsd) ? flow.tradeValueUsd : 0;
     if (val <= 0) continue;
     totalImports += val;

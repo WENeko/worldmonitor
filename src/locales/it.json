@@ -2808,6 +2808,23 @@
       "succeeded": "Passkey salvata. Puoi usarla la prossima volta che accedi.",
       "retryable": "Non è andato a buon fine. Puoi provare di nuovo.",
       "failed": "Non siamo riusciti a salvare una passkey su questo dispositivo."
+    },
+    "decisionBrief": {
+      "title": "Scheda decisionale",
+      "fuel": "Combustibile",
+      "chokepoint": "Punto di passaggio critico",
+      "baseline": "Interruzione di riferimento",
+      "comparison": "Interruzione di confronto",
+      "capture": "Acquisisci / aggiorna entrambi",
+      "downloadHtml": "Scarica la scheda in HTML",
+      "downloadJson": "Scarica la scheda in JSON",
+      "back": "← Torna alla scheda paese",
+      "select": "Seleziona un'interruzione energetica, poi acquisisci entrambi gli scenari.",
+      "changed": "Selezione modificata. Acquisisci entrambi gli scenari prima di esportare.",
+      "loading": "Acquisizione dei due scenari…",
+      "captured": "Acquisizione completata. Controlla le date delle osservazioni e i vincoli prima del download.",
+      "failed": "Impossibile acquisire gli scenari. Controlla il tuo accesso e riprova. Nessun risultato da esportare.",
+      "locked": "La scheda decisionale è disponibile con Pro."
     }
   },
   "popups": {

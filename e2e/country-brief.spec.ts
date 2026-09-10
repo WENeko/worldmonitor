@@ -1,7 +1,7 @@
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect, HYDRATED_MARKET } from './country-brief-fixtures';
 import { readFile } from 'node:fs/promises';
-import { installCountryBriefDesignData } from './country-brief-design-fixtures';
+import { installCountryBriefDesignData, installDecisionBriefData } from './country-brief-design-fixtures';
 
 test.use({ trace: 'on', serviceWorkers: 'block' });
 
@@ -240,4 +240,171 @@ test('limited country coverage stays navigable and China keeps its own section',
   await testInfo.attach('china-sections', { body: await page.screenshot({ path: testInfo.outputPath('china-sections.png') }), contentType: 'image/png' });
   expect(data.countriesRequested).toContain('LS');
   expect(data.countriesRequested).toContain('CN');
+});
+
+for (const mobile of [false, true]) {
+  test(`decision brief ${mobile ? 'mobile' : 'desktop'} preserves evidence and actions in actual downloads`, async ({ page, countryBrief }, testInfo) => {
+    void countryBrief;
+    if (mobile) await page.setViewportSize({ width: 390, height: 844 });
+    const state = await installDecisionBriefData(page);
+    await page.goto('/dashboard?country=DE');
+    const panel = page.locator('#country-deep-dive-panel');
+    await expect(panel).toHaveAttribute('aria-hidden', 'false');
+    await panel.getByRole('button', { name: 'Decision brief', exact: true }).click();
+    const output = panel.getByRole('region', { name: 'Decision brief', exact: true });
+    await expect(output).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath('decision-before.png') });
+    for (const mode of ['ready', 'missing', 'mismatch'] as const) {
+      state.mode = mode;
+      await output.getByRole('button', { name: 'Capture / refresh both' }).click();
+      await expect(output.getByRole('status')).toContainText('Captured.');
+      const paper = output.locator('.cdp-decision-paper');
+      await expect(paper).toContainText(mode === 'missing' ? 'Recover recorded LNG imports' : "Compare Germany's supply obligations and alternative origins");
+      if (mode !== 'missing') {
+        await expect(paper).toContainText('6,197.7 TJ');
+        await expect(paper).toContainText('12,395.4 TJ');
+        await expect(paper).toContainText('1.3 %');
+        await expect(paper).toContainText('2.7 %');
+        await expect(paper).toContainText('2025-01-02');
+      }
+      if (mode === 'mismatch') await expect(paper.locator('.cdp-decision-comparison')).toContainText('Numeric delta withheld');
+      const preview = JSON.parse(await paper.locator('#decision-brief-snapshot').textContent() ?? 'null');
+      const files: Record<string, string> = {};
+      for (const format of ['HTML', 'JSON']) {
+        const event = page.waitForEvent('download');
+        await output.getByRole('button', { name: `Download decision ${format}`, exact: true }).click();
+        const download = await event;
+        const path = testInfo.outputPath(`${mode}-${download.suggestedFilename()}`);
+        await download.saveAs(path);
+        files[format] = await readFile(path, 'utf8');
+        await testInfo.attach(`${mode}-${format}`, { path, contentType: format === 'HTML' ? 'text/html' : 'application/json' });
+      }
+      expect(JSON.parse(files.JSON!)).toEqual(preview);
+      const exported = await page.context().newPage();
+      await exported.route('http://decision-export.test/', route => route.fulfill({ body: files.HTML!, contentType: 'text/html' }));
+      await exported.goto('http://decision-export.test/');
+      expect(JSON.parse(await exported.locator('#decision-brief-snapshot').textContent() ?? 'null')).toEqual(preview);
+      await expect(exported.locator('.cdp-decision-action')).toHaveText(preview.action.text);
+      await expect(exported.locator('body')).toContainText(preview.action.constraint);
+      await expect(exported.locator('body')).toContainText(preview.action.trigger);
+      for (const ref of preview.action.references) await expect(exported.locator('body')).toContainText(ref);
+      await exported.screenshot({ path: testInfo.outputPath(`${mode}-export.png`), fullPage: true });
+      await exported.close();
+      await paper.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath(`${mode}-preview.png`) });
+      expect(await output.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    }
+    expect(state.requests).toHaveLength(6);
+  });
+}
+
+test('decision brief request failures recover and a second country uses its own evidence', async ({ page, countryBrief }) => {
+  void countryBrief;
+  const state = await installDecisionBriefData(page);
+  await page.goto('/dashboard?country=JP');
+  const panel = page.locator('#country-deep-dive-panel');
+  await expect(panel).toHaveAttribute('aria-hidden', 'false');
+  await panel.getByRole('button', { name: 'Decision brief', exact: true }).click();
+  const output = panel.locator('.cdp-output');
+  for (const mode of ['denied', 'error'] as const) {
+    state.mode = mode;
+    await output.getByRole('button', { name: 'Capture / refresh both' }).click();
+    await expect(output.getByRole('status')).toContainText('Check your access and retry');
+    await expect(output.getByRole('button', { name: 'Download decision JSON' })).toBeDisabled();
+  }
+  state.mode = 'ready';
+  await output.getByRole('button', { name: 'Capture / refresh both' }).click();
+  await expect(output.locator('.cdp-decision-paper')).toContainText("Compare Japan's supply obligations");
+  await expect(output.locator('.cdp-decision-paper')).toContainText('15,000.0 TJ');
+  await expect(output.locator('.cdp-decision-paper')).not.toContainText('Germany');
+  await output.getByLabel('Comparison disruption').selectOption('75');
+  await expect(output.getByRole('button', { name: 'Download decision JSON' })).toBeDisabled();
+  await expect(output.getByRole('status')).toContainText('Selection changed');
+  await output.getByRole('button', { name: 'Capture / refresh both' }).click();
+  await expect(output.locator('.cdp-decision-paper')).toContainText('22,500.0 TJ');
+  await output.getByLabel('Fuel', { exact: true }).selectOption('oil');
+  await output.getByRole('button', { name: 'Capture / refresh both' }).click();
+  await expect(output.locator('.cdp-decision-paper')).toContainText('100.0 kbd');
+  await expect(output.locator('.cdp-decision-comparison')).toContainText('Numeric delta withheld');
+  await expect(output.locator('.cdp-decision-paper')).toContainText('observed unknown');
+});
+
+test('decision brief rejects anonymous entry and ignores delayed responses after close and country change', async ({ page, countryBrief }) => {
+  void countryBrief;
+  await page.goto('/dashboard?country=DE');
+  const panel = page.locator('#country-deep-dive-panel');
+  await expect(panel).toHaveAttribute('aria-hidden', 'false');
+  await panel.getByRole('button', { name: 'Decision brief', exact: true }).click();
+  await expect(page.getByText('Decision brief is available on Pro.', { exact: true })).toBeVisible();
+  await expect(panel.locator('.cdp-output')).toHaveCount(0);
+  await installDecisionBriefData(page);
+  await page.reload();
+  await expect(panel).toHaveAttribute('aria-hidden', 'false');
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let pending = 0;
+  await page.route('**/api/intelligence/v1/compute-energy-shock*', async route => {
+    pending++;
+    await held;
+    await route.fallback();
+  });
+  await panel.getByRole('button', { name: 'Decision brief', exact: true }).click();
+  await panel.getByRole('button', { name: 'Capture / refresh both' }).click();
+  await expect.poll(() => pending).toBe(2);
+  await panel.locator('#deep-dive-close').click();
+  await expect(panel).toHaveAttribute('aria-hidden', 'true');
+  await page.locator('#searchBtn').click();
+  await page.locator('.search-modal .search-input').fill('Japan');
+  await page.locator('.search-result-item[data-index]').filter({ hasText: 'Brief: Japan' }).click();
+  await expect(panel.locator('.cdp-country-name')).toHaveText('Japan');
+  await panel.getByRole('button', { name: 'Decision brief', exact: true }).click();
+  // Positive control: a real, live, freshly-built output is mounted and waiting for a
+  // capture before the stale Germany responses land. Without this the checks below
+  // would also hold against an empty panel, which is what made them vacuous.
+  await expect(panel.locator('.cdp-output')).toHaveCount(1);
+  await expect(panel.locator('.cdp-output')).toContainText('Select an energy disruption');
+  release();
+  await expect(panel.locator('.cdp-output')).not.toContainText('Germany');
+  await expect(panel.locator('.cdp-decision-paper')).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Download decision JSON' })).toBeDisabled();
+});
+
+// Browser-level coverage for invalidation while a capture is in flight: the selection
+// change aborts the request, so the paper must clear, both exports must stay disabled,
+// and Capture must come back enabled (it is disabled for the duration of a capture, and
+// the in-flight handler declines to re-enable a button it no longer owns).
+//
+// This does NOT pin the stale-response generation guard, and no browser test can: the
+// abort rejects the fetch, so the success path is never reached. That guard is pinned by
+// the mocked-load case in tests/dom/decision-brief.test.mts ("ignores late responses
+// after selection changes, close and panel abort"), which resolves despite the abort —
+// verified red by deleting `if (signal.aborted || current !== generation) return;`.
+test('decision brief clears and stays usable when a selection change aborts a capture', async ({ page, countryBrief }) => {
+  void countryBrief;
+  await installDecisionBriefData(page);
+  await page.goto('/dashboard?country=DE');
+  const panel = page.locator('#country-deep-dive-panel');
+  await expect(panel).toHaveAttribute('aria-hidden', 'false');
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let pending = 0;
+  await page.route('**/api/intelligence/v1/compute-energy-shock*', async route => {
+    pending++;
+    await held;
+    await route.fallback();
+  });
+  await panel.getByRole('button', { name: 'Decision brief', exact: true }).click();
+  await panel.getByRole('button', { name: 'Capture / refresh both' }).click();
+  await expect.poll(() => pending).toBe(2);
+  // Invalidate while the capture is still in flight; the output stays in the document,
+  // unlike the close/country-change path above which detaches it outright.
+  await panel.getByLabel('Comparison disruption').selectOption('75');
+  await expect(panel.locator('.cdp-output')).toContainText('Selection changed');
+  release();
+  await expect(panel.locator('.cdp-decision-paper')).toHaveCount(0);
+  await expect(panel.locator('.cdp-output')).toContainText('Selection changed');
+  await expect(panel.getByRole('button', { name: 'Download decision HTML' })).toBeDisabled();
+  await expect(panel.getByRole('button', { name: 'Download decision JSON' })).toBeDisabled();
+  // The aborted capture must leave the control usable, not permanently disabled.
+  await expect(panel.getByRole('button', { name: 'Capture / refresh both' })).toBeEnabled();
 });

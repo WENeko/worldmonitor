@@ -2808,6 +2808,23 @@
       "succeeded": "Llave de acceso guardada. Puedes usarla la próxima vez que inicies sesión.",
       "retryable": "No se completó. Puedes intentar de nuevo.",
       "failed": "No pudimos guardar una llave de acceso en este dispositivo."
+    },
+    "decisionBrief": {
+      "title": "Informe de decisión",
+      "fuel": "Combustible",
+      "chokepoint": "Punto de paso crítico",
+      "baseline": "Interrupción de referencia",
+      "comparison": "Interrupción comparada",
+      "capture": "Capturar / actualizar ambos",
+      "downloadHtml": "Descargar informe en HTML",
+      "downloadJson": "Descargar informe en JSON",
+      "back": "← Volver al informe del país",
+      "select": "Seleccione una interrupción energética y capture ambos escenarios.",
+      "changed": "Selección modificada. Capture ambos escenarios antes de exportar.",
+      "loading": "Capturando ambos escenarios…",
+      "captured": "Captura completa. Revise las fechas de observación y las restricciones antes de descargar.",
+      "failed": "No se pudieron capturar los escenarios. Compruebe su acceso e inténtelo de nuevo. No hay resultados para exportar.",
+      "locked": "El informe de decisión está disponible con Pro."
     }
   },
   "popups": {

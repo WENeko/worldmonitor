@@ -2770,6 +2770,23 @@
       "succeeded": "通行金鑰已儲存。下次登入時可以使用。",
       "retryable": "操作未完成。您可以重試。",
       "failed": "無法在此裝置上儲存通行金鑰。"
+    },
+    "decisionBrief": {
+      "title": "決策簡報",
+      "fuel": "燃料",
+      "chokepoint": "咽喉要道",
+      "baseline": "基準中斷程度",
+      "comparison": "對比中斷程度",
+      "capture": "獲取 / 重新整理兩者",
+      "downloadHtml": "下載 HTML 簡報",
+      "downloadJson": "下載 JSON 簡報",
+      "back": "← 返回國家簡報",
+      "select": "選擇能源供應中斷情況，然後獲取兩個情景。",
+      "changed": "選擇已更改。匯出前請獲取兩個情景。",
+      "loading": "正在獲取兩個情景…",
+      "captured": "已獲取。下載前請核查觀測日期和限制條件。",
+      "failed": "無法獲取情景。請檢查存取權限並重試。沒有可匯出的結果。",
+      "locked": "決策簡報面向 Pro 使用者提供。"
     }
   },
   "popups": {

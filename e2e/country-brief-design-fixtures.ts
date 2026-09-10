@@ -38,3 +38,36 @@ export async function installCountryBriefDesignData(page: Page) {
   });
   return { releaseFactors, countriesRequested };
 }
+
+export async function installDecisionBriefData(page: Page) {
+  const design = await installCountryBriefDesignData(page);
+  design.releaseFactors();
+  const state = { mode: 'ready' as 'ready' | 'missing' | 'mismatch' | 'denied' | 'error', requests: [] as string[] };
+  await page.route('**/api/intelligence/v1/compute-energy-shock*', async route => {
+    const url = new URL(route.request().url());
+    state.requests.push(url.search);
+    if (state.mode === 'denied' || state.mode === 'error') {
+      return route.fulfill({ status: state.mode === 'denied' ? 403 : 503, json: { error: state.mode } });
+    }
+    const code = url.searchParams.get('country_code')!;
+    const pct = Number(url.searchParams.get('disruption_pct'));
+    const lng = code === 'DE' ? 41318 : 100000;
+    const demand = code === 'DE' ? 467224 : 500000;
+    const loss = Math.round(lng * 0.3 * pct / 100 * 10) / 10;
+    if (url.searchParams.get('fuel_mode') === 'oil') {
+      return route.fulfill({ json: { countryCode: code, chokepointId: url.searchParams.get('chokepoint_id'), disruptionPct: pct, dataAvailable: true, jodiOilCoverage: true, crudeLossKbd: pct * 2, gulfCrudeShare: 0.3, products: [], limitations: [] } });
+    }
+    await route.fulfill({ json: {
+      countryCode: code, chokepointId: url.searchParams.get('chokepoint_id'), disruptionPct: pct,
+      dataAvailable: state.mode !== 'missing', products: [], limitations: [], coverageLevel: 'partial',
+      gasSensitivity: state.mode === 'missing' ? undefined : {
+        dataAvailable: true, lngImportsTj: code === 'DE' ? 41318 : 100000, totalDemandTj: code === 'DE' ? 467224 : 500000,
+        lngDisruptionTj: loss, deficitPct: Math.round(loss / demand * 1000) / 10,
+        dataMonth: state.mode === 'mismatch' && pct === 100 ? '2026-06' : '2026-05', dataSource: 'JODI', modelBasis: 'assumed_route_sensitivity',
+        assessment: '30% assumed route exposure. Monthly sensitivity, not measured supplier exposure.',
+        storage: { gasTwh: 30, fillPct: 50, date: '2025-01-02', scope: 'national', trend: '' },
+      },
+    } });
+  });
+  return state;
+}

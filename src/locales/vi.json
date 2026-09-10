@@ -2770,6 +2770,23 @@
       "succeeded": "Khóa truy cập đã lưu. Bạn có thể sử dụng nó lần tới khi đăng nhập.",
       "retryable": "Quá trình chưa hoàn tất. Bạn có thể thử lại.",
       "failed": "Chúng tôi không thể lưu khóa truy cập trên thiết bị này."
+    },
+    "decisionBrief": {
+      "title": "Bản tóm tắt quyết định",
+      "fuel": "Nhiên liệu",
+      "chokepoint": "Điểm nghẽn",
+      "baseline": "Gián đoạn cơ sở",
+      "comparison": "Gián đoạn so sánh",
+      "capture": "Lấy / làm mới cả hai",
+      "downloadHtml": "Tải bản tóm tắt HTML",
+      "downloadJson": "Tải bản tóm tắt JSON",
+      "back": "← Về bản tóm tắt quốc gia",
+      "select": "Chọn một gián đoạn năng lượng, rồi lấy cả hai kịch bản.",
+      "changed": "Lựa chọn đã thay đổi. Hãy lấy cả hai kịch bản trước khi xuất.",
+      "loading": "Đang lấy cả hai kịch bản…",
+      "captured": "Đã lấy. Kiểm tra ngày quan sát và các hạn chế trước khi tải xuống.",
+      "failed": "Không thể lấy các kịch bản. Kiểm tra quyền truy cập và thử lại. Không có kết quả để xuất.",
+      "locked": "Bản tóm tắt quyết định có trong Pro."
     }
   },
   "popups": {

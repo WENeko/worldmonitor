@@ -2858,6 +2858,23 @@
       "succeeded": "Passkey saved. You can use it next time you sign in.",
       "retryable": "That didn't finish. You can try again.",
       "failed": "We couldn't save a passkey on this device."
+    },
+    "decisionBrief": {
+      "title": "Decision brief",
+      "fuel": "Fuel",
+      "chokepoint": "Chokepoint",
+      "baseline": "Baseline disruption",
+      "comparison": "Comparison disruption",
+      "capture": "Capture / refresh both",
+      "downloadHtml": "Download decision HTML",
+      "downloadJson": "Download decision JSON",
+      "back": "← Back to brief",
+      "select": "Select an energy disruption, then capture both scenarios.",
+      "changed": "Selection changed. Capture both scenarios before exporting.",
+      "loading": "Capturing both scenarios…",
+      "captured": "Captured. Review observation dates and constraints before downloading.",
+      "failed": "Could not capture the scenarios. Check your access and retry. No result is available to export.",
+      "locked": "Decision brief is available on Pro."
     }
   },
   "popups": {

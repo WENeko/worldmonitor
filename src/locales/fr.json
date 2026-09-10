@@ -2808,6 +2808,23 @@
       "succeeded": "Clé d'accès enregistrée. Vous pouvez l'utiliser la prochaine fois que vous vous connectez.",
       "retryable": "Cette opération ne s'est pas terminée. Vous pouvez réessayer.",
       "failed": "Nous n'avons pas pu enregistrer une clé d'accès sur cet appareil."
+    },
+    "decisionBrief": {
+      "title": "Note de décision",
+      "fuel": "Combustible",
+      "chokepoint": "Point de passage critique",
+      "baseline": "Perturbation de référence",
+      "comparison": "Perturbation comparée",
+      "capture": "Capturer / actualiser les deux",
+      "downloadHtml": "Télécharger la note en HTML",
+      "downloadJson": "Télécharger la note en JSON",
+      "back": "← Retour à la fiche pays",
+      "select": "Sélectionnez une perturbation énergétique, puis capturez les deux scénarios.",
+      "changed": "Sélection modifiée. Capturez les deux scénarios avant de les exporter.",
+      "loading": "Capture des deux scénarios…",
+      "captured": "Capture terminée. Vérifiez les dates des observations et les contraintes avant le téléchargement.",
+      "failed": "Impossible de capturer les scénarios. Vérifiez votre accès et réessayez. Aucun résultat à exporter.",
+      "locked": "La note de décision est disponible avec Pro."
     }
   },
   "popups": {

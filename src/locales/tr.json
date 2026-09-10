@@ -2789,6 +2789,23 @@
       "succeeded": "Passkey kaydedildi. Bir sonraki oturum açışında kullanabilirsiniz.",
       "retryable": "Bu tamamlanmadı. Yeniden deneyebilirsiniz.",
       "failed": "Bu cihaza passkey kaydedilemedi."
+    },
+    "decisionBrief": {
+      "title": "Karar özeti",
+      "fuel": "Yakıt",
+      "chokepoint": "Dar geçit",
+      "baseline": "Temel kesinti",
+      "comparison": "Karşılaştırma kesintisi",
+      "capture": "İkisini de al / yenile",
+      "downloadHtml": "Özeti HTML olarak indir",
+      "downloadJson": "Özeti JSON olarak indir",
+      "back": "← Ülke özetine dön",
+      "select": "Bir enerji kesintisi seçin, ardından iki senaryoyu da alın.",
+      "changed": "Seçim değişti. Dışa aktarmadan önce iki senaryoyu da alın.",
+      "loading": "İki senaryo alınıyor…",
+      "captured": "Alındı. İndirmeden önce gözlem tarihlerini ve kısıtları inceleyin.",
+      "failed": "Senaryolar alınamadı. Erişiminizi kontrol edip yeniden deneyin. Dışa aktarılacak sonuç yok.",
+      "locked": "Karar özeti Pro ile kullanılabilir."
     }
   },
   "popups": {

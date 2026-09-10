@@ -496,6 +496,62 @@ describe('marketing ignoreErrors — in-app-browser injected globals (2026-08-27
   });
 });
 
+describe("MARKETING_IGNORE_ERRORS — DuckDuckGo's feature registry (WORLDMONITOR-127)", () => {
+  it('drops the registry miss the dashboard has always dropped', () => {
+    // Verbatim production value: DuckDuckGo 18.1 / macOS at `/`, captured
+    // through `onunhandledrejection` with a NULL stacktrace — zero frames, so
+    // `marketingBeforeSend`'s frame gates cannot reach it and only a message
+    // rule can. The dashboard has suppressed the same sentence since
+    // `/feature named .\w+. was not found/` landed in
+    // `src/bootstrap/sentry-init.ts`; the marketing client is a separate init,
+    // which is the gap this closes.
+    assert.equal(isIgnored('Error', 'feature named `pageContext` was not found'), true);
+  });
+
+  it('slots the feature name, because DuckDuckGo adds features per release', () => {
+    // Deliberately NOT enumerated like the `Error invoking` reasons above: the
+    // name is a third-party identifier, not a vocabulary we review member by
+    // member, so every future feature shares the one disposition.
+    assert.equal(isIgnored('Error', 'feature named `duckPlayer` was not found'), true);
+    assert.equal(isIgnored('Error', 'feature named `click-to-load` was not found'), true);
+  });
+
+  it('keeps a first-party message that merely CONTAINS the phrase', () => {
+    // `ignoreErrors` is frame-blind, so only the complete anchored sentence may
+    // match — an unanchored copy of the dashboard's entry would also swallow
+    // our own wording riding a `/pro/assets/*.js` frame.
+    assert.equal(isIgnored('Error', 'feature named `pageContext` was not found'.toUpperCase()), false);
+    assert.equal(
+      isIgnored('Error', 'Config load failed: feature named `pageContext` was not found'),
+      false,
+    );
+    assert.equal(
+      isIgnored('Error', 'feature named `pageContext` was not found (retrying)'),
+      false,
+    );
+  });
+
+  it('keeps a re-quoted future wording so it surfaces as a new issue', () => {
+    // The backticks are matched literally. If DuckDuckGo re-quotes the message
+    // it must report rather than be swallowed by a loosened delimiter — the
+    // safe failure direction this policy keeps.
+    assert.equal(isIgnored('Error', "feature named 'pageContext' was not found"), false);
+    assert.equal(isIgnored('Error', 'feature named "pageContext" was not found'), false);
+  });
+
+  it('pins the marketing surface as `feature named`-free, which is what licenses the rule', () => {
+    // What licenses a frame-blind rule at all: the registry, its wording and
+    // its features are all DuckDuckGo's, and a pure-web bundle has no such
+    // registry to miss a lookup in.
+    const offenders = marketingFirstPartySources()
+      .filter((f) => !f.rel.includes('sentry-filter-policy'))
+      .filter((f) => /feature named/.test(f.code))
+      .map((f) => f.rel);
+    assert.deepEqual(offenders, [],
+      'the marketing surface now emits `feature named` — re-derive the WORLDMONITOR-127 rule');
+  });
+});
+
 describe('marketingBeforeSend — Safari-masked injected script (WORLDMONITOR-110)', () => {
   it('drops a readonly-property write whose only executable frames are masked', () => {
     // Verbatim production stack: iOS 18.7 / Mobile Safari 26.6, four
@@ -644,8 +700,13 @@ describe('policy wiring', () => {
     const dashboard = readFileSync(resolve(root, 'src/bootstrap/sentry-init.ts'), 'utf8');
     const dashboardCount = (dashboard.match(/^\s{6}\/.*\/,\s*(\/\/.*)?$/gm) ?? []).length;
     assert.ok(dashboardCount > 100, `sanity: expected a large dashboard array, got ${dashboardCount}`);
+    // The bound is a RATCHET against bulk-copying, not a budget to spend: it
+    // moves by one, in the same commit as the entry that needs the slot, and
+    // only once that entry carries its own licence scan and suppression tests
+    // (WORLDMONITOR-127 took it from 19 to 20). Raising it by more than one, or
+    // ahead of an entry, defeats the deliberation this red is here to force.
     assert.ok(
-      MARKETING_IGNORE_ERRORS.length < 20,
+      MARKETING_IGNORE_ERRORS.length < 21,
       `marketing array must stay a vetted subset, got ${MARKETING_IGNORE_ERRORS.length}`,
     );
   });

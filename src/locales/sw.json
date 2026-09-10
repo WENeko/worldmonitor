@@ -2858,6 +2858,23 @@
       "succeeded": "Passkey imehifadhiwa. Unaweza kuitumia wakati wa kuingia inayofuata.",
       "retryable": "Hiyo haikumalizia. Unaweza kujaribu tena.",
       "failed": "Hatuwezi kuhifadhi passkey kwenye kifaa hiki."
+    },
+    "decisionBrief": {
+      "title": "Muhtasari wa uamuzi",
+      "fuel": "Nishati ya mafuta",
+      "chokepoint": "Njia nyembamba",
+      "baseline": "Usumbufu wa msingi",
+      "comparison": "Usumbufu wa kulinganisha",
+      "capture": "Pata / sasisha zote mbili",
+      "downloadHtml": "Pakua muhtasari wa HTML",
+      "downloadJson": "Pakua muhtasari wa JSON",
+      "back": "← Rudi kwenye muhtasari wa nchi",
+      "select": "Chagua usumbufu wa usambazaji wa nishati, kisha upate hali zote mbili.",
+      "changed": "Chaguo limebadilika. Pata hali zote mbili kabla ya kuhamisha matokeo.",
+      "loading": "Inapata hali zote mbili…",
+      "captured": "Imepatikana. Kagua tarehe za uchunguzi na vikwazo kabla ya kupakua.",
+      "failed": "Imeshindwa kupata hali hizo. Kagua ruhusa yako ya kufikia na ujaribu tena. Hakuna matokeo ya kuhamisha.",
+      "locked": "Muhtasari wa uamuzi unapatikana kwa Pro."
     }
   },
   "popups": {

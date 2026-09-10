@@ -3178,12 +3178,33 @@ function isContainedHealthWarning(entry, evidence, now = Date.now()) {
   return healthStatusBucket(entry, now) === 'warn'
     && CONTAINMENT_ELIGIBLE_STATUSES.has(entry?.status)
     && Number.isFinite(entry?.records)
-    && entry.records > 0
+    && (entry.records > 0 || (entry.records === 0 && evidence?.confirmedEmpty === true))
     && evidence?.status === entry.status
     && evidence.records === entry.records
     && evidence.usable === true
     && (entry.containmentUntil === undefined || !isExpiredDeadline(entry.containmentUntil, now))
     && entry.readModelReady !== false;
+}
+
+function isUsableTender(tender) {
+  if (!tender || typeof tender !== 'object' || Array.isArray(tender)) return false;
+  const stringArray = (values) => Array.isArray(values) && values.every((value) => typeof value === 'string');
+  const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+  return [tender.id, tender.title, tender.source, tender.sourceNoticeId, tender.officialUrl,
+    tender.status, tender.participationMode].every((value) => typeof value === 'string' && value.trim())
+    && [tender.countryCode, tender.region, tender.buyer, tender.description, tender.noticeType,
+      tender.publishedAt, tender.updatedAt, tender.deadline]
+      .every((value) => value === undefined || typeof value === 'string')
+    && [tender.categoryCodes, tender.sectors, tender.eligibilityRequirements, tender.submissionUrls].every(stringArray)
+    && (tender.money === undefined || (object(tender.money)
+      && (tender.money.amount === undefined || Number.isFinite(tender.money.amount))
+      && (tender.money.currency === undefined || typeof tender.money.currency === 'string')))
+    && (tender.automationFit === undefined || (object(tender.automationFit)
+      && typeof tender.automationFit.level === 'string'
+      && Number.isFinite(tender.automationFit.score)
+      && typeof tender.automationFit.classificationVersion === 'string'
+      && stringArray(tender.automationFit.matchReasons)
+      && stringArray(tender.automationFit.evidence)));
 }
 
 function composeContractsFinderHealth(entry, meta, snapshot, readFailed, now) {
@@ -3231,17 +3252,28 @@ function composeContractsFinderHealth(entry, meta, snapshot, readFailed, now) {
   const attempt = Date.parse(meta?.lastAttemptAt || '');
   const validEpisode = success > 0 && success <= first && first <= attempt && attempt <= now
     && meta.fetchedAt === success && meta.consecutiveFailures === 1;
-  const aligned = source?.state === 'stale' && meta?.sourceState === 'stale'
+  const aggregateFresh = Number.isFinite(snapshot.fetchedAt) && snapshot.fetchedAt > 0
+    && snapshot.fetchedAt <= now && now < snapshot.fetchedAt + 180 * 60_000;
+  const confirmedEmpty = source?.confirmedEmpty === true && meta?.confirmedEmpty === true
+    && sourceRows.length === 0 && source.recordCount === 0 && meta.recordCount === 0
+    && snapshot.sourceStatuses.filter((status) => status?.source === 'contracts-finder').length === 1
+    && snapshot.sourceStatuses.every((status) => status && typeof status.source === 'string' && typeof status.state === 'string')
+    && ['available', 'partial', 'empty'].includes(snapshot.availability)
+    && aggregateFresh && snapshot.tenders.every(isUsableTender);
+  const aligned = (confirmedEmpty ? source.state === 'error' && meta.sourceState === 'error'
+    : source?.state === 'stale' && meta?.sourceState === 'stale')
     && source.lastSuccessfulAt === meta.lastSuccessfulAt && source.fetchedAt === meta.lastAttemptAt
     && source.firstFailureAt === meta.firstFailureAt && source.consecutiveFailures === meta.consecutiveFailures
     && source.recordCount === records.length && meta.recordCount === records.length
     && sourceRows.length === records.length && new Set(records.map((tender) => tender.id)).size === records.length;
-  const deadline = validEpisode && records.length > 0
+  const deadline = validEpisode && (records.length > 0 || confirmedEmpty)
     ? Math.min(first + 90 * 60_000, success + SEED_META.globalTendersContractsFinder.maxStaleMin * 60_000,
+      ...(confirmedEmpty ? [snapshot.fetchedAt + 180 * 60_000] : []),
       ...records.map((tender) => Date.parse(tender.deadline))) : NaN;
   if (entry.status === 'SEED_ERROR' && aligned && now < deadline) {
     entry.containmentUntil = new Date(deadline).toISOString();
     evidence.usable = true;
+    if (confirmedEmpty) evidence.confirmedEmpty = true;
   }
   evidence.status = entry.status;
   evidence.records = entry.records;

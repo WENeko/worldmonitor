@@ -303,6 +303,58 @@ test('12-hour rolling recovery stays complete across daily advances within the o
   assert.ok(successfulRuns >= 10, 'recover within a rotation and remain complete over multiple rotations');
 });
 
+test('the 120-of-174 crash backlog recovers through persisted bounded batches', () => {
+  let state = fixtures();
+  for (const [index, [, code]] of countries.entries()) {
+    state[`${PREFIX}${code}`].cacheWrittenAt = NOW - (index < 84 ? 8 : 1) * DAY;
+    state[`${PREFIX}${code}`].asof = index >= 84 && index < 148 ? '2026-09-09' : '2026-09-08';
+  }
+  for (const [run, covered] of [120, 150, 174].entries()) {
+    const now = NOW + run * PORTWATCH_CONTENT_FRESHNESS_CADENCE_MINUTES * 60_000;
+    const result = runProducer(state, 'complete', now);
+    assert.equal(result.redis[META].coverage.published, covered);
+    if (covered < 174) {
+      assert.match(result.error, /Incomplete PortWatch coverage/);
+      assert.deepEqual(result.redis[CANONICAL], state[CANONICAL]);
+      assert.equal(result.redis[META].fetchedAt, state[META].fetchedAt);
+    } else {
+      assert.equal(result.error, null);
+      assert.equal(result.redis[META].sourceState, 'ok');
+      assert.equal(result.redis[META].fetchedAt, now);
+    }
+    state = result.redis;
+  }
+});
+
+test('unchanged upstream stays covered across cache expiry without exceeding the refresh cap', () => {
+  let state = fixtures();
+  state[CANONICAL] = countries.map(([, code]) => code);
+  for (const [, code] of countries) {
+    const payload = state[`${PREFIX}${code}`];
+    payload.cacheWrittenAt = NOW;
+    payload.fetchedAt = new Date(NOW).toISOString();
+    payload.asof = '2026-09-09';
+    payload.contentAsOfChangedAt = NOW - 10 * DAY;
+  }
+  const cadenceMs = PORTWATCH_CONTENT_FRESHNESS_CADENCE_MINUTES * 60_000;
+  for (let run = 0; run < 30; run++) {
+    if (run === 9 || run === 22) continue;
+    const now = NOW + run * cadenceMs;
+    const result = runProducer(state, 'complete', now);
+    assert.equal(result.error, null, `run ${run}: ${result.redis[META].coverage.published}/174 covered`);
+    assert.equal(result.redis[META].coverage.published, 174);
+    const activityRequests = result.requests.map((query: string) => new URLSearchParams(query))
+      .filter((query: URLSearchParams) => query.get('where')?.startsWith('ISO3=') && !query.has('outStatistics'));
+    assert.ok(activityRequests.length <= 60, 'retain the 30-country, two-window cap');
+    for (const [, code] of countries) {
+      const payload = result.redis[`${PREFIX}${code}`];
+      assert.ok(now - payload.cacheWrittenAt < 7 * DAY, `${code} expired at run ${run}`);
+      assert.equal(payload.contentAsOfChangedAt, NOW - 10 * DAY, 'refetch must not renew frozen content');
+    }
+    state = result.redis;
+  }
+});
+
 test('a deferred refresh failure cannot be hidden by otherwise complete retained coverage', () => {
   const input = fixtures();
   for (const [, code] of countries) {

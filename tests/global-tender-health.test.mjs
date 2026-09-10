@@ -237,6 +237,114 @@ async function classifyContractsFinder(snapshot, now = CF_NOW, readFailed = fals
   return { ...composed, contained: __testing__.isContainedHealthWarning(composed.entry, composed.evidence, now) };
 }
 
+async function failedEmptyContractsFinder(previousSnapshot, siblingRecords = []) {
+  const { fetchGlobalTenders, fetchContractsFinder, sourceStatus } = await import('../scripts/seed-global-tenders.mjs');
+  const success = CF_NOW - 60 * 60_000;
+  previousSnapshot ??= await fetchGlobalTenders({ now: success, adapters: [
+    ['contracts-finder', () => fetchContractsFinder({ now: success, fetchJsonFn: async () => ({ releases: [] }) })],
+  ] });
+  return fetchGlobalTenders({ now: CF_NOW, previousSnapshot, adapters: [
+    ['contracts-finder', async () => { throw new Error('timeout'); }],
+    ['ted', async () => ({ records: siblingRecords, status: sourceStatus('ted', 'ok', siblingRecords, '', CF_NOW) })],
+  ] });
+}
+
+test('verified empty source survives its first failed refresh with truthful producer-to-health evidence', async () => {
+  const snapshot = await failedEmptyContractsFinder();
+  const { entry, contained } = await classifyContractsFinder(snapshot);
+  assert.equal(contained, true);
+  assert.equal(entry.records, 0);
+  assert.equal(entry.status, 'SEED_ERROR');
+  assert.equal(entry.lastSuccessAt, new Date(CF_NOW - 60 * 60_000).toISOString());
+  assert.equal(entry.consecutiveSourceFailures, 1);
+  assert.match(entry.error, /timeout/);
+  assert.equal(entry.containmentUntil, new Date(CF_NOW + 90 * 60_000).toISOString());
+  assert.equal((await classifyContractsFinder(snapshot, CF_NOW + 90 * 60_000)).contained, false);
+  assert.equal((await classifyContractsFinder(await failedEmptyContractsFinder(snapshot))).contained, false);
+  const record = { ...(await failedContractsFinder()).tenders[0], source: 'ted' };
+  const populated = await failedEmptyContractsFinder(undefined, [record]);
+  assert.equal(populated.tenders.length, 1);
+  assert.equal((await classifyContractsFinder(populated)).contained, true);
+  populated.tenders[0].countryCode = 123;
+  assert.equal((await classifyContractsFinder(populated)).contained, false, 'reader cannot normalize a numeric country');
+  const { fetchGlobalTenders, fetchContractsFinder } = await import('../scripts/seed-global-tenders.mjs');
+  const recovered = await fetchGlobalTenders({ now: CF_NOW, previousSnapshot: snapshot, adapters: [
+    ['contracts-finder', () => fetchContractsFinder({ now: CF_NOW, fetchJsonFn: async () => ({ releases: [] }) })],
+  ] });
+  assert.equal(recovered.sourceStatuses[0].consecutiveFailures, 0);
+  assert.equal(recovered.sourceStatuses[0].confirmedEmpty, undefined);
+  assert.equal(recovered.sourceStatuses[0].lastSuccessfulAt, new Date(CF_NOW).toISOString());
+  const older = structuredClone(snapshot);
+  older.sourceStatuses[0].lastSuccessfulAt = new Date(CF_NOW - 150 * 60_000).toISOString();
+  assert.equal((await classifyContractsFinder(older)).entry.containmentUntil, new Date(CF_NOW + 30 * 60_000).toISOString());
+  assert.equal((await classifyContractsFinder(older, CF_NOW + 30 * 60_000)).contained, false);
+});
+
+test('zero count alone cannot prove a verified empty source or a usable aggregate', async () => {
+  const fixture = await failedEmptyContractsFinder();
+  for (const [label, mutate] of [
+    ['missing empty proof', s => { delete s.sourceStatuses[0].confirmedEmpty; }],
+    ['missing success', s => { delete s.sourceStatuses[0].lastSuccessfulAt; }],
+    ['missing canonical rows', s => { delete s.tenders; }],
+    ['malformed canonical rows', s => { s.tenders = {}; }],
+    ['unavailable aggregate', s => { s.dataAvailable = false; }],
+    ['unavailable read model', s => { s.availability = 'unavailable'; }],
+    ['duplicate source', s => { s.sourceStatuses.push(s.sourceStatuses[0]); }],
+    ['malformed aggregate status', s => { s.sourceStatuses.push(null); }],
+    ['stale aggregate', s => { s.fetchedAt = CF_NOW - 181 * 60_000; }],
+    ['malformed aggregate row', s => { s.tenders = [null]; }],
+  ]) {
+    const snapshot = structuredClone(fixture);
+    mutate(snapshot);
+    assert.equal((await classifyContractsFinder(snapshot)).contained, false, label);
+  }
+  const nonempty = await failedContractsFinder();
+  nonempty.tenders = [];
+  assert.equal((await classifyContractsFinder(await failedEmptyContractsFinder(nonempty))).contained, false);
+  const { fetchGlobalTenders, fetchContractsFinder } = await import('../scripts/seed-global-tenders.mjs');
+  const good = await fetchGlobalTenders({ now: CF_NOW - 60 * 60_000, adapters: [
+    ['contracts-finder', () => fetchContractsFinder({ now: CF_NOW - 60 * 60_000, fetchJsonFn: async () => ({ releases: [] }) })],
+  ] });
+  for (const mutate of [s => { delete s.tenders; }, s => { s.dataAvailable = false; },
+    s => { s.sourceStatuses.push(s.sourceStatuses[0]); },
+    s => { s.sourceStatuses[0].fetchedAt = new Date(CF_NOW).toISOString(); },
+    s => { s.sourceStatuses[0].recordCount = 1; }]) {
+    const malformed = structuredClone(good);
+    mutate(malformed);
+    assert.equal((await classifyContractsFinder(await failedEmptyContractsFinder(malformed))).contained, false);
+  }
+});
+
+test('empty-source containment requires the complete tender reader shape', async () => {
+  const record = { ...(await failedContractsFinder()).tenders[0], source: 'ted' };
+  const fixture = await failedEmptyContractsFinder(undefined, [record]);
+  for (const field of ['sourceNoticeId', 'officialUrl', 'status', 'participationMode',
+    'eligibilityRequirements', 'submissionUrls']) {
+    const snapshot = structuredClone(fixture);
+    delete snapshot.tenders[0][field];
+    assert.equal((await classifyContractsFinder(snapshot)).contained, false, `missing ${field}`);
+  }
+  for (const [label, mutate] of [
+    ['matchReasons string', r => { r.automationFit.matchReasons = 'network'; }],
+    ['evidence object', r => { r.automationFit.evidence = {}; }],
+    ['missing score', r => { delete r.automationFit.score; }],
+    ['invalid level', r => { r.automationFit.level = 1; }],
+    ['missing version', r => { delete r.automationFit.classificationVersion; }],
+    ['null automation', r => { r.automationFit = null; }],
+    ['array money', r => { r.money = []; }],
+    ['string amount', r => { r.money = { amount: '20' }; }],
+    ['null money', r => { r.money = null; }],
+    ['invalid eligibility', r => { r.eligibilityRequirements = [1]; }],
+  ]) {
+    const snapshot = structuredClone(fixture);
+    mutate(snapshot.tenders[0]);
+    assert.equal((await classifyContractsFinder(snapshot)).contained, false, label);
+  }
+  delete fixture.tenders[0].automationFit;
+  delete fixture.tenders[0].money;
+  assert.equal((await classifyContractsFinder(fixture)).contained, true, 'optional nested messages may be absent');
+});
+
 test('Contracts Finder producer-to-health retains every diagnostic during bounded first-failure containment', async () => {
   const snapshot = await failedContractsFinder();
   const { entry, contained } = await classifyContractsFinder(snapshot);
@@ -327,6 +435,13 @@ test('Contracts Finder health checks the canonical payload, not the positive sou
   const read = async () => (await handler(new Request('https://api.worldmonitor.app/api/health?compact=1'))).json();
   const initial = await read();
   assert.equal(initial.problems[CF_NAME].containmentUntil, new Date(CF_NOW + 90 * 60_000).toISOString());
+  canonical = await failedEmptyContractsFinder();
+  Object.assign(meta, seed.sourceHealthMeta(canonical.sourceStatuses[0]));
+  const empty = await read();
+  assert.equal(empty.problems[CF_NAME].records, 0);
+  assert.equal(empty.problems[CF_NAME].status, 'SEED_ERROR');
+  assert.equal(empty.problems[CF_NAME].containmentUntil, initial.problems[CF_NAME].containmentUntil);
+  assert.equal(empty.summary.containedWarn, initial.summary.containedWarn);
   expireDuringWrite = true;
   const slow = await read();
   assert.equal(slow.summary.containedWarn, initial.summary.containedWarn - 1,

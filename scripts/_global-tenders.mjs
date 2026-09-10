@@ -265,6 +265,12 @@ export function mergeTenderSourceResults({ settled, sourceNames, previousSnapsho
         string(tender.id) && string(tender.title) && safeOfficialUrl(tender.officialUrl, source)
         && ['active', 'open'].includes(tender.status)
         && [tender.categoryCodes, tender.sectors].every((values) => Array.isArray(values) && values.every((value) => typeof value === 'string'))) : [];
+      const confirmedEmpty = fresh && previousSnapshot?.dataAvailable === true
+        && Array.isArray(previousSnapshot.tenders)
+        && previousSnapshot.tenders.every((tender) => tender && tender.source !== source)
+        && previousSnapshot.sourceStatuses.filter((status) => status?.source === source).length === 1
+        && priorStatus?.recordCount === 0
+        && (priorStatus.state === 'ok' ? priorStatus.fetchedAt === lastSuccessfulAt : priorStatus.confirmedEmpty === true);
       const alreadyFailed = priorStatus && priorStatus.state !== 'ok';
       const previousFailures = Number.isSafeInteger(priorStatus?.consecutiveFailures) && priorStatus.consecutiveFailures >= 1
         ? priorStatus.consecutiveFailures : 1;
@@ -272,6 +278,7 @@ export function mergeTenderSourceResults({ settled, sourceNames, previousSnapsho
       sourceStatuses.push({
         source, state: retained.length ? 'stale' : 'error', recordCount: retained.length,
         fetchedAt: attemptedAt, lastSuccessfulAt, stale: retained.length > 0, error,
+        ...(confirmedEmpty ? { confirmedEmpty: true } : {}),
         consecutiveFailures: alreadyFailed ? Math.min(previousFailures + 1, 100) : 1,
         firstFailureAt: alreadyFailed ? string(priorStatus.firstFailureAt) : attemptedAt,
       });

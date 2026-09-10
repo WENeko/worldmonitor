@@ -61,10 +61,21 @@ function parseProxyConfig(raw) {
  * Parse a proxy configuration and, for supported Decodo sticky ports, advance
  * each retry to a distinct sticky session. Other providers and Decodo rotating
  * ports retain their configured route exactly.
+ *
+ * `attempt` is sanitized HERE rather than at each entry point. It used to be
+ * clamped only inside resolveProxyStringForAttempt, which was fine while that
+ * was the only caller passing a live retry index — but #7963 exposed this
+ * function through httpsProxyFetchRaw's `proxyAttempt` option, and that helper
+ * is injected as the fetcher into seeders that run their own 1-based retry
+ * loops. An unsanitized index does not fail loudly: `+` concatenates before
+ * `%` coerces, so attempt '2' on port 10005 computes `4 + '2'` === `'42'` and
+ * silently exits on 10043, while a negative index resolves to 10000 — below
+ * the sticky floor and not a sticky exit at all.
  */
 function parseProxyConfigForAttempt(raw, attempt = 0) {
   const config = parseProxyConfig(raw);
   if (!config) return null;
+  const index = Number.isFinite(Number(attempt)) ? Math.max(0, Math.trunc(Number(attempt))) : 0;
   const port = Number(config.port);
   // Normalize for provider detection only: the host:port:user:pass form keeps
   // whatever casing the operator typed, while the URL form is lowercased by the
@@ -84,7 +95,7 @@ function parseProxyConfigForAttempt(raw, attempt = 0) {
   const stickyPortCount = maxPort - minPort + 1;
   return {
     ...config,
-    port: minPort + ((port - minPort + attempt) % stickyPortCount),
+    port: minPort + ((port - minPort + index) % stickyPortCount),
   };
 }
 
@@ -150,8 +161,10 @@ function curlProxyString(cfg) {
  * advancing their port would point at a closed door.
  */
 function resolveProxyStringForAttempt(attempt = 0, raw = process.env.PROXY_URL || '') {
-  const index = Number.isFinite(Number(attempt)) ? Math.max(0, Math.trunc(Number(attempt))) : 0;
-  const cfg = parseProxyConfigForAttempt(raw, index);
+  // No local clamp: parseProxyConfigForAttempt sanitizes `attempt` itself now,
+  // with the identical expression. A second copy bought nothing and left two
+  // places to drift apart.
+  const cfg = parseProxyConfigForAttempt(raw, attempt);
   if (!cfg) return '';
   return curlProxyString(cfg);
 }
