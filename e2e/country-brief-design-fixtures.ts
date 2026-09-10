@@ -71,3 +71,22 @@ export async function installDecisionBriefData(page: Page) {
   });
   return state;
 }
+
+export async function installCommodityBriefData(page: Page) {
+  await installDecisionBriefData(page);
+  const state = { fail: false };
+  await page.route('**/api/supply-chain/v1/get-country-products*', route => {
+    if (state.fail) return route.fulfill({ status: 503, json: { error: 'controlled unavailable' } });
+    const iso2 = new URL(route.request().url()).searchParams.get('iso2') ?? 'JP';
+    return route.fulfill({ json: { iso2, fetchedAt: '2026-09-09T00:00:00Z', products: [
+      { hs4: '2804', description: 'Hydrogen and rare gases', totalValue: 1000, year: 2024, topExporters: [
+        { partnerCode: 634, partnerIso2: 'QA', share: 0.6, value: 600 }, { partnerCode: 842, partnerIso2: 'US', share: 0.3, value: 300 }, { partnerCode: 999, partnerIso2: 'ZZ', share: 0.1, value: 100 },
+      ] },
+      { hs4: '1001', description: 'Wheat', totalValue: 1000, year: 2023, topExporters: [{ partnerCode: 36, partnerIso2: 'AU', share: 1, value: 1000 }] },
+    ] } });
+  });
+  await page.route('**/api/supply-chain/v1/get-country-vulnerabilities*', route => route.fulfill({ json: {
+    iso2: new URL(route.request().url()).searchParams.get('iso2') ?? 'JP', country: '', vulnerabilities: [], generatedAt: '', methodologyVersion: '', upstreamUnavailable: true,
+  } }));
+  return state;
+}

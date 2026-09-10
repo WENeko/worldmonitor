@@ -2849,7 +2849,13 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
       }
       void this.openDecisionBrief(decisionButton);
     });
-    right.append(shareBtn, maxBtn, storyButton, exportButton, decisionButton, evidenceButton);
+    const commodityButton = this.el('button', 'cdp-action-btn', t('components.decisionBrief.commodityTitle')) as HTMLButtonElement;
+    commodityButton.type = 'button';
+    commodityButton.addEventListener('click', () => {
+      if (!hasPremiumAccess(getAuthState())) { trackGateHit('decision-brief'); showToast(t('components.decisionBrief.locked')); return; }
+      void this.openDecisionBrief(commodityButton, true);
+    });
+    right.append(shareBtn, maxBtn, storyButton, exportButton, decisionButton, commodityButton, evidenceButton);
     header.append(left, right);
 
     const scoreCard = this.el('section', 'cdp-card cdp-score-card');
@@ -3777,7 +3783,7 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     );
   }
 
-  private async openDecisionBrief(trigger: HTMLButtonElement): Promise<void> {
+  private async openDecisionBrief(trigger: HTMLButtonElement, commodity = false): Promise<void> {
     const code = this.currentCode;
     const name = this.currentName;
     const signal = this.signal;
@@ -3785,14 +3791,17 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     this.outputRequestSignal = signal;
     trigger.disabled = true;
     try {
-      const [{ createDecisionBriefOutput }, { captureDecisionBrief }, { buildDecisionBrief }] = await Promise.all([
+      const [{ createDecisionBriefOutput, createCommodityBriefOutput }, { captureDecisionBrief, captureCommodityBrief }, { buildDecisionBrief, buildCommodityBrief, COMMODITY_BRIEF_OPTIONS }] = await Promise.all([
         import('./CountryBriefOutput'), import('@/services/decision-brief'), import('@/utils/decision-brief'),
       ]);
       if (signal.aborted || this.signal !== signal || this.currentCode !== code || !this.isVisible() || this.outputClose) return;
       const shell = this.content.querySelector<HTMLElement>('.cdp-shell')!;
       const scrollTop = this.content.scrollTop;
       const outputController = new AbortController();
-      const output = createDecisionBriefOutput({ code, name }, AbortSignal.any([signal, outputController.signal]),
+      const outputSignal = AbortSignal.any([signal, outputController.signal]);
+      const output = commodity ? createCommodityBriefOutput({ code, name }, outputSignal, COMMODITY_BRIEF_OPTIONS,
+        async (selection, requestSignal) => buildCommodityBrief(selection, await captureCommodityBrief(selection, requestSignal)),
+        () => this.outputClose?.()) : createDecisionBriefOutput({ code, name }, outputSignal,
         async (selection, requestSignal) => buildDecisionBrief(selection, await captureDecisionBrief(selection, requestSignal)),
         () => this.outputClose?.());
       this.outputClose = () => {

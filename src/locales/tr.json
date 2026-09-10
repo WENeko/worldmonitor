@@ -2791,6 +2791,10 @@
       "failed": "Bu cihaza passkey kaydedilemedi."
     },
     "decisionBrief": {
+      "commodityTitle": "Emtia karar özeti",
+      "commodity": "Emtia / ürün",
+      "blockedChokepoint": "Kapalı olduğu varsayılan geçit",
+      "commodityCapture": "Emtia karşılaştırmasını kaydet",
       "title": "Karar özeti",
       "fuel": "Yakıt",
       "chokepoint": "Dar geçit",

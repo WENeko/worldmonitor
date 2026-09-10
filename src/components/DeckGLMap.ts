@@ -4785,7 +4785,7 @@ export class DeckGLMap {
         const code = feature.properties?.['ISO3166-1-Alpha-2'] as string | undefined;
         return (code && this.affectedIso2Set.has(code) ? [220, 60, 40, 80] : [0, 0, 0, 0]) as [number, number, number, number];
       },
-      updateTriggers: { getFillColor: [this.scenarioState?.scenarioId ?? null] },
+      updateTriggers: { getFillColor: [this.scenarioState?.scenarioId ?? null, this.getSetSignature(this.affectedIso2Set)] },
     });
   }
 

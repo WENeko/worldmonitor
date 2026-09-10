@@ -267,6 +267,103 @@ describe('docs entity-graph rewrite (#7459d)', () => {
     );
   });
 
+  // #7980: the methodology family is editorial judgment a named human owns —
+  // weights chosen, thresholds set, limitations written — and each page renders
+  // a maintainer byline saying so. Organization is the honest author everywhere
+  // the docs are generated or unbylined product documentation; Person is the
+  // honest author here, and it is the Expertise signal the scored pages lean on.
+  // #7980: the methodology family is editorial judgment a named human owns —
+  // weights chosen, thresholds set, limitations written — and each page renders
+  // a maintainer byline saying so. Organization is the honest author everywhere
+  // the docs are generated or unbylined product documentation; Person is the
+  // honest author here, and it is the Expertise signal the scored pages lean on.
+  const PERSON = {
+    '@id': 'https://www.worldmonitor.app/blog/authors/elie-habib/#person',
+    '@type': 'Person',
+    name: 'Elie Habib',
+  };
+  const ORGANIZATION = { '@id': 'https://www.worldmonitor.app/#organization' };
+
+  // Attribution keys on the PATHNAME, so vary only that. An earlier version of
+  // this test also rewrote the seed's `@id` per pathname, which quietly implied
+  // the node's own identity drives the choice and left the test unable to tell
+  // the two implementations apart.
+  const authorFor = (pathname: string, seed = articleSeed) => {
+    const graph = jsonLdBlocks(rewriteDocsLocaleHtml(seed, pathname))
+      .find((block) => Array.isArray(block['@graph']))?.['@graph'] as Record<string, unknown>[];
+    return graph.find((node) => Array.isArray(node['@type']))?.author;
+  };
+
+  it('attributes the methodology family to the canonical Person (#7980)', () => {
+    for (const pathname of ['/docs/methodology/cii-risk-scores', '/docs/methodology/chokepoints']) {
+      assert.deepEqual(authorFor(pathname), PERSON, pathname);
+    }
+    // The Chinese mirror is the same editorial work under a locale prefix.
+    assert.deepEqual(authorFor('/docs/zh/methodology/cii-risk-scores'), PERSON);
+    // Everything outside the family keeps the Organization attribution, including
+    // the near-misses a bare prefix match would swallow.
+    for (const pathname of [
+      '/docs/about',
+      '/docs/getting-started',
+      '/docs/corrections',
+      '/docs/methodology-overview',
+      '/docs/api-reference/methodology/foo',
+    ]) {
+      assert.deepEqual(authorFor(pathname), ORGANIZATION, pathname);
+    }
+  });
+
+  // Live Mintlify ships a bare WebPage with no Article at all, so INJECTION —
+  // not the attribute-an-existing-Article path above — is what production
+  // actually exercises. Without this case, reverting the injected Article's
+  // author to Organization leaves every other guard in this file green.
+  it('attributes an INJECTED methodology Article to the Person (#7980)', () => {
+    const barePage = `<!DOCTYPE html><html lang="en"><head>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"CII Risk Scoring Methodology","url":"https://www.worldmonitor.app/docs/methodology/cii-risk-scores"}</script>
+</head><body></body></html>`;
+
+    const injected = jsonLdBlocks(rewriteDocsLocaleHtml(barePage, '/docs/methodology/cii-risk-scores'))
+      .flatMap((block) => (Array.isArray(block['@graph']) ? block['@graph'] : [block])) as Record<string, unknown>[];
+    const article = injected.find((node) => Array.isArray(node['@type']));
+    assert.ok(article, 'the bare WebPage must gain an injected Article');
+    assert.deepEqual(article.author, PERSON, 'an injected methodology Article must carry the Person');
+    assert.deepEqual(article.publisher, ORGANIZATION, 'the publisher stays the Organization');
+
+    // Same injection path, outside the family, still attributes to the Organization.
+    const bareAbout = barePage.replace(/methodology\/cii-risk-scores/g, 'about');
+    const aboutGraph = jsonLdBlocks(rewriteDocsLocaleHtml(bareAbout, '/docs/about'))
+      .flatMap((block) => (Array.isArray(block['@graph']) ? block['@graph'] : [block])) as Record<string, unknown>[];
+    assert.deepEqual(
+      aboutGraph.find((node) => Array.isArray(node['@type']))?.author,
+      ORGANIZATION,
+    );
+  });
+
+  // The schema claim and the rendered claim must not drift apart. Attribution
+  // keys on a slug prefix, so a new methodology page added without the byline
+  // would silently claim a named human wrote it — the one dishonest outcome
+  // this attribution must never produce.
+  it('names the maintainer on every page it attributes to the Person (#7980)', () => {
+    const families = [
+      { dir: 'docs/methodology', prefix: '/docs/methodology', byline: 'Methodology maintained by [Elie Habib]' },
+      { dir: 'docs/zh/methodology', prefix: '/docs/zh/methodology', byline: '本方法论由 World Monitor 创始人 [Elie Habib]' },
+    ];
+    let checked = 0;
+    for (const { dir, prefix, byline } of families) {
+      const pages = readdirSync(new URL(`../${dir}`, import.meta.url))
+        .filter((name) => name.endsWith('.mdx'));
+      assert.ok(pages.length > 15, `${dir}: expected the published methodology family, saw ${pages.length}`);
+      for (const page of pages) {
+        checked += 1;
+        const slug = page.replace(/\.mdx$/, '');
+        const source = readFileSync(new URL(`../${dir}/${page}`, import.meta.url), 'utf8');
+        assert.ok(source.includes(byline), `${dir}/${page} is attributed to a person but names no maintainer`);
+        assert.deepEqual(authorFor(`${prefix}/${slug}`), PERSON, `${dir}/${page}`);
+      }
+    }
+    assert.ok(checked > 40, `expected both mirrors of the family, checked ${checked}`);
+  });
+
   it('does not attribute a non-Article node', () => {
     const graph = jsonLdBlocks(rewriteDocsLocaleHtml(mintlifySeed, '/docs/getting-started'))
       .find((block) => Array.isArray(block['@graph']))?.['@graph'] as Record<string, unknown>[];

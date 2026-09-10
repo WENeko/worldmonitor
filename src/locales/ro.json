@@ -2810,6 +2810,10 @@
       "failed": "Nu am putut salva o cheie de acces pe acest dispozitiv."
     },
     "decisionBrief": {
+      "commodityTitle": "Raport decizional privind materiile prime",
+      "commodity": "Materie primă / produs",
+      "blockedChokepoint": "Trecere presupusă blocată",
+      "commodityCapture": "Înregistrează comparația materiilor prime",
       "title": "Sinteză pentru decizie",
       "fuel": "Combustibil",
       "chokepoint": "Punct de trecere critic",

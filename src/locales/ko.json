@@ -2772,6 +2772,10 @@
       "failed": "이 기기에서 패스키를 저장할 수 없었습니다."
     },
     "decisionBrief": {
+      "commodityTitle": "원자재 의사결정 브리프",
+      "commodity": "원자재 / 제품",
+      "blockedChokepoint": "봉쇄를 가정한 해상 요충지",
+      "commodityCapture": "원자재 비교 기록",
       "title": "의사결정 브리프",
       "fuel": "연료",
       "chokepoint": "병목 지점",

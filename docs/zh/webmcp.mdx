@@ -98,7 +98,7 @@ Chrome 149–151 虽已暴露 `registerTool()`，但调用已注册回调时只�
 需要取消能力的工具会持久化浏览器状态、离开当前页面，或消耗服务器端额度。宿主无法取消时，门禁会阻止这些效果开始。视图状态工具仍可用。`set_map_view`、`set_time_range` 与 `focus_country` 还会通过 `history.replaceState` 更新地址栏，生成与仪表板控件相同、刷新后可恢复的分享状态。
 
 <Note>
-如果浏览器没有当前 API，包括未暴露 WebMCP 的 Tauri 桌面 WebView，WorldMonitor 会安全地不执行任何操作。它不会安装浏览器 polyfill，也不会退回旧草案 API。
+如果浏览器没有任何受支持的注册 API，WorldMonitor 会安全地不执行任何操作。它不会安装浏览器 polyfill。仅支持旧版 API 的宿主使用下文所述的回退路径。
 </Note>
 
 ## 工具清单
@@ -290,7 +290,7 @@ WebMCP 主要面向本地、有人参与的浏览器工作流。即使某些浏�
 
 ## 使用浏览器 API 调试
 
-使用 `document` 上的当前 API。旧的 `navigator.modelContext` 从 Chrome 150 起已弃用，已移除的 `provideContext` 草案 API 不受支持。
+WorldMonitor 优先使用 `document.modelContext.registerTool()`。当该 API 不存在时，首页和仪表盘依次尝试旧版 `navigator.modelContext.registerTool()` 和 `navigator.modelContext.provideContext({ tools })`。每个页面只通过一个提供者注册，不创建浏览器全局对象。旧版宿主保留相同的工具检查，包括取消要求。
 
 ```js
 const modelContext = document.modelContext;

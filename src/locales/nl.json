@@ -2411,6 +2411,10 @@
       "failed": "We konden geen wachtsleutel op dit apparaat opslaan."
     },
     "decisionBrief": {
+      "commodityTitle": "Beslisnotitie voor grondstoffen",
+      "commodity": "Grondstof / product",
+      "blockedChokepoint": "Verondersteld geblokkeerde doorgang",
+      "commodityCapture": "Grondstoffenvergelijking vastleggen",
       "title": "Beslisnotitie",
       "fuel": "Brandstof",
       "chokepoint": "Knelpunt",

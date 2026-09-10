@@ -2860,6 +2860,10 @@
       "failed": "Erre az eszközre nem sikerült passkey-t menteni."
     },
     "decisionBrief": {
+      "commodityTitle": "Árupiaci döntési összefoglaló",
+      "commodity": "Árucikk / termék",
+      "blockedChokepoint": "Feltételezetten lezárt szűkület",
+      "commodityCapture": "Áru-összehasonlítás rögzítése",
       "title": "Döntési összefoglaló",
       "fuel": "Tüzelőanyag",
       "chokepoint": "Szűk keresztmetszet",

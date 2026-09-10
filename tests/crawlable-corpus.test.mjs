@@ -1955,6 +1955,36 @@ describe('crawlable corpus generator', () => {
     }
   });
 
+  // #7980: schema `author` is the machine half of attribution. A Google quality
+  // rater and a human reader see the page, so every generated page also renders
+  // who stands behind the number. The byline lives in the shared page shell, not
+  // in each body, so a `footerBody` override cannot drop it — assert it on the
+  // families that do override, plus the whole corpus.
+  it('renders a maintainer byline on every generated page (#7980)', async () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'wm-corpus-byline-'));
+    try {
+      await buildCorpus({ rootDir: repoRoot, outDir, baseUrl: 'https://www.worldmonitor.app' });
+      const pages = readdirSync(outDir, { recursive: true })
+        .map(String)
+        .filter((path) => path.endsWith('.html'));
+      assert.ok(pages.length > 200, `expected the full corpus, saw ${pages.length} pages`);
+      for (const page of pages) {
+        const html = read(outDir, page);
+        assert.match(html, /<p class="byline">/, `${page} must render a byline`);
+        assert.match(html, /World Monitor research team/, `${page} must name who maintains it`);
+        assert.match(html, /href="\/docs\/corrections"/, `${page} byline must link the corrections log`);
+      }
+      // The families that pass their own footerBody still carry it.
+      for (const page of ['use-cases/index.html', 'compare/index.html', 'sources/index.html']) {
+        assert.match(read(outDir, page), /<p class="byline">/, page);
+      }
+      // The CII hub is the page the issue named: a published 0-100 score.
+      assert.match(read(outDir, 'country-instability-index/index.html'), /<p class="byline">/);
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+
   it('builds a non-trivial static corpus with canonical raw HTML pages', async () => {
     const outDir = mkdtempSync(join(tmpdir(), 'wm-crawlable-corpus-'));
     try {

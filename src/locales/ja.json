@@ -2772,6 +2772,10 @@
       "failed": "このデバイスにパスキーを保存できませんでした。"
     },
     "decisionBrief": {
+      "commodityTitle": "コモディティ意思決定ブリーフ",
+      "commodity": "コモディティ / 製品",
+      "blockedChokepoint": "封鎖を想定する海上要衝",
+      "commodityCapture": "コモディティ比較を記録",
       "title": "意思決定ブリーフ",
       "fuel": "燃料",
       "chokepoint": "チョークポイント",

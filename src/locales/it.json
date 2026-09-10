@@ -2810,6 +2810,10 @@
       "failed": "Non siamo riusciti a salvare una passkey su questo dispositivo."
     },
     "decisionBrief": {
+      "commodityTitle": "Scheda decisionale sulle materie prime",
+      "commodity": "Materia prima / prodotto",
+      "blockedChokepoint": "Passaggio ipotizzato bloccato",
+      "commodityCapture": "Acquisisci confronto delle materie prime",
       "title": "Scheda decisionale",
       "fuel": "Combustibile",
       "chokepoint": "Punto di passaggio critico",

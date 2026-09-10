@@ -2860,6 +2860,10 @@
       "failed": "We couldn't save a passkey on this device."
     },
     "decisionBrief": {
+      "commodityTitle": "Commodity decision brief",
+      "commodity": "Commodity / product",
+      "blockedChokepoint": "Assumed blocked chokepoint",
+      "commodityCapture": "Capture commodity comparison",
       "title": "Decision brief",
       "fuel": "Fuel",
       "chokepoint": "Chokepoint",

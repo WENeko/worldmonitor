@@ -2772,6 +2772,10 @@
       "failed": "無法在此裝置上儲存通行金鑰。"
     },
     "decisionBrief": {
+      "commodityTitle": "大宗商品決策簡報",
+      "commodity": "大宗商品 / 產品",
+      "blockedChokepoint": "假定被封鎖的咽喉要道",
+      "commodityCapture": "記錄大宗商品比較",
       "title": "決策簡報",
       "fuel": "燃料",
       "chokepoint": "咽喉要道",

@@ -111,7 +111,7 @@ npm run test:e2e:webmcp:production
 
 ## 兼容与移除策略
 
-WorldMonitor 以 `document.modelContext.registerTool()` 为目标并进行特性检测。它不提供 `navigator.modelContext`、`provideContext` 或草案兼容 shim。
+WorldMonitor 优先使用 `document.modelContext.registerTool()`。仅支持旧版 API 的宿主依次回退到 `navigator.modelContext.registerTool()` 和 `provideContext({ tools })`。此路径支持仍检测 `navigator` 的旧版宿主和 isitagentready.com 等扫描器。当这些使用者支持当前基于 document 的发现方式后，由 WebMCP 维护者负责移除此回退。回退不创建全局对象，也不会在两个提供者上重复注册。
 
 如果未来浏览器迁移需要临时 fallback：
 

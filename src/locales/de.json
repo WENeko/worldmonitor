@@ -2791,6 +2791,10 @@
       "failed": "Wir konnten keinen Passkey auf diesem Gerät speichern."
     },
     "decisionBrief": {
+      "commodityTitle": "Entscheidungsvorlage für Rohstoffe",
+      "commodity": "Rohstoff / Produkt",
+      "blockedChokepoint": "Als blockiert angenommener Engpass",
+      "commodityCapture": "Rohstoffvergleich erfassen",
       "title": "Entscheidungsbrief",
       "fuel": "Brennstoff",
       "chokepoint": "Engpass",

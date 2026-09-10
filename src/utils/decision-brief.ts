@@ -1,3 +1,6 @@
+import commodityRegistry from '../../scripts/shared/supply-vulnerability-commodities.json';
+import { computeSupplierRouteRisk } from './supplier-route-risk';
+import type { CommodityBriefCapture, CommodityBriefSelection, CommodityBriefSnapshot } from '../types/decision-brief';
 import type { DecisionBriefCapture, DecisionBriefSelection, DecisionBriefSnapshot } from '../types/decision-brief';
 
 const nonnegative = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -64,4 +67,68 @@ export function buildDecisionBrief(selection: DecisionBriefSelection, captures: 
     },
     unknowns: [...unknowns, constraint, 'Retrieval time does not establish freshness. Review each observation date before acting.'],
   };
+}
+
+export const COMMODITY_BRIEF_OPTIONS = commodityRegistry.commodities;
+
+export function buildCommodityBrief(selection: CommodityBriefSelection, input: CommodityBriefCapture): CommodityBriefSnapshot {
+  const commodity = COMMODITY_BRIEF_OPTIONS.find(c => c.id === selection.commodityId);
+  if (!commodity) throw new Error('Unsupported commodity selection');
+  if (input.products.iso2 !== selection.countryCode || input.vulnerabilities.iso2 !== selection.countryCode) {
+    throw new Error('Commodity evidence country does not match selection');
+  }
+  const capture = structuredClone(input);
+  const hs4 = commodity.hs4[0]!;
+  const product = capture.products.products.find(p => p.hs4 === hs4);
+  const observedAt = product && Number.isInteger(product.year) && product.year >= 1900 && product.year <= 2100 ? String(product.year) : null;
+  const evidence: CommodityBriefSnapshot['evidence'] = [];
+  const constraints = 'Spare capacity, qualification, price and lead time are unknown. Confirm usable material, transport mode and delivery terms with a qualified supplier.';
+  const caveats = [commodity.mappingCaveat,
+    'Recorded trade is a customs-heading observation, not a qualified supplier or proof of spare capacity. Shares are by import value, not physical volume.',
+    'Routes are geographic models, not observed shipments. Only the selected chokepoint is assumed blocked; other disruptions and transport modes are unknown.',
+    'A downstream Suez or Cape option cannot bypass an origin blocked at the Strait of Hormuz.'];
+  if (hs4 === '2804') caveats.push('Helium uses the HS 2804 commodity-basket proxy, which includes other gases. It cannot establish a hospital helium supplier share.');
+  const seen = new Set<string>();
+  const candidates: CommodityBriefSnapshot['candidates'] = [];
+  for (const exp of product?.topExporters ?? []) {
+    if (!/^[A-Z]{2}$/.test(exp.partnerIso2) || exp.partnerIso2 === selection.countryCode || seen.has(exp.partnerIso2)) continue;
+    seen.add(exp.partnerIso2);
+    const sharePct = nonnegative(exp.share) && exp.share <= 1 ? exp.share * 100 : null;
+    const shareReference = `share-${selection.countryCode}-${hs4}-${exp.partnerIso2}`;
+    evidence.push({ id: shareReference, label: `${exp.partnerIso2} recorded share of HS ${hs4} imports`, value: sharePct, unit: '% of import value', source: 'UN Comtrade bilateral HS4', sourceUrl: 'https://comtradeplus.un.org/', observedAt });
+    const route = computeSupplierRouteRisk(exp.partnerIso2, selection.countryCode, new Map());
+    const affectedChokepoints = route.transitChokepoints.filter(cp => cp.chokepointId === selection.chokepointId).map(cp => cp.chokepointId);
+    const routeState = route.routeIds.length === 0 ? 'unknown' : affectedChokepoints.length ? 'exposed' : 'not_on_modeled_route';
+    const reason = routeState === 'unknown'
+      ? 'No modeled route for this country pair. Validate the transport path before comparing route exposure.'
+      : routeState === 'exposed'
+        ? 'Modeled route includes the selected blocked chokepoint. A downstream detour does not establish an origin bypass.'
+        : 'Selected chokepoint is absent from the modeled path. This supports investigating the origin, not a safe-route or availability conclusion.';
+    candidates.push({ origin: exp.partnerIso2, shareReference, sharePct, routeIds: route.routeIds,
+      transitChokepoints: route.transitChokepoints.map(cp => cp.chokepointId), affectedChokepoints, routeState, reason, constraints });
+  }
+  const order = { not_on_modeled_route: 0, unknown: 1, exposed: 2 };
+  candidates.sort((a, b) => order[a.routeState] - order[b.routeState] || (b.sharePct ?? -1) - (a.sharePct ?? -1) || a.origin.localeCompare(b.origin));
+  const candidate = candidates.find(c => c.routeState !== 'exposed' && c.sharePct !== null && c.sharePct > 0);
+  const vulnerability = !capture.vulnerabilities.upstreamUnavailable
+    ? capture.vulnerabilities.vulnerabilities.find(v => v.countryIso2 === selection.countryCode && v.commodityId === commodity.id) : undefined;
+  const context = vulnerability
+    ? `Commodity vulnerability: ${vulnerability.state}; band: ${vulnerability.band || 'unknown'}. Coverage: ${vulnerability.coverage.join(', ') || 'unknown'}. This context does not establish bilateral supplier shares.`
+    : 'Commodity vulnerability context is unavailable for this selection. No zero exposure is inferred.';
+  const missing = !product ? `No recorded HS ${hs4} bilateral product evidence is available for ${selection.countryName}.`
+    : candidates.length === 0 ? 'No recorded exporter-country rows are available.'
+      : candidates.every(c => c.routeState === 'exposed') ? 'Every modeled candidate route includes the selected blocked chokepoint.'
+        : 'No positive recorded share supports an alternative origin.';
+  const action = candidate ? {
+    text: `Investigate recorded ${candidate.origin} supply for ${selection.countryName}'s ${commodity.label} question. ${candidate.reason}`,
+    references: [candidate.shareReference], constraint: constraints,
+    trigger: `Reassess when ${candidate.origin}'s actual route, usable capacity, qualification, price or delivery date is confirmed, or the recorded trade evidence changes.`,
+  } : {
+    text: `${missing} Recover the missing bilateral evidence or validate an origin route before a procurement conclusion.`,
+    references: evidence.map(e => e.id), constraint: `${missing} ${constraints}`,
+    trigger: 'Reassess when positive bilateral supplier evidence and a usable origin route are available, or the selected chokepoint reopens.',
+  };
+  return { kind: 'commodity', selection: { ...selection }, capturedAt: capture.retrievedAt, commodity: commodity.label, hs4, capture,
+    evidence, candidates, context, caveats,
+    ordering: 'Investigation order: selected chokepoint absent from modeled path, unknown route, then exposed route; within each group, descending recorded import-value share. This is not a supplier recommendation score.', action };
 }

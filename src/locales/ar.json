@@ -2867,6 +2867,10 @@
       "failed": "لم نتمكن من حفظ مفتاح مرور على هذا الجهاز."
     },
     "decisionBrief": {
+      "commodityTitle": "موجز قرار السلع",
+      "commodity": "السلعة / المنتج",
+      "blockedChokepoint": "المضيق المفترض إغلاقه",
+      "commodityCapture": "تسجيل مقارنة السلع",
       "title": "موجز القرار",
       "fuel": "الوقود",
       "chokepoint": "نقطة اختناق",

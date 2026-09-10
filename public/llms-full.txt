@@ -725,6 +725,8 @@ The Lombok Strait, between Bali and Lombok, is a deep-water alternative to the M
 <a id="corpus-chokepoint-methodology"></a>
 ## Chokepoint methodology
 
+_Methodology maintained by [Elie Habib](https://www.worldmonitor.app/blog/authors/elie-habib/), founder of World Monitor. Published revisions are recorded in the [corrections log](/corrections)._
+
 <a id="corpus-start-here"></a>
 ## Start here
 
@@ -1478,6 +1480,8 @@ No. Price moves are confirmation, not diagnosis. Pair them with route, supply, p
 
 <a id="corpus-country-resilience-index-methodology"></a>
 ## Country Resilience Index methodology
+
+_Methodology maintained by [Elie Habib](https://www.worldmonitor.app/blog/authors/elie-habib/), founder of World Monitor. Published revisions are recorded in the [corrections log](/corrections)._
 
 <a id="corpus-start-here-country-resilience-index-methodology"></a>
 ## Start here (Country Resilience Index methodology)

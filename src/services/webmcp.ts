@@ -471,8 +471,16 @@ type DashboardWebMcpTool = Omit<WebMCP.ModelContextTool, 'execute'> & {
   ) => Promise<unknown> | unknown;
 };
 
+interface LegacyWebMcpProvider {
+  registerTool?: (tool: DashboardWebMcpTool) => void | Promise<void>;
+  unregisterTool?: (name: string) => void;
+  provideContext?: (context: { tools: DashboardWebMcpTool[] }) => void | Promise<void>;
+  clearContext?: () => void;
+}
+
 interface WebMcpRegistrationRuntime {
   document?: Pick<Document, 'modelContext' | 'addEventListener'>;
+  navigator?: { modelContext?: LegacyWebMcpProvider };
   window?: Pick<Window, 'addEventListener'>;
   track?: WebMcpAnalytics;
 }
@@ -3063,7 +3071,7 @@ function registrationFailureReason(error: unknown): RegistrationFailureReason | 
 }
 
 function observeRegistration(
-  provider: WebMCP.ModelContext,
+  provider: Pick<WebMCP.ModelContext, 'registerTool'>,
   tool: DashboardWebMcpTool,
   controller: AbortController,
   trackEvent: WebMcpAnalytics,
@@ -3091,10 +3099,11 @@ function observeRegistration(
 }
 
 function startRegistration(
-  provider: WebMCP.ModelContext,
+  provider: Pick<WebMCP.ModelContext, 'registerTool'>,
   tools: DashboardWebMcpTool[],
   controller: AbortController,
   trackEvent: WebMcpAnalytics,
+  api = 'document-current',
 ): void {
   const registrations = tools.map((tool) => (
     observeRegistration(provider, tool, controller, trackEvent)
@@ -3119,7 +3128,7 @@ function startRegistration(
     reportWebMcpEvent(trackEvent, 'webmcp-registered', {
       toolCount,
       pageSurface: 'dashboard',
-      api: 'document-current',
+      api,
     });
   });
 }
@@ -3152,9 +3161,55 @@ export function registerWebMcpTools(
     } catch {
       return false;
     }
-    if (!provider || typeof provider.registerTool !== 'function') return false;
+    if (provider && typeof provider.registerTool === 'function') {
+      registrationStarted = true;
+      startRegistration(provider, tools, controller, trackEvent);
+      return true;
+    }
+    let legacy: LegacyWebMcpProvider | undefined;
+    try {
+      const runtimeNavigator = runtime.navigator
+        ?? (typeof navigator === 'undefined' ? undefined : navigator as Navigator & { modelContext?: LegacyWebMcpProvider });
+      legacy = runtimeNavigator?.modelContext;
+    } catch {
+      return false;
+    }
+    if (!legacy || (typeof legacy.registerTool !== 'function' && typeof legacy.provideContext !== 'function')) return false;
     registrationStarted = true;
-    startRegistration(provider, tools, controller, trackEvent);
+    const legacyTools = tools.map((tool) => ({
+      ...tool,
+      execute: (input: Record<string, unknown>, context?: WebMcpToolExecutionContext) => {
+        throwIfWebMcpAborted(controller.signal);
+        return tool.execute(input, context);
+      },
+    }));
+    const batch = typeof legacy.registerTool !== 'function';
+    const cleanup = (): void => {
+      try {
+        if (batch) legacy.clearContext?.();
+        else for (const tool of legacyTools) legacy.unregisterTool?.(tool.name);
+      } catch {
+        // Old hosts may have no usable unregister API. Callbacks still reject after teardown.
+      }
+    };
+    controller.signal.addEventListener('abort', cleanup, { once: true });
+    let batchRegistration: Promise<void> | undefined;
+    const adapter = {
+      registerTool(tool: DashboardWebMcpTool): Promise<void> {
+        throwIfWebMcpAborted(controller.signal);
+        if (batch) {
+          batchRegistration ??= new Promise<void>((resolve) => resolve(legacy.provideContext!({ tools: legacyTools })))
+            .then(() => { if (controller.signal.aborted) cleanup(); });
+          return batchRegistration;
+        }
+        return Promise.resolve(legacy.registerTool!(tool)).then(() => {
+          if (controller.signal.aborted) {
+            try { legacy.unregisterTool?.(tool.name); } catch { /* The callback remains disabled. */ }
+          }
+        });
+      },
+    };
+    startRegistration(adapter, legacyTools, controller, trackEvent, batch ? 'navigator-batch' : 'navigator-register');
     return true;
   };
 

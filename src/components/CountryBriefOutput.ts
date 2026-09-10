@@ -267,3 +267,97 @@ export function createDecisionBriefOutput(
     h('div', { className: 'cdp-output-layout' }, controls, paper));
   return output;
 }
+
+export function renderCommodityBrief(snapshot: import('@/types/decision-brief').CommodityBriefSnapshot): HTMLElement {
+  const article = h('article', { className: 'cdp-output-paper cdp-commodity-paper' },
+    h('h1', {}, `${snapshot.selection.countryName} · ${snapshot.commodity} sourcing comparison`),
+    h('p', {}, `HS ${snapshot.hs4} · Assumed blocked: ${snapshot.selection.chokepointId} · Retrieved ${snapshot.capturedAt}`),
+    h('p', {}, snapshot.context), h('p', {}, snapshot.ordering),
+    h('h2', {}, 'Recorded supplier-country comparison'));
+  for (const candidate of snapshot.candidates) {
+    const evidence = snapshot.evidence.find(e => e.id === candidate.shareReference)!;
+    article.append(h('section', { className: 'cdp-commodity-candidate', 'data-origin': candidate.origin },
+      h('h3', {}, candidate.origin),
+      h('dl', {}, ...[
+        ['Recorded share', `${candidate.sharePct === null ? 'Unknown' : candidate.sharePct.toLocaleString('en-US', { maximumFractionDigits: 2 }) + '% of import value'} [${candidate.shareReference}]`],
+        ['Modeled routes', candidate.routeIds.join(', ') || 'Unknown'],
+        ['Transit chokepoints', candidate.transitChokepoints.join(', ') || 'Unknown / none identified'],
+        ['Affected chokepoints', candidate.routeState === 'unknown' ? 'Unknown' : candidate.affectedChokepoints.join(', ') || 'Selected chokepoint absent from modeled path'],
+        ['Source date', evidence.observedAt ?? 'Unknown'],
+        ['Evidence basis', `${evidence.source}; geographic route model`],
+        ['Unresolved constraints', candidate.constraints],
+      ].flatMap(([label, value]) => [h('dt', {}, label!), h('dd', {}, value!)])),
+      h('p', {}, candidate.reason)));
+  }
+  article.append(h('h2', {}, 'Next action'), h('p', { className: 'cdp-decision-action' }, snapshot.action.text),
+    h('p', {}, `References: ${snapshot.action.references.join(', ') || 'No bilateral evidence available'}`),
+    h('h3', {}, 'Constraint'), h('p', {}, snapshot.action.constraint),
+    h('h3', {}, 'Reassessment trigger'), h('p', {}, snapshot.action.trigger),
+    h('h2', {}, 'Evidence'),
+    ...snapshot.evidence.map(e => h('p', { id: e.id }, `[${e.id}] ${e.label}: ${e.value === null ? 'Unknown' : e.value} ${e.unit} · `,
+      h('a', { href: e.sourceUrl, target: '_blank', rel: 'noopener noreferrer' }, e.source), ` · observed ${e.observedAt ?? 'unknown'}`)),
+    h('p', {}, 'Route basis: WorldMonitor country port clusters and trade-route registry; geographic model, observation date unknown.'),
+    h('h2', {}, 'Limitations'), h('ul', {}, ...snapshot.caveats.map(c => h('li', {}, c))));
+  const data = h('script', { type: 'application/json', id: 'commodity-brief-snapshot' });
+  data.textContent = JSON.stringify(snapshot).replace(/</g, '\\u003c');
+  article.append(data);
+  return article;
+}
+
+export function createCommodityBriefOutput(
+  country: { code: string; name: string }, signal: AbortSignal,
+  options: readonly { id: string; label: string }[],
+  load: (selection: import('@/types/decision-brief').CommodityBriefSelection, signal: AbortSignal) => Promise<import('@/types/decision-brief').CommodityBriefSnapshot>,
+  onClose: () => void,
+): HTMLElement {
+  const title = t('components.decisionBrief.commodityTitle');
+  const output = h('section', { className: 'cdp-output', 'aria-label': title });
+  const close = h('button', { type: 'button', className: 'cdp-action-btn' }, t('components.decisionBrief.back'));
+  const controls = h('div', { className: 'cdp-output-controls' });
+  const paper = h('div', { className: 'cdp-decision-result' });
+  const commodity = h('select', { 'aria-label': t('components.decisionBrief.commodity') }) as HTMLSelectElement;
+  for (const option of options) commodity.append(h('option', { value: option.id }, option.label));
+  commodity.value = options.some(option => option.id === 'helium') ? 'helium' : options[0]?.id ?? '';
+  const route = h('select', { 'aria-label': t('components.decisionBrief.blockedChokepoint') }) as HTMLSelectElement;
+  for (const [id, label] of [['hormuz_strait', 'Strait of Hormuz'], ['suez', 'Suez Canal'], ['cape_of_good_hope', 'Cape of Good Hope'], ['malacca_strait', 'Strait of Malacca'], ['bab_el_mandeb', 'Bab el-Mandeb']]) route.append(h('option', { value: id! }, label!));
+  const status = h('p', { role: 'status' }, t('components.decisionBrief.select'));
+  const refresh = h('button', { type: 'button', className: 'cdp-action-btn' }, t('components.decisionBrief.commodityCapture')) as HTMLButtonElement;
+  const html = h('button', { type: 'button', className: 'cdp-action-btn', disabled: true }, t('components.decisionBrief.downloadHtml')) as HTMLButtonElement;
+  const json = h('button', { type: 'button', className: 'cdp-action-btn', disabled: true }, t('components.decisionBrief.downloadJson')) as HTMLButtonElement;
+  let snapshot: import('@/types/decision-brief').CommodityBriefSnapshot | null = null;
+  let request: AbortController | null = null;
+  let generation = 0;
+  const invalidate = () => {
+    generation++; request?.abort(); snapshot = null; paper.replaceChildren();
+    html.disabled = json.disabled = true; refresh.disabled = false;
+  };
+  signal.addEventListener('abort', invalidate, { once: true });
+  close.addEventListener('click', () => { invalidate(); onClose(); });
+  for (const select of [commodity, route]) select.addEventListener('change', () => { invalidate(); status.textContent = t('components.decisionBrief.changed'); });
+  refresh.addEventListener('click', async () => {
+    if (signal.aborted) return;
+    invalidate(); const current = generation;
+    request = new AbortController(); refresh.disabled = true;
+    status.textContent = t('components.decisionBrief.loading');
+    try {
+      const result = await load({ countryCode: country.code, countryName: country.name, commodityId: commodity.value, chokepointId: route.value }, AbortSignal.any([signal, request.signal]));
+      if (signal.aborted || current !== generation) return;
+      snapshot = result; paper.replaceChildren(renderCommodityBrief(result)); html.disabled = json.disabled = false;
+      status.textContent = t('components.decisionBrief.captured');
+    } catch (error) {
+      if (signal.aborted || current !== generation) return;
+      console.warn('[CountryBriefOutput] commodity capture failed', error);
+      status.textContent = t('components.decisionBrief.failed');
+    } finally { if (current === generation) refresh.disabled = false; }
+  });
+  html.addEventListener('click', () => { if (snapshot) downloadHtml(`${country.code.toLowerCase()}-commodity-decision.html`, renderCommodityBrief(snapshot), title, 'en'); });
+  json.addEventListener('click', () => {
+    if (!snapshot) return;
+    const url = URL.createObjectURL(new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' }));
+    h('a', { href: url, download: `${country.code.toLowerCase()}-commodity-decision.json` }).click();
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  });
+  controls.append(h('label', {}, t('components.decisionBrief.commodity'), commodity), h('label', {}, t('components.decisionBrief.blockedChokepoint'), route), refresh, html, json, status);
+  output.append(h('header', { className: 'cdp-output-header' }, close, h('h2', {}, title)), h('div', { className: 'cdp-output-layout' }, controls, paper));
+  return output;
+}

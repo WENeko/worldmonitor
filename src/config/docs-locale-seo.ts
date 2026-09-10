@@ -12,7 +12,7 @@
  * - x-default points at the English URL
  */
 
-import { ORGANIZATION_ID, WEBSITE_ID } from './schema-graph-ids';
+import { ORGANIZATION_ID, PERSON_ID, WEBSITE_ID } from './schema-graph-ids';
 import { DOCS_PAGE_DATES } from './docs-page-dates.generated';
 
 export const DOCS_PUBLIC_ORIGIN = 'https://www.worldmonitor.app';
@@ -282,7 +282,7 @@ function rewriteDocsJsonLdValue(
 ): unknown | null {
   const pruned = pruneDocsEntities(rewriteDocsWebsiteIds(value));
   if (pruned === null) return null;
-  const attributed = withDocsArticleAuthor(withDocsSpeakable(pruned));
+  const attributed = withDocsArticleAuthor(withDocsSpeakable(pruned), pathname);
   const withArticle = allowArticleInjection
     ? withDocsArticleNode(attributed, pathname)
     : attributed;
@@ -323,6 +323,38 @@ function docsSlugForPathname(pathname: string | undefined): string | null {
   const active = pair.active === 'zh' ? pair.zhPath : pair.enPath;
   const slug = active.replace(/^\/docs\//, '').replace(/\/$/, '');
   return slug.length > 0 ? slug : null;
+}
+
+/**
+ * The methodology family is the one part of the docs a human demonstrably owns:
+ * the weights, thresholds and stated limitations are editorial judgment, not
+ * generated output, and every page in it carries a rendered maintainer byline
+ * naming the same person. Those pages therefore attribute to the canonical
+ * Person; the rest of the docs stay Organization-authored (#7980).
+ */
+const DOCS_PERSON_AUTHORED_SLUG_PREFIX = 'methodology/';
+
+/**
+ * Anchored on the canonical `@id` AND self-describing. No docs page declares
+ * the Person node, and parsers resolve `@id` within one document, so a bare
+ * reference would be an unresolvable stub for exactly the naive extractors
+ * this attribution is meant to serve (#7459a). The strong `sameAs` anchors
+ * stay on the canonical node at /blog/authors/elie-habib/.
+ */
+const DOCS_PERSON_AUTHOR = Object.freeze({
+  '@id': PERSON_ID,
+  '@type': 'Person',
+  name: 'Elie Habib',
+});
+
+function docsAuthorForPathname(pathname: string | undefined): Record<string, unknown> {
+  // The Chinese mirror keeps its locale segment in the slug ("zh/methodology/…"),
+  // and it is the same editorial work under translation, so drop the segment
+  // before matching the family rather than attributing it differently.
+  const slug = docsSlugForPathname(pathname)?.replace(/^zh\//, '');
+  return slug?.startsWith(DOCS_PERSON_AUTHORED_SLUG_PREFIX)
+    ? { ...DOCS_PERSON_AUTHOR }
+    : { '@id': ORGANIZATION_ID };
 }
 
 /**
@@ -372,7 +404,7 @@ function withDocsArticleNode(value: unknown, pathname?: string): unknown {
     datePublished: dates.datePublished,
     dateModified: dates.dateModified,
     publisher: { '@id': ORGANIZATION_ID },
-    author: { '@id': ORGANIZATION_ID },
+    author: docsAuthorForPathname(pathname),
   };
   if (typeof page.description === 'string' && page.description.trim().length > 0) {
     article.description = page.description;
@@ -418,9 +450,11 @@ function withDocsSpeakable(value: unknown): unknown {
  * plus the build-time date manifest when both exist; never invent either half.
  *
  * When upstream DOES emit an Article/TechArticle node, withDocsArticleAuthor
- * below still attributes it to the canonical Organization (the docs are
- * product documentation with no per-page byline, matching how the research
- * reports attribute themselves in scripts/build-research-reports.mjs).
+ * below still attributes it — to the canonical Person on the methodology
+ * family, which carries a rendered maintainer byline, and to the canonical
+ * Organization everywhere else, where the docs are product documentation with
+ * no per-page byline (matching how the research reports attribute themselves
+ * in scripts/build-research-reports.mjs).
  *
  * `datePublished` is deliberately NOT synthesised. No per-page publication date
  * exists anywhere: docs/*.mdx frontmatter carries only title and description,
@@ -429,17 +463,17 @@ function withDocsSpeakable(value: unknown): unknown {
  * assert a publication date we do not know, which is worse than omitting a
  * recommended (not required) property.
  */
-function withDocsArticleAuthor(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(withDocsArticleAuthor);
+function withDocsArticleAuthor(value: unknown, pathname?: string): unknown {
+  if (Array.isArray(value)) return value.map((entry) => withDocsArticleAuthor(entry, pathname));
   if (!value || typeof value !== 'object') return value;
   const node = value as Record<string, unknown>;
   const next: Record<string, unknown> = {};
   for (const [key, nested] of Object.entries(node)) {
-    next[key] = withDocsArticleAuthor(nested);
+    next[key] = withDocsArticleAuthor(nested, pathname);
   }
   const isArticle = hasJsonLdType(next, 'Article') || hasJsonLdType(next, 'TechArticle');
   if (isArticle && next.author == null) {
-    next.author = { '@id': ORGANIZATION_ID };
+    next.author = docsAuthorForPathname(pathname);
   }
   return next;
 }

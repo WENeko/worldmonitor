@@ -20,3 +20,48 @@
 .sc-bypass-table td { padding: 4px 6px; border-bottom: 1px solid rgba(100,116,139,0.08); }
 .sc-bypass-loading, .sc-bypass-error { font-size: calc(12px * var(--wm-panel-effective-scale, 1)); color: #64748b; padding: 8px 0; text-align: center; }
 .sc-bypass-gate { display: flex; align-items: center; gap: 8px; padding: 10px; background: rgba(100,116,139,0.06); border-radius: 6px; margin-top: 8px; font-size: calc(12px * var(--wm-panel-effective-scale, 1)); color: #94a3b8; }
+
+.sc-scenario-banner {
+  padding: 10px;
+  margin-bottom: 10px;
+  border-left: 3px solid #f59e0b;
+  background: rgba(245,158,11,0.06);
+  font-size: calc(12px * var(--wm-panel-effective-scale, 1));
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.sc-scenario-top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.sc-scenario-name { flex: 1; font-weight: 600; }
+.sc-scenario-params, .sc-scenario-countries { flex-basis: 100%; }
+.sc-scenario-banner p, .sc-scenario-tagline { margin: 8px 0; }
+.sc-scenario-banner summary { cursor: pointer; padding: 6px 0; }
+.sc-scenario-banner ul { padding-left: 16px; }
+.sc-scenario-banner li { margin-bottom: 8px; }
+.sc-scenario-trigger select, .sc-scenario-trigger input,
+.sc-scenario-btn, .sc-scenario-export, .sc-scenario-dismiss {
+  color: var(--text);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 6px 8px;
+  font: inherit;
+  min-height: 36px;
+}
+.sc-scenario-btn, .sc-scenario-export, .sc-scenario-dismiss { cursor: pointer; }
+.sc-scenario-btn:disabled { opacity: 0.6; cursor: default; }
+.sc-scenario-export { margin-top: 8px; }
+@media (max-width: 600px) {
+  .sc-scenario-trigger select, .sc-scenario-trigger input,
+  .sc-scenario-btn, .sc-scenario-export, .sc-scenario-dismiss { min-height: 44px; }
+}
+
+/* Scenario controls. Sizes use the panel scale variable like every other row in this
+   file — the markup previously carried these as inline style attributes. */
+.sc-scenario-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.sc-scenario-control { display: block; }
+.sc-scenario-control--country { flex: 1; min-width: 140px; }
+.sc-scenario-control select { display: block; width: 100%; }
+.sc-scenario-control input { display: block; width: 100px; }
+.sc-scenario-control option:disabled { color: #64748b; }
+.sc-scenario-hint { font-size: calc(11px * var(--wm-panel-effective-scale, 1)); color: #94a3b8; }
+.sc-scenario-partial { color: #fbbf24; font-style: normal; }

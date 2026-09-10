@@ -2078,3 +2078,34 @@ test.describe('top-level WebMCP dashboard contract', () => {
     }
   });
 });
+
+for (const api of ['registerTool', 'provideContext'] as const) {
+  test(`discovers homepage and dashboard tools with legacy ${api}`, async ({ page }) => {
+    test.skip(productionSmoke, 'Legacy provider fixtures run only against the local build.');
+    await page.addInitScript((method) => {
+      Object.defineProperty(document, 'modelContext', { value: undefined, configurable: true });
+      const tools: WebMCP.ModelContextTool[] = [];
+      Object.defineProperty(navigator, 'modelContext', {
+        configurable: true,
+        value: {
+          [method]: method === 'registerTool'
+            ? (tool: WebMCP.ModelContextTool) => { tools.push(tool); }
+            : (context: { tools: WebMCP.ModelContextTool[] }) => { tools.push(...context.tools); },
+          getTools: () => tools,
+        },
+      });
+    }, api);
+    for (const [route, expected] of [
+      ['/pro/welcome.html', HOMEPAGE_TOOL_NAMES],
+      ['/dashboard', DASHBOARD_TOOL_NAMES],
+    ] as const) {
+      await page.goto(route);
+      await expect.poll(() => page.evaluate(() => {
+        const provider = (navigator as Navigator & {
+          modelContext: { getTools(): WebMCP.ModelContextTool[] };
+        }).modelContext;
+        return provider.getTools().map(tool => tool.name).sort();
+      })).toEqual([...expected].sort());
+    }
+  });
+}

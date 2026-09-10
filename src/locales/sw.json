@@ -2860,6 +2860,10 @@
       "failed": "Hatuwezi kuhifadhi passkey kwenye kifaa hiki."
     },
     "decisionBrief": {
+      "commodityTitle": "Muhtasari wa uamuzi wa bidhaa",
+      "commodity": "Bidhaa / zao",
+      "blockedChokepoint": "Njia inayodhaniwa kuzuiwa",
+      "commodityCapture": "Hifadhi ulinganisho wa bidhaa",
       "title": "Muhtasari wa uamuzi",
       "fuel": "Nishati ya mafuta",
       "chokepoint": "Njia nyembamba",

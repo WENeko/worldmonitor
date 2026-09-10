@@ -2200,3 +2200,9 @@
 .cdp-decision-paper p { margin: 0 0 10px; }
 .cdp-decision-paper ul { padding-inline-start: 20px; }
 .cdp-decision-paper li { margin-bottom: 8px; }
+
+.cdp-commodity-candidate { border: 1px solid var(--border); padding: 16px; margin: 16px 0; break-inside: avoid; }
+.cdp-commodity-candidate dl { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(0, 3fr); gap: 8px 16px; }
+.cdp-commodity-candidate dt { font-weight: 600; }
+.cdp-commodity-candidate dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .cdp-commodity-candidate dl { grid-template-columns: 1fr; gap: 4px; } .cdp-commodity-candidate dd { margin-bottom: 12px; } }

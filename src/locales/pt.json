@@ -2428,6 +2428,10 @@
       "failed": "Não conseguimos salvar uma chave de acesso neste dispositivo."
     },
     "decisionBrief": {
+      "commodityTitle": "Resumo de decisão sobre commodities",
+      "commodity": "Commodity / produto",
+      "blockedChokepoint": "Passagem considerada bloqueada",
+      "commodityCapture": "Registrar comparação de commodities",
       "title": "Resumo de decisão",
       "fuel": "Combustível",
       "chokepoint": "Ponto de passagem crítico",

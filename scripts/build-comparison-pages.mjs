@@ -22,7 +22,7 @@ import {
 import { computeStats } from './docs-stats.mjs';
 
 /** Bump when hub or child copy changes so lastmod advances without touching every sibling. */
-export const COMPARISONS_CONTENT_VERSION = '2026-09-08';
+export const COMPARISONS_CONTENT_VERSION = '2026-09-10';
 
 /**
  * Universal comparison-matrix columns. Engines lift these cells verbatim, so

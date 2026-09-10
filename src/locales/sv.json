@@ -2411,6 +2411,10 @@
       "failed": "Vi kunde inte spara en passkey på den här enheten."
     },
     "decisionBrief": {
+      "commodityTitle": "Beslutsunderlag för råvaror",
+      "commodity": "Råvara / produkt",
+      "blockedChokepoint": "Antagen blockerad passage",
+      "commodityCapture": "Spara råvarujämförelse",
       "title": "Beslutsunderlag",
       "fuel": "Bränsle",
       "chokepoint": "Flaskhals",

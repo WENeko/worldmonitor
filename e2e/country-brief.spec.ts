@@ -1,7 +1,7 @@
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect, HYDRATED_MARKET } from './country-brief-fixtures';
 import { readFile } from 'node:fs/promises';
-import { installCountryBriefDesignData, installDecisionBriefData } from './country-brief-design-fixtures';
+import { installCountryBriefDesignData, installDecisionBriefData, installCommodityBriefData } from './country-brief-design-fixtures';
 
 test.use({ trace: 'on', serviceWorkers: 'block' });
 
@@ -407,4 +407,56 @@ test('decision brief clears and stays usable when a selection change aborts a ca
   await expect(panel.getByRole('button', { name: 'Download decision JSON' })).toBeDisabled();
   // The aborted capture must leave the control usable, not permanently disabled.
   await expect(panel.getByRole('button', { name: 'Capture / refresh both' })).toBeEnabled();
+});
+
+for (const mobile of [false, true]) test(`commodity decision brief ${mobile ? 'mobile' : 'desktop'} captures selection and actual exports`, async ({ page, countryBrief }, testInfo) => {
+  void countryBrief;
+  if (mobile) await page.setViewportSize({ width: 390, height: 844 });
+  await installCommodityBriefData(page);
+  await page.goto('/dashboard?country=JP');
+  const panel = page.locator('#country-deep-dive-panel');
+  await expect(panel).toHaveAttribute('aria-hidden', 'false');
+  await panel.getByRole('button', { name: 'Commodity decision brief', exact: true }).click();
+  const output = panel.getByRole('region', { name: 'Commodity decision brief', exact: true });
+  await expect(output.getByLabel('Commodity / product', { exact: true })).toHaveValue('helium');
+  await page.screenshot({ path: testInfo.outputPath('before.png') });
+  for (const commodity of ['helium', 'wheat', 'lithium']) {
+    await output.getByLabel('Commodity / product', { exact: true }).selectOption(commodity);
+    await expect(output.getByRole('button', { name: 'Download decision JSON' })).toBeDisabled();
+    await output.getByRole('button', { name: 'Capture commodity comparison' }).click();
+    await expect(output.getByRole('status')).toContainText('Captured.');
+    const paper = output.locator('.cdp-commodity-paper');
+    const snapshot = JSON.parse(await paper.locator('#commodity-brief-snapshot').textContent() ?? 'null');
+    if (commodity === 'helium') {
+      await expect(paper).toContainText('hospital helium supplier share');
+      await expect(paper.locator('[data-origin="QA"]')).toContainText('hormuz_strait');
+      expect(snapshot.candidates.find((c: { origin: string }) => c.origin === 'QA').routeState).toBe('exposed');
+      expect(snapshot.candidates.find((c: { origin: string }) => c.origin === 'ZZ').routeState).toBe('unknown');
+    } else if (commodity === 'wheat') {
+      expect(snapshot.candidates.map((c: { origin: string }) => c.origin)).toEqual(['AU']);
+      await expect(paper).toContainText('2023');
+      await expect(paper).not.toContainText('hospital');
+    } else await expect(paper).toContainText('No recorded HS 2836 bilateral product evidence');
+    const files: Record<string, string> = {};
+    for (const format of ['HTML', 'JSON']) {
+      const event = page.waitForEvent('download');
+      await output.getByRole('button', { name: `Download decision ${format}`, exact: true }).click();
+      const download = await event;
+      const path = testInfo.outputPath(`${commodity}-${download.suggestedFilename()}`);
+      await download.saveAs(path); files[format] = await readFile(path, 'utf8');
+    }
+    expect(JSON.parse(files.JSON!)).toEqual(snapshot);
+    const exported = await page.context().newPage();
+    await exported.route('http://commodity-export.test/', route => route.fulfill({ body: files.HTML!, contentType: 'text/html' }));
+    await exported.goto('http://commodity-export.test/');
+    expect(JSON.parse(await exported.locator('#commodity-brief-snapshot').textContent() ?? 'null')).toEqual(snapshot);
+    await expect(exported.locator('.cdp-decision-action')).toHaveText(snapshot.action.text);
+    await expect(exported.locator('body')).toContainText(snapshot.action.constraint);
+    await expect(exported.locator('body')).toContainText(snapshot.action.trigger);
+    await exported.screenshot({ path: testInfo.outputPath(`${commodity}-export.png`), fullPage: true });
+    await exported.close();
+    await paper.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`${commodity}-preview.png`) });
+    expect(await output.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  }
 });

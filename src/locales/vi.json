@@ -2772,6 +2772,10 @@
       "failed": "Chúng tôi không thể lưu khóa truy cập trên thiết bị này."
     },
     "decisionBrief": {
+      "commodityTitle": "Bản tóm tắt quyết định về hàng hóa",
+      "commodity": "Hàng hóa / sản phẩm",
+      "blockedChokepoint": "Điểm nghẽn giả định bị phong tỏa",
+      "commodityCapture": "Ghi lại so sánh hàng hóa",
       "title": "Bản tóm tắt quyết định",
       "fuel": "Nhiên liệu",
       "chokepoint": "Điểm nghẽn",

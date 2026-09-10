@@ -2829,6 +2829,10 @@
       "failed": "Nie udało się zapisać klucza dostępu na tym urządzeniu."
     },
     "decisionBrief": {
+      "commodityTitle": "Raport decyzyjny dotyczący surowców",
+      "commodity": "Surowiec / produkt",
+      "blockedChokepoint": "Przejście uznane za zablokowane",
+      "commodityCapture": "Zapisz porównanie surowców",
       "title": "Raport decyzyjny",
       "fuel": "Paliwo",
       "chokepoint": "Wąskie gardło",

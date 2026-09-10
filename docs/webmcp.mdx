@@ -98,7 +98,7 @@ Chrome 149–151 exposes `registerTool()` but invokes the registered callback wi
 The cancellation-required tools persist browser state, can navigate away, or can consume server-side allowance. The gate prevents those effects from starting when the host cannot cancel them. The view-state tools remain available. `set_map_view`, `set_time_range`, and `focus_country` also update the address bar through `history.replaceState`, which creates the same reloadable share state as the dashboard controls.
 
 <Note>
-Browsers without the current API, including the Tauri desktop webview when it does not expose WebMCP, safely do nothing. WorldMonitor does not install a browser polyfill and does not fall back to an older draft API.
+Browsers without either supported registration API safely do nothing. WorldMonitor does not install a browser polyfill. Legacy-only hosts use the fallback described below.
 </Note>
 
 ## Tool inventory
@@ -290,7 +290,7 @@ WebMCP is designed primarily for a local browser workflow with a person in the l
 
 ## Debug with the browser API
 
-Use the current API on `document`. The older `navigator.modelContext` surface is deprecated in Chrome 150, and the removed `provideContext` draft API is not supported.
+WorldMonitor prefers `document.modelContext.registerTool()`. When that API is absent, the homepage and dashboard try legacy `navigator.modelContext.registerTool()`, then `navigator.modelContext.provideContext({ tools })`. Each page registers through one provider only. No browser globals are created. Legacy hosts keep the same tool checks, including cancellation requirements.
 
 ```js
 const modelContext = document.modelContext;

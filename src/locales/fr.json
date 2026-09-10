@@ -2810,6 +2810,10 @@
       "failed": "Nous n'avons pas pu enregistrer une clé d'accès sur cet appareil."
     },
     "decisionBrief": {
+      "commodityTitle": "Note de décision sur les matières premières",
+      "commodity": "Matière première / produit",
+      "blockedChokepoint": "Passage supposé bloqué",
+      "commodityCapture": "Capturer la comparaison des matières premières",
       "title": "Note de décision",
       "fuel": "Combustible",
       "chokepoint": "Point de passage critique",

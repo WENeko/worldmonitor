@@ -2886,6 +2886,10 @@
       "failed": "Nismo mogli spremiti ključ pristupa na ovaj uređaj."
     },
     "decisionBrief": {
+      "commodityTitle": "Sažetak odluke o sirovinama",
+      "commodity": "Sirovina / proizvod",
+      "blockedChokepoint": "Pretpostavljeno blokiran prolaz",
+      "commodityCapture": "Zabilježi usporedbu sirovina",
       "title": "Sažetak za odluku",
       "fuel": "Gorivo",
       "chokepoint": "Usko grlo",

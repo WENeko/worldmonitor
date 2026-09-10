@@ -2829,6 +2829,10 @@
       "failed": "Na tomto zařízení se nám nepodařilo uložit přístupový klíč."
     },
     "decisionBrief": {
+      "commodityTitle": "Podklad pro rozhodování o komoditách",
+      "commodity": "Komodita / produkt",
+      "blockedChokepoint": "Předpokládaný zablokovaný průchod",
+      "commodityCapture": "Zachytit srovnání komodit",
       "title": "Rozhodovací přehled",
       "fuel": "Palivo",
       "chokepoint": "Úzké hrdlo",

@@ -1695,8 +1695,8 @@ export class MapContainer {
     }
     const state: ScenarioVisualState = {
       scenarioId,
-      disruptedChokepointIds: result.affectedChokepointIds,
-      affectedIso2s: result.topImpactCountries.map((c: { iso2: string }) => c.iso2),
+      disruptedChokepointIds: result.template?.disruptionPct === 0 ? [] : result.affectedChokepointIds,
+      affectedIso2s: result.topImpactCountries.filter(c => c.totalImpact > 0).map(c => c.iso2),
     };
     this.cachedScenarioState = state;
     this.applyScenarioState(state);

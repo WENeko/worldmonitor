@@ -109,3 +109,59 @@ test('recorded zero is distinct from missing baseline', () => {
   assert.match(s.action.text, /modeled zero/);
   assert.equal(s.comparison.delta, 0);
 });
+
+// U2 uses the actual builder and route mapping with controlled bilateral records.
+test('commodity comparison preserves Qatar origin blockage and recorded US constraints', async () => {
+  const module = await import('../src/utils/decision-brief.ts');
+  assert.equal(typeof module.buildCommodityBrief, 'function', 'commodity comparison builder must exist');
+  const data = {
+    retrievedAt: '2026-09-10T10:00:00Z',
+    products: { iso2: 'JP', fetchedAt: '2026-09-09', products: [{ hs4: '2804', description: 'Hydrogen and rare gases', totalValue: 1000, year: 2024, topExporters: [
+      { partnerCode: 634, partnerIso2: 'QA', share: 0.6, value: 600 },
+      { partnerCode: 842, partnerIso2: 'US', share: 0.3, value: 300 },
+      { partnerCode: 999, partnerIso2: 'ZZ', share: 0.1, value: 100 },
+    ] }] },
+    vulnerabilities: { iso2: 'JP', country: 'Japan', vulnerabilities: [], generatedAt: '', methodologyVersion: '', upstreamUnavailable: true },
+  };
+  const s = module.buildCommodityBrief({ countryCode: 'JP', countryName: 'Japan', commodityId: 'helium', chokepointId: 'hormuz_strait' }, data);
+  assert.equal(s.candidates.find(c => c.origin === 'QA')?.routeState, 'exposed');
+  assert.equal(s.candidates.find(c => c.origin === 'ZZ')?.routeState, 'unknown');
+  assert.equal(s.candidates[0]?.origin, 'US');
+  assert.match(s.action.text, /US/);
+  assert.match(s.action.constraint, /capacity.*qualification.*price.*lead time/i);
+  assert.match(s.caveats.join(' '), /hospital/);
+  assert.equal(s.evidence.find(e => e.id === 'share-JP-2804-QA')?.value, 60);
+  assert.equal(s.evidence.find(e => e.id === 'share-JP-2804-QA')?.observedAt, '2024');
+  assert(s.action.references.every(ref => s.evidence.some(e => e.id === ref)));
+});
+
+test('commodity missing products, country mismatch and invalid shares remain explicit', async () => {
+  const { buildCommodityBrief } = await import('../src/utils/decision-brief.ts');
+  const selected = { countryCode: 'JP', countryName: 'Japan', commodityId: 'helium', chokepointId: 'hormuz_strait' };
+  const data = { retrievedAt: '2026-09-10', products: { iso2: 'JP', fetchedAt: '', products: [] }, vulnerabilities: { iso2: 'JP', country: '', vulnerabilities: [], generatedAt: '', methodologyVersion: '', upstreamUnavailable: true } };
+  const missing = buildCommodityBrief(selected, data);
+  assert.equal(missing.candidates.length, 0);
+  assert.match(missing.action.text, /No recorded HS 2804/);
+  assert.match(missing.context, /No zero exposure/);
+  assert.throws(() => buildCommodityBrief({ ...selected, countryCode: 'DE' }, data), /country/);
+  const invalid = buildCommodityBrief(selected, { ...data, products: { ...data.products, products: [{ hs4: '2804', description: '', totalValue: 100, year: 0, topExporters: [{ partnerCode: 842, partnerIso2: 'US', share: NaN, value: 100 }] }] } });
+  assert.equal(invalid.evidence[0]?.value, null);
+  assert.equal(invalid.evidence[0]?.observedAt, null);
+  assert.match(invalid.action.text, /No positive recorded share/);
+});
+
+test('commodity ordering uses known routes and exact zero remains different from unknown', async () => {
+  const { buildCommodityBrief } = await import('../src/utils/decision-brief.ts');
+  const selected = { countryCode: 'DE', countryName: 'Germany', commodityId: 'wheat', chokepointId: 'suez' };
+  const data = { retrievedAt: '2026-09-10', products: { iso2: 'DE', fetchedAt: '', products: [{ hs4: '1001', description: '', totalValue: 100, year: 2024, topExporters: [
+    { partnerCode: 156, partnerIso2: 'CN', share: 0.6, value: 60 }, { partnerCode: 842, partnerIso2: 'US', share: 0.4, value: 40 }, { partnerCode: 124, partnerIso2: 'CA', share: 0, value: 0 },
+  ] }] }, vulnerabilities: { iso2: 'DE', country: '', vulnerabilities: [], generatedAt: '', methodologyVersion: '', upstreamUnavailable: true } };
+  const blocked = buildCommodityBrief(selected, data);
+  assert.equal(blocked.candidates[0]?.origin, 'US');
+  assert.equal(blocked.candidates.find(c => c.origin === 'CN')?.routeState, 'exposed');
+  assert.equal(blocked.evidence.find(e => e.id === 'share-DE-1001-CA')?.value, 0);
+  const hormuz = buildCommodityBrief({ ...selected, chokepointId: 'hormuz_strait' }, data);
+  assert.equal(hormuz.candidates[0]?.origin, 'CN');
+  assert.deepEqual(hormuz.evidence, blocked.evidence);
+  assert.deepEqual(hormuz.capture, blocked.capture);
+});

@@ -2810,6 +2810,10 @@
       "failed": "No pudimos guardar una llave de acceso en este dispositivo."
     },
     "decisionBrief": {
+      "commodityTitle": "Informe de decisión sobre materias primas",
+      "commodity": "Materia prima / producto",
+      "blockedChokepoint": "Paso supuesto bloqueado",
+      "commodityCapture": "Capturar comparación de materias primas",
       "title": "Informe de decisión",
       "fuel": "Combustible",
       "chokepoint": "Punto de paso crítico",

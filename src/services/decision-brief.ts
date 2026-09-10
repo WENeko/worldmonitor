@@ -13,3 +13,17 @@ export async function captureDecisionBrief(selection: DecisionBriefSelection, si
   });
   return Promise.all([capture(selection.baselinePct), capture(selection.comparisonPct)]);
 }
+
+export async function captureCommodityBrief(
+  selection: import('@/types/decision-brief').CommodityBriefSelection,
+  signal: AbortSignal,
+): Promise<import('@/types/decision-brief').CommodityBriefCapture> {
+  const { SupplyChainServiceClient } = await import('@/services/generated-rpc-clients');
+  const supply = new SupplyChainServiceClient(getRpcBaseUrl(), { fetch: premiumFetch });
+  const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
+  const [products, vulnerabilities] = await Promise.all([
+    supply.getCountryProducts({ iso2: selection.countryCode }, { signal: requestSignal }),
+    supply.getCountryVulnerabilities({ iso2: selection.countryCode }, { signal: requestSignal }),
+  ]);
+  return { products, vulnerabilities, retrievedAt: new Date().toISOString() };
+}

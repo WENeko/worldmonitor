@@ -2860,6 +2860,10 @@
       "failed": "हम इस डिवाइस पर एक पासकी सेव नहीं कर सके।"
     },
     "decisionBrief": {
+      "commodityTitle": "वस्तु निर्णय सारांश",
+      "commodity": "वस्तु / उत्पाद",
+      "blockedChokepoint": "अवरुद्ध माना गया मार्ग",
+      "commodityCapture": "वस्तु तुलना दर्ज करें",
       "title": "निर्णय सारांश",
       "fuel": "ईंधन",
       "chokepoint": "अवरोध बिंदु",

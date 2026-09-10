@@ -14,7 +14,7 @@
          parse time when the provider is already present (native WebMCP), and
          retries once on DOMContentLoaded/load for a provider installed later
          (e.g. a scanner polyfill); the registration guard keeps it idempotent, and
-         it is a no-op in browsers without document.modelContext. The MCP server is
+         it is a no-op in browsers without a supported WebMCP provider. The MCP server is
          the remote HTTP (Streamable HTTP) transport at https://worldmonitor.app/mcp
          — getWorldMonitorMcpEndpoint hands agents that endpoint. The nonce is added
          by Vite (html.cspNonce) at build time, so this inline script needs no CSP
@@ -91,7 +91,27 @@
           } catch (e) {
             return;
           }
-          if (!provider || typeof provider.registerTool !== 'function') return;
+          if (!provider || typeof provider.registerTool !== 'function') {
+            try {
+              provider = typeof navigator !== 'undefined' ? navigator.modelContext : null;
+            } catch (e) {
+              return;
+            }
+          }
+          if (!provider) return;
+          if (typeof provider.registerTool !== 'function') {
+            if (typeof provider.provideContext !== 'function') return;
+            registrationStarted = true;
+            try {
+              Promise.resolve(provider.provideContext({ tools: tools })).then(
+                function () { registered = true; },
+                function () { registered = false; }
+              );
+            } catch (e) {
+              registered = false;
+            }
+            return;
+          }
           registrationStarted = true;
           var registrations = [];
           for (var i = 0; i < tools.length; i++) {
