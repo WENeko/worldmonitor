@@ -720,6 +720,35 @@ describe('wave-2 analysis tools: cache-backed orchestration', () => {
     });
   }
 
+  it('resolves focal-point country names and alpha-3 codes before entity matching', async () => {
+    installUpstashStub(analysisPayloads());
+    const tool = findTool('get_focal_points');
+    const expected = await tool._execute({ country_code: 'IR' }, '', {}, {});
+    assert.ok(expected.data.focal_points.length > 0);
+    for (const country_code of ['Iran', 'IRN', ' ir ']) {
+      const actual = await tool._execute({ country_code }, '', {}, {});
+      assert.deepEqual(actual.data, expected.data);
+    }
+  });
+
+  it('reports unsupported focal-point coverage for Iraq instead of an empty calm answer', async () => {
+    installUpstashStub(analysisPayloads());
+    for (const country_code of ['Iraq', 'IQ', 'IRQ']) {
+      await assert.rejects(
+        () => findTool('get_focal_points')._execute({ country_code }, '', {}, {}),
+        (error) => error.name === 'RpcValidationError' && /No focal-point coverage for IQ/.test(error.violations[0].description),
+      );
+    }
+  });
+
+  it('rejects an unresolved focal-point country before reading caches', async () => {
+    globalThis.fetch = async () => { throw new Error('unexpected fetch'); };
+    await assert.rejects(
+      () => findTool('get_focal_points')._execute({ country_code: 'Atlantis' }, '', {}, {}),
+      (error) => error.name === 'RpcValidationError' && error.violations[0].field === 'country_code',
+    );
+  });
+
   it('executes every hybrid success path against producer-shaped cache payloads', async () => {
     installUpstashStub(analysisPayloads());
 

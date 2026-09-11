@@ -94,6 +94,7 @@ import { buildMicrostateCoverageStoryContent } from '../scripts/microstate-cover
 import { buildSourceCatalog, sourceProviderDisplayName } from '../scripts/crawlable-sources-page.mjs';
 import { resolveSourceOrigin, sourceOriginLabel } from '../scripts/source-origin.mjs';
 import { USE_CASES_CONTENT_VERSION } from '../scripts/build-use-cases.mjs';
+import { ACCURACY_CONTENT_VERSION } from '../scripts/build-accuracy-page.mjs';
 import { COMPARISONS_CONTENT_VERSION } from '../scripts/build-comparison-pages.mjs';
 import { shiftLivePulseDates } from './helpers/shift-live-pulse-dates.mjs';
 import { rawCatalogProviderNames, rawManifestActiveEntries } from './helpers/raw-catalog-providers.mjs';
@@ -2010,6 +2011,7 @@ describe('crawlable corpus generator', () => {
       assert.equal(manifest.sections.tools.count, 3);
       assert.equal(manifest.sections.research.count, 1);
       assert.equal(manifest.sections.useCases.count, 3);
+      assert.equal(manifest.sections.accuracy.count, 1);
   assert.equal(manifest.sections.comparisons.count, 13);
       assert.equal(manifest.sections.sources.count, manifest.sections.sources.routes.length + 1);
       assert.ok(manifest.sections.sources.routes.length > 1);
@@ -2048,6 +2050,8 @@ describe('crawlable corpus generator', () => {
         ...manifest.sections.research.routes,
         manifest.sections.useCases.index,
         ...manifest.sections.useCases.routes,
+        manifest.sections.accuracy.index,
+        ...manifest.sections.accuracy.routes,
         manifest.sections.comparisons.index,
         ...manifest.sections.comparisons.routes,
         manifest.sections.changelog.index,
@@ -2134,6 +2138,7 @@ describe('crawlable corpus generator', () => {
         ...manifest.sections.chokepoints.routes,
         ...manifest.sections.crises.routes,
         ...manifest.sections.research.routes,
+        manifest.sections.accuracy.index,
       ]);
       const catalogLinkedRoutes = new Set([
         manifest.sections.countryInstabilityIndex.index,
@@ -2141,6 +2146,7 @@ describe('crawlable corpus generator', () => {
         ...manifest.sections.chokepoints.routes,
         ...manifest.sections.crises.routes,
         ...manifest.sections.research.routes,
+        manifest.sections.accuracy.index,
       ]);
       // The hub asserted four scoring inputs flatly — "combines active
       // navigational warnings, AIS signal disruptions, congestion, and transit
@@ -2387,8 +2393,16 @@ describe('crawlable corpus generator', () => {
           route: '/research/strait-of-hormuz-transit-report-2026-07/',
           match: (dataset) => dataset.name?.startsWith('Strait of Hormuz daily transit calls'),
         },
+        {
+          name: 'forecast accuracy scorecard',
+          route: '/accuracy/',
+          id: '#dataset',
+          identifier: 'forecast-resolution-scorecard',
+          artifact: 'accuracy/scorecard.json',
+          dataset: 'forecast-resolution-scorecard',
+        },
       ];
-      assert.equal(datasetTemplateContracts.length, 9, 'the Dataset contract must cover all nine template families');
+      assert.equal(datasetTemplateContracts.length, 10, 'the Dataset contract must cover every template family');
       for (const contract of datasetTemplateContracts) {
         const html = read(outDir, `${contract.route.slice(1)}index.html`);
         const dataset = collectDatasets(jsonLdObjects(html)).find((entry) => (
@@ -2441,6 +2455,8 @@ describe('crawlable corpus generator', () => {
         'reference/changelog/index.html',
         'reference/changelog/page/2/index.html',
         'sources/index.html',
+        'accuracy/index.html',
+        'accuracy/scorecard.json',
         'crawlable-corpus.json',
       ]) {
         assert.ok(existsSync(join(outDir, path)), `missing generated file ${path}`);
@@ -5424,6 +5440,7 @@ describe('live-pulse snapshot injection (#7533)', () => {
         CHOKEPOINT_PAGE_CONTENT_VERSION,
         CRISIS_PAGE_CONTENT_VERSION,
         COMPARISONS_CONTENT_VERSION,
+        ACCURACY_CONTENT_VERSION,
         ...COMPARISON_PAGE_LASTMOD_PATHS.map((path) => gitFileLastmod(repoRoot, path)),
       ].filter(Boolean).sort().at(-1);
       const pulseDate = !latestOther || latestOther < today ? today : dayAfter(latestOther);
@@ -5512,6 +5529,14 @@ describe('live-pulse snapshot injection (#7533)', () => {
           ['useCases', [
             laterDate(USE_CASES_CONTENT_VERSION, gitFileLastmod(repoRoot, data.sources.useCases)),
             pageFor(manifest.sections.useCases.index),
+          ]],
+          ['accuracy', [
+            laterDate(
+              ACCURACY_CONTENT_VERSION,
+              gitFileLastmod(repoRoot, data.sources.accuracy),
+              pulseDate,
+            ),
+            pageFor(manifest.sections.accuracy.index),
           ]],
           ['sources', [
             sourcePageLastmod({

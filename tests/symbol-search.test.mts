@@ -1,3 +1,4 @@
+import { allowSymbolSearchBudget } from './helpers/symbol-search-budget.mts';
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 
@@ -82,7 +83,7 @@ describe('symbol-search handler', () => {
     process.env.FINNHUB_API_KEY = 'test-key';
     let requestedUrl = '';
     let requestedUA: string | null = null;
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = allowSymbolSearchBudget((async (input: RequestInfo | URL, init?: RequestInit) => {
       requestedUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const h = new Headers(init?.headers ?? {});
       requestedUA = h.get('User-Agent');
@@ -90,7 +91,7 @@ describe('symbol-search handler', () => {
         JSON.stringify({ count: 1, result: [{ symbol: 'NVDA', displaySymbol: 'NVDA', description: 'NVIDIA CORP', type: 'Common Stock' }] }),
         { status: 200 },
       );
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const res = await handler(makeReq('nvidia'));
     assert.equal(res.status, 200);
@@ -105,7 +106,7 @@ describe('symbol-search handler', () => {
   it('returns empty results for a blank query without calling Finnhub', async () => {
     process.env.FINNHUB_API_KEY = 'test-key';
     let called = false;
-    globalThis.fetch = (async () => { called = true; return new Response('{}'); }) as typeof fetch;
+    globalThis.fetch = allowSymbolSearchBudget((async () => { called = true; return new Response('{}'); }) as typeof fetch);
 
     const res = await handler(makeReq('   '));
     assert.equal(res.status, 200);
@@ -120,7 +121,7 @@ describe('symbol-search handler', () => {
 
   it('maps a Finnhub 429 to 503 so the client backs off instead of failing hard', async () => {
     process.env.FINNHUB_API_KEY = 'test-key';
-    globalThis.fetch = (async () => new Response('rate limited', { status: 429 })) as typeof fetch;
+    globalThis.fetch = allowSymbolSearchBudget((async () => new Response('rate limited', { status: 429 })) as typeof fetch);
     const res = await handler(makeReq('nvidia'));
     assert.equal(res.status, 503);
   });
@@ -133,7 +134,7 @@ describe('symbol-search handler', () => {
     let finnhubCalls = 0;
     let cooldownSetBody: string | null = null;
 
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = allowSymbolSearchBudget((async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       if (url.startsWith('https://upstash.test/get/symsearch')) {
         return new Response(JSON.stringify({ result: null }), { status: 200 });
@@ -148,7 +149,7 @@ describe('symbol-search handler', () => {
       }
       if (url.startsWith('https://upstash.test')) return permissiveUpstashCatchAll();
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const writePromises: Array<Promise<unknown>> = [];
     const res = await handler(makeReq('nvidia'), { waitUntil: (p) => writePromises.push(p) });
@@ -182,7 +183,7 @@ describe('symbol-search handler', () => {
       expiresAt: now + 12_100,
     };
 
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = allowSymbolSearchBudget((async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       if (url.startsWith('https://upstash.test/get/')) {
         const key = decodeURIComponent(url.slice('https://upstash.test/get/'.length));
@@ -199,7 +200,7 @@ describe('symbol-search handler', () => {
       }
       if (url.startsWith('https://upstash.test')) return permissiveUpstashCatchAll();
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const res = await handler(makeReq('nvidia'));
     assert.equal(res.status, 503);
@@ -210,7 +211,7 @@ describe('symbol-search handler', () => {
 
   it('returns 500 when the upstream fetch throws', async () => {
     process.env.FINNHUB_API_KEY = 'test-key';
-    globalThis.fetch = (async () => { throw new Error('network down'); }) as typeof fetch;
+    globalThis.fetch = allowSymbolSearchBudget((async () => { throw new Error('network down'); }) as typeof fetch);
     const res = await handler(makeReq('nvidia'));
     assert.equal(res.status, 500);
   });
@@ -247,7 +248,7 @@ describe('symbol-search handler', () => {
     const cachedPayload = { results: [{ symbol: 'GLW', name: 'Corning Inc', display: 'GLW' }] };
     let finnhubCalls = 0;
 
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = allowSymbolSearchBudget((async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       if (url.startsWith('https://upstash.test/get/symsearch')) {
         // Upstash returns the JSON-stringified value under `.result`.
@@ -259,7 +260,7 @@ describe('symbol-search handler', () => {
       }
       if (url.startsWith('https://upstash.test')) return permissiveUpstashCatchAll();
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const res = await handler(makeReq('glw'));
     assert.equal(res.status, 200);
@@ -277,7 +278,7 @@ describe('symbol-search handler', () => {
     let setBody: string | null = null;
     let getKey: string | null = null;
 
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = allowSymbolSearchBudget((async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       if (url.startsWith('https://upstash.test/get/symsearch')) {
         const key = decodeURIComponent(url.slice('https://upstash.test/get/'.length));
@@ -300,7 +301,7 @@ describe('symbol-search handler', () => {
       }
       if (url.startsWith('https://upstash.test')) return permissiveUpstashCatchAll();
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     // Pass a stub ctx so the cache-write runs synchronously enough to assert.
     const writePromises: Array<Promise<unknown>> = [];

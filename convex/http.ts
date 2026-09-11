@@ -1721,6 +1721,9 @@ http.route({
         headers: { "Content-Type": "application/json" },
       });
     } catch (err) {
+      if (extractConvexErrorCode(err) === "INVALID_CHECKOUT_PRODUCT") {
+        return Response.json({ error: "INVALID_CHECKOUT_PRODUCT" }, { status: 400 });
+      }
       const msg = err instanceof Error ? err.message : "Checkout creation failed";
       return new Response(JSON.stringify({ error: msg }), {
         status: 500,

@@ -12,6 +12,8 @@
 // Accept: text/event-stream) emits SSE with the NLWeb event types
 // start → result (one per item) → complete.
 
+import { readBoundedRequestBody, RequestBodyTooLargeError } from './mcp/bounded-body';
+
 import { suggestTools } from './_agent-tool-suggest';
 import { ENDPOINT_RATE_POLICIES, checkScopedRateLimit, getClientIp } from '../server/_shared/rate-limit';
 
@@ -35,6 +37,7 @@ const SITE = 'worldmonitor.app';
 const TOOLS_DOC_URL = 'https://www.worldmonitor.app/docs/mcp-tools-reference';
 const MCP_ENDPOINT = 'https://worldmonitor.app/mcp';
 const MAX_QUERY_CHARS = 2048;
+const MAX_BODY_BYTES = 16 * 1024;
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -116,12 +119,14 @@ async function extractParams(req: Request): Promise<AskParams | null> {
   if (req.method === 'POST') {
     const contentType = req.headers.get('content-type') ?? '';
     try {
+      const text = new TextDecoder().decode(await readBoundedRequestBody(req, MAX_BODY_BYTES));
       if (contentType.includes('application/x-www-form-urlencoded')) {
-        body = Object.fromEntries(new URLSearchParams(await req.text()));
+        body = Object.fromEntries(new URLSearchParams(text));
       } else {
-        body = (await req.json()) as Record<string, unknown>;
+        body = JSON.parse(text) as Record<string, unknown>;
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) throw error;
       return null; // malformed body
     }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
@@ -207,7 +212,16 @@ export default async function handler(req: Request): Promise<Response> {
     );
   }
 
-  const params = await extractParams(req);
+  let params: AskParams | null;
+  try {
+    params = await extractParams(req);
+  } catch (error) {
+    if (!(error instanceof RequestBodyTooLargeError)) throw error;
+    return new Response(
+      JSON.stringify({ _meta: buildMeta('error'), error: 'Request body too large' }),
+      { status: 413, headers: JSON_HEADERS },
+    );
+  }
   if (params === null) {
     return new Response(
       JSON.stringify({ _meta: buildMeta('error'), error: 'Request body must be valid JSON (or form-encoded).' }),

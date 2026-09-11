@@ -4566,6 +4566,9 @@
           "path": "api/download.js"
         },
         {
+          "path": "scripts/build-accuracy-page.mjs"
+        },
+        {
           "path": "scripts/generate-airline-codes.mjs"
         },
         {
@@ -7993,6 +7996,9 @@
       "references": [
         {
           "path": "api/ask.ts"
+        },
+        {
+          "path": "scripts/build-accuracy-page.mjs"
         },
         {
           "path": "scripts/build-crawlable-corpus.mjs"
@@ -14247,6 +14253,9 @@
         },
         {
           "path": "api/not-found.ts"
+        },
+        {
+          "path": "scripts/build-accuracy-page.mjs"
         },
         {
           "path": "scripts/build-agent-skills-index.mjs"

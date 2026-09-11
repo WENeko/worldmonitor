@@ -230,6 +230,7 @@ const DASHBOARD_REFERENCE_LINKS = [
   { label: 'Chokepoints', path: '/chokepoints/' },
   { label: 'Crises', path: '/crises/' },
   { label: 'Tools', path: '/tools/' },
+  { label: 'Accuracy', path: '/accuracy/' },
 ] as const;
 
 export const VARIANT_SWITCHER_DASHBOARD_URLS = {

@@ -233,7 +233,11 @@ export default async function handler(req, ctx) {
     return new Response(data, {
       status: response.status,
       headers: {
-        'Content-Type': response.headers.get('content-type') || 'application/xml',
+        // Consumers parse response.text() as feed XML. Never let an upstream
+        // MIME type or active XML turn this same-origin URL into a document.
+        'Content-Type': 'text/plain; charset=utf-8',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "sandbox; default-src 'none'",
         // validateApiKey() gates every GET. Shared caches do not key on the
         // credential header, so this must not be public / s-maxage / CDN-cached.
         // `private` keeps CDNs out; max-age lets the SPA feedCache persist.

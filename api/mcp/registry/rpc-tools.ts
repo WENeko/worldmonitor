@@ -1,3 +1,4 @@
+import { COUNTRY_ARG_HINT, echoCountryInput, requireCountryCode } from '../_country-args';
 import COUNTRY_BBOXES from '../../../shared/country-bboxes.js';
 import { resolveCountryCode } from '../../../shared/country-code-resolve';
 import { countryMentionTerms, mentionsCountry } from '../../../shared/country-mention.js';
@@ -41,58 +42,6 @@ type McpBriefSource = {
   url: string;
   publishedAt?: string;
 };
-
-/** Bound on the caller-supplied value echoed back in a resolution failure. */
-const MAX_ECHOED_COUNTRY_INPUT = 64;
-
-function echoCountryInput(raw: unknown): string {
-  // Never stringify a non-string. `String(x)` runs the value's own toString /
-  // valueOf, and `{"toString":"x"}` is legal JSON a caller can send: the
-  // shadowed, non-callable toString makes String() throw
-  // `TypeError: Cannot convert object to primitive value`. That turns this
-  // guard — whose whole job is to produce a clean 400 — into a 500. Describing
-  // the type is also more useful to the caller than `[object Object]`.
-  const text = typeof raw === 'string' ? raw.trim() : `<non-string ${typeof raw}>`;
-  return text.length > MAX_ECHOED_COUNTRY_INPUT
-    ? `${text.slice(0, MAX_ECHOED_COUNTRY_INPUT)}…`
-    : text;
-}
-
-const COUNTRY_ARG_HINT =
-  'Pass an ISO 3166-1 alpha-2 code (e.g. "IQ"), an alpha-3 code ("IRQ"), or an English country name ("Iraq").';
-
-// Two shapes for the same fault, each forced by the tool's own output schema —
-// not an accident of which branch was easier to edit. get_country_brief and
-// get_country_risk mirror their proto responses verbatim (a schema-coverage
-// guard fails the build if a declared field stops existing on the wire), so
-// they have nowhere to put an `error` field and throw RpcValidationError,
-// which dispatch maps to JSON-RPC -32602 with `error.data.violations[]`.
-// get_airspace and get_maritime_activity already declared a result-level
-// `error` property for the no-bounding-box case, so resolution failures reuse
-// it. A new country-scoped tool should follow whichever rule its schema forces,
-// not pick freely.
-
-/**
- * Resolve a `country_code` tool argument, or throw the same structured 400 the
- * downstream proto would have raised — reaching the agent as JSON-RPC -32602
- * with `error.data.violations[]`.
- *
- * The argument comes from an LLM, so it arrives as alpha-2, alpha-3, a country
- * name, or an alias interchangeably. It was previously coerced with
- * `.toUpperCase().slice(0, 2)`, which is silently wrong rather than lossy: the
- * proto only enforces `^[A-Z]{2}$`, so a truncated NAME passes validation and
- * answers for a different country — `Iraq` was served as Iran, `China` as
- * Switzerland (WORLDMONITOR-Y2). Failing loudly on the genuinely unresolvable
- * remainder is what lets an agent correct itself.
- */
-function requireCountryCode(raw: unknown, operation: string): string {
-  const resolved = resolveCountryCode(raw);
-  if (resolved) return resolved;
-  throw new RpcValidationError(operation, [{
-    field: 'country_code',
-    description: `Could not resolve ${JSON.stringify(echoCountryInput(raw))} to a country. ${COUNTRY_ARG_HINT}`,
-  }]);
-}
 
 type DigestItemForBrief = {
   title?: string;

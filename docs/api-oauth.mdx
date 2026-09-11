@@ -74,6 +74,8 @@ Starts the OAuth flow. Renders a consent page that redirects to Clerk for sign-i
 
 **Code TTL**: 10 minutes. Single-use (atomic `GETDEL` on exchange).
 
+The **Use API key instead** option accepts dashboard-issued `wm_` keys and enterprise keys. Dashboard-key OAuth tokens retain the key owner's identity and use the same MCP entitlement and quota checks as `X-WorldMonitor-Key` requests. Only the key hash is stored; bearer use revalidates the key through the shared validator, whose revocation cache lasts up to 60 seconds. API-key creation requires `apiAccess`; MCP calls follow `mcpAccess` and the applicable account allowance. Pro users can use sign-in without creating an API key. Company Monitoring keys with restricted scopes are not accepted by this generic MCP flow.
+
 ### `POST /api/oauth/token`
 
 Exchanges an authorization code for an access token, or refreshes an existing token.

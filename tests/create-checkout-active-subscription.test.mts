@@ -207,3 +207,16 @@ describe('/api/create-checkout ACTIVE_SUBSCRIPTION_EXISTS relay handling', () =>
     assert.equal(consoleError.mock.calls.length, 0);
   });
 });
+
+it('forwards invalid checkout product as HTTP 400 without a transport retry signal', async () => {
+  const mod = await importFreshCreateCheckout();
+  const relayFetch = mock.fn(async () => Response.json({ error: 'INVALID_CHECKOUT_PRODUCT' }, { status: 400 }));
+  mod.__setCreateCheckoutDepsForTests({
+    validateBearerToken: async () => ({ valid: true, userId: 'user_product_admission' }),
+    fetch: relayFetch,
+  });
+  const response = await mod.default(makeCheckoutRequest());
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: 'INVALID_CHECKOUT_PRODUCT' });
+  assert.equal(relayFetch.mock.calls.length, 1);
+});

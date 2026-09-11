@@ -22,7 +22,8 @@ export type McpAuthContext =
   // way env_key does). Downstream `_execute` fetches sign as this userId via
   // the same internal HMAC as the OAuth door, so the gateway does not
   // increment the shared daily account meter a second time.
-  | { kind: 'user_key'; apiKey: string; userId: string }
+  // OAuth resolves the stored hash without recovering the plaintext key.
+  | { kind: 'user_key'; apiKey?: string; userId: string }
   // U7 (R7): an uncredentialed caller admitted to the always-free tool subset.
   // Carries NO identity by construction — it is the absence of a principal,
   // modelled as its own kind rather than a synthesised `env_key`/`pro` so every

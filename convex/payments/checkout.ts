@@ -24,7 +24,7 @@ import {
   signCheckoutLoginEmail,
   signUserId,
 } from "../lib/identitySigning";
-import { resolveProductToPlan } from "../config/productCatalog";
+import { PRODUCT_CATALOG, resolveProductToPlan } from "../config/productCatalog";
 import { isTrustedReturnUrlOrigin } from "./returnUrlOrigin";
 import {
   CHECKOUT_RATE_LIMITED,
@@ -44,6 +44,18 @@ import { normalizeCheckoutAttributionSource as normalizeAttributionSource } from
 
 const ACTIVE_SUBSCRIPTION_EXISTS = "ACTIVE_SUBSCRIPTION_EXISTS";
 const PAYMENT_IN_PROGRESS = "PAYMENT_IN_PROGRESS";
+
+function requireCheckoutProduct(productId: string): void {
+  const allowed = Object.values(PRODUCT_CATALOG).some(
+    (entry) => entry.dodoProductId === productId && entry.currentForCheckout && entry.selfServe,
+  );
+  if (!allowed) {
+    throw new ConvexError({
+      code: "INVALID_CHECKOUT_PRODUCT",
+      message: "This product is not available for checkout.",
+    });
+  }
+}
 
 // RFC 5321 maximum forward-path length. A value beyond it is not an address we
 // could deliver to anyway, and it keeps the stamped metadata value small.
@@ -411,6 +423,7 @@ export const createCheckout = action({
   },
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
+    requireCheckoutProduct(args.productId);
     const identity = await resolveUserIdentity(ctx);
     if (args.bypassPendingGuard) {
       // Audit trail: the user confirmed "start a new checkout anyway" past a
@@ -480,6 +493,7 @@ export const internalCreateCheckout = internalAction({
     if (!args.userId) {
       throw new ConvexError("userId is required");
     }
+    requireCheckoutProduct(args.productId);
     if (args.bypassPendingGuard) {
       // See createCheckout — audit the pending-guard bypass (#4438 review).
       console.info(`[checkout] pending-payment guard bypassed user=${args.userId} product=${args.productId}`);

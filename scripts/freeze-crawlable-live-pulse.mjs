@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Freeze last-known-good crawlable live-pulse values for country risk,
 // chokepoint status, crisis HAPI summaries, the top news headlines,
-// the market tape, and
+// the market tape, the forecast resolution scorecard published at /accuracy/, and
 // per-country recent developments (digest headlines matched per country,
 // topped up from the per-country GDELT article index where the digest
 // leaves a country short, plus the intel brief and timeline where a service
@@ -42,6 +42,7 @@ import {
   normalizeFrozenDevelopments,
 } from './crawlable-developments.mjs';
 import { countryIndexPath, topUpCountryIndex } from './crawlable-country-index.mjs';
+import { selectDeclaredScorecardFields } from './build-accuracy-page.mjs';
 import { countryMentionTerms, mentionsCountry } from '../shared/country-mention.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -262,6 +263,7 @@ function firstCaptureCause(errors) {
 }
 
 const RESILIENCE_SNAPSHOT_RE = /^resilience-ranking-(\d{4}-\d{2}-\d{2})\.json$/;
+const LIVE_PULSE_SNAPSHOT_RE = /^crawlable-live-pulse-(\d{4}-\d{2}-\d{2})\.json$/;
 const SNAPSHOT_DIR = path.join(REPO_ROOT, 'docs', 'snapshots');
 
 function sleep(ms) {
@@ -715,6 +717,87 @@ function signalConvergenceReference(capturedAt) {
   };
 }
 
+// The newest committed pulse snapshot that carried a usable scorecard. Read only
+// when the current capture fails: the alternative is publishing nothing, and a
+// dated older measurement is more useful than a blank page as long as the page
+// ages it on its own clock. The weekly workflow prunes superseded snapshots
+// AFTER this runs, so the previous week's file is still on disk here.
+async function retainedForecastScorecard(rootDir) {
+  let entries = [];
+  try {
+    entries = await fs.readdir(path.join(rootDir, 'docs', 'snapshots'));
+  } catch {
+    return null;
+  }
+  const candidates = entries
+    .filter((filename) => LIVE_PULSE_SNAPSHOT_RE.test(filename))
+    .sort()
+    .reverse();
+  for (const filename of candidates) {
+    try {
+      const snapshot = JSON.parse(
+        await fs.readFile(path.join(rootDir, 'docs', 'snapshots', filename), 'utf8'),
+      );
+      const previous = snapshot?.forecastScorecard;
+      const scorecard = selectDeclaredScorecardFields(previous?.scorecard);
+      const generatedAt = Number(previous?.generatedAt);
+      if (scorecard && Number.isFinite(generatedAt) && generatedAt > 0) {
+        return { scorecard, generatedAt, capturedAt: previous.capturedAt ?? null };
+      }
+    } catch {
+      // A malformed sibling snapshot is not this run's problem; keep looking.
+    }
+  }
+  return null;
+}
+
+/** Failure codes are a fixed vocabulary because /accuracy/ publishes them. */
+function scorecardFailureCode(error) {
+  if (error?.code) return error.code;
+  if (Number.isFinite(error?.status)) return 'http-error';
+  return 'request-failed';
+}
+
+async function captureForecastScorecard({
+  token, base, authOpts, capturedAt, attemptedAtMs, rootDir, errors,
+}) {
+  try {
+    const payload = await authedGet('/api/forecast/v1/get-forecast-scorecard', token, base, authOpts);
+    // The RPC handler strips only `judgedLane` before spreading the seeder
+    // value, so undeclared fields reach the response. Whitelisting at capture
+    // keeps them out of the committed snapshot, which is a public repo file,
+    // and not only out of the rendered page.
+    const scorecard = selectDeclaredScorecardFields(payload);
+    if (!scorecard) {
+      throw Object.assign(new Error('forecast scorecard response was not an object'), { code: 'malformed-response' });
+    }
+    if (!Number.isFinite(scorecard.generatedAt) || scorecard.generatedAt <= 0) {
+      throw Object.assign(new Error('forecast scorecard response carried no usable generatedAt'), { code: 'undated-response' });
+    }
+    return {
+      attemptedAt: capturedAt,
+      attemptedAtMs,
+      capturedAt,
+      generatedAt: scorecard.generatedAt,
+      scorecard,
+      failureCode: '',
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const failureCode = scorecardFailureCode(error);
+    errors.push({ id: '*', code: failureCode, message });
+    const retained = await retainedForecastScorecard(rootDir);
+    return {
+      attemptedAt: capturedAt,
+      attemptedAtMs,
+      capturedAt: retained?.capturedAt ?? null,
+      generatedAt: retained?.generatedAt ?? null,
+      scorecard: retained?.scorecard ?? null,
+      failureCode,
+    };
+  }
+}
+
 export async function freezeCrawlableLivePulse({
   apiBase = API_BASE,
   rootDir = REPO_ROOT,
@@ -1061,6 +1144,23 @@ export async function freezeCrawlableLivePulse({
   }
   developmentsErrors.push(...digestVariantErrors, ...countryIndexErrors);
 
+  // Forecast resolution scorecard (#6646), published at /accuracy/. Guarded and
+  // never throwing, like every other step: a scoring outage must cost the page
+  // its numbers, not discard the country work or arm the corpus staleness fuse.
+  // The section is always written, so the page names the failure instead of
+  // silently omitting itself.
+  const scorecardErrors = [];
+  const forecastScorecard = await captureForecastScorecard({
+    token,
+    base,
+    authOpts,
+    capturedAt,
+    attemptedAtMs: freezeStartedAt,
+    rootDir,
+    errors: scorecardErrors,
+  });
+  await sleep(requestGapMs);
+
   const geoLeaders = Object.entries(countries)
     .filter(([, row]) => Number.isFinite(row.geoConvergence) && row.geoConvergence > 0)
     .sort((a, b) => b[1].geoConvergence - a[1].geoConvergence)
@@ -1088,6 +1188,7 @@ export async function freezeCrawlableLivePulse({
       ...signalConvergenceReference(capturedAt),
       ciiGeoConvergenceLeaders: geoLeaders,
     },
+    forecastScorecard,
     coverage: {
       countryCount: Object.keys(countries).length,
       countryErrorCount: countryErrors.length,
@@ -1142,6 +1243,13 @@ export async function freezeCrawlableLivePulse({
       developmentsCountryIndex: countryIndex,
       serviceKeyPresent: keyed,
       developmentsErrorCount: developmentsErrors.length,
+      // Captured means THIS run read the scorecard. A retained older payload
+      // still publishes, so `retained` distinguishes the two rather than
+      // letting a carried-forward measurement look like a fresh read.
+      forecastScorecardCaptured: forecastScorecard.failureCode === '',
+      forecastScorecardRetained: forecastScorecard.failureCode !== '' && forecastScorecard.scorecard !== null,
+      forecastScorecardFailureCode: forecastScorecard.failureCode,
+      forecastScorecardScored: forecastScorecard.scorecard?.totals?.scored ?? null,
     },
     errors: {
       countries: countryErrors,
@@ -1150,6 +1258,7 @@ export async function freezeCrawlableLivePulse({
       headlines: headlineErrors,
       quotes: quoteErrors,
       developments: developmentsErrors,
+      forecastScorecard: scorecardErrors,
     },
   };
 
@@ -1242,8 +1351,20 @@ if (isMain) {
         + `digestPool=${snapshot.coverage.developmentsDigestItemCount} `
         + `countryIndex=${snapshot.coverage.developmentsCountryIndex.state}`
         + `:${snapshot.coverage.developmentsCountryIndex.countryCount} `
-        + `keyed=${snapshot.coverage.serviceKeyPresent}`,
+        + `keyed=${snapshot.coverage.serviceKeyPresent} `
+        + `forecastScorecard=${snapshot.coverage.forecastScorecardCaptured}`
+        + `:${snapshot.coverage.forecastScorecardScored ?? 'none'}`,
       );
+      if (!snapshot.coverage.forecastScorecardCaptured) {
+        // /accuracy/ reports the failed capture and, when an older measurement
+        // was retained, ages it on its own clock. Either way the page publishes
+        // the state rather than a number it did not read, so the run continues.
+        console.warn(
+          `[freeze-crawlable-live-pulse] WARNING: forecast scorecard capture failed (${snapshot.coverage.forecastScorecardFailureCode}); `
+          + `/accuracy/ will report the failure and ${snapshot.coverage.forecastScorecardRetained ? 'publish the retained measurement, dated' : 'publish no figures'}. `
+          + `Cause: ${snapshot.errors.forecastScorecard[0]?.message || 'unrecorded'}`,
+        );
+      }
       if (snapshot.coverage.developmentsMissingCount > 0) {
         // The remaining tail is the countries neither the digest pool nor the
         // per-country index named this week. Logged so every weekly PR

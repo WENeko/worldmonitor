@@ -192,6 +192,12 @@ export default async function handler(
 
     const data = await resp.json();
     if (!resp.ok) {
+      if (resp.status === 400 && data?.error === 'INVALID_CHECKOUT_PRODUCT') {
+        return completeStandaloneIdempotency(
+          idempotency,
+          json({ error: 'INVALID_CHECKOUT_PRODUCT' }, 400, cors),
+        );
+      }
       if (resp.status === 429) {
         const retryAfter = resp.headers.get('retry-after');
         return completeStandaloneIdempotency(

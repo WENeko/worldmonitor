@@ -245,6 +245,14 @@ export async function validateBootstrapUserApiKey(key) {
   }
 
   const keyHash = await sha256Hex(key);
+  return validateUserApiKeyHash(keyHash);
+}
+
+// OAuth stores only the key hash. Reuse the same revocation and scope checks.
+export async function validateUserApiKeyHash(keyHash) {
+  if (typeof keyHash !== 'string' || !/^[a-f0-9]{64}$/.test(keyHash)) {
+    return { ok: false, status: 401, error: 'Invalid API key', reason: 'malformed' };
+  }
   return coalesce(userKeyInFlight, keyHash, () => validateBootstrapUserApiKeyHash(keyHash));
 }
 

@@ -4,6 +4,7 @@ import { getClientIp } from '../_rate-limit.js';
 import { timingSafeIncludes, sha256Hex } from '../_crypto.js';
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
+import { checkBootstrapUserApiKeyRateLimit, validateBootstrapUserApiKey } from '../_user-api-key.js';
 
 export const config = { runtime: 'edge' };
 
@@ -191,8 +192,24 @@ button:disabled{opacity:.5;cursor:default}
 </form>
 </div>
 <p class="footer"><a href="https://www.worldmonitor.app" target="_blank" rel="noopener">worldmonitor.app</a> &middot; <a href="https://www.worldmonitor.app/pro" target="_blank" rel="noopener">Get an API key &#x2192;</a></p>
-<script>(function(){function showForm(){var f=document.getElementById('cf');if(f)f.style.display='';var d=document.getElementById('dt');if(d)d.style.display='none';var k=document.getElementById('api_key');if(k){k.required=true;try{k.focus();}catch(e){}}}var em=document.getElementById('ke');if(em&&em.textContent&&em.textContent.length>0){showForm();}if(window.location.hash==='#api-key'){showForm();}var tk=document.getElementById('tk');if(tk){tk.addEventListener('click',function(e){e.preventDefault();showForm();});tk.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();showForm();}});}var cf=document.getElementById('cf');if(cf){cf.addEventListener('submit',function(e){e.preventDefault();var jf=document.getElementById('jf');if(jf)jf.value='1';var b=document.getElementById('ab');b.disabled=true;b.textContent='Authorizing…';var d=new URLSearchParams(new FormData(e.target));fetch('/oauth/authorize',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:d}).then(function(r){var c=r.headers.get('Content-Type')||'';if(c.indexOf('json')>=0)return r.json().then(function(j){if(j.location){window.location.replace(j.location);return;}if(j.error==='invalid_key'){var n=document.getElementById('nn');if(n)n.value=j.nonce||'';var em2=document.getElementById('ke');if(em2){em2.textContent='Invalid API key. Please check and try again.';em2.style.display='';}showForm();}b.disabled=false;b.textContent='Authorize';});return r.text().then(function(h){document.open();document.write(h);document.close();});}).catch(function(){b.disabled=false;b.textContent='Authorize';});});}})();</script>
+<script>(function(){function showForm(){var f=document.getElementById('cf');if(f)f.style.display='';var d=document.getElementById('dt');if(d)d.style.display='none';var k=document.getElementById('api_key');if(k){k.required=true;try{k.focus();}catch(e){}}}var em=document.getElementById('ke');if(em&&em.textContent&&em.textContent.length>0){showForm();}if(window.location.hash==='#api-key'){showForm();}var tk=document.getElementById('tk');if(tk){tk.addEventListener('click',function(e){e.preventDefault();showForm();});tk.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();showForm();}});}var cf=document.getElementById('cf');if(cf){cf.addEventListener('submit',function(e){e.preventDefault();var jf=document.getElementById('jf');if(jf)jf.value='1';var b=document.getElementById('ab');b.disabled=true;b.textContent='Authorizing…';var d=new URLSearchParams(new FormData(e.target));fetch('/oauth/authorize',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:d}).then(function(r){var c=r.headers.get('Content-Type')||'';if(c.indexOf('json')>=0)return r.json().then(function(j){if(j.location){window.location.replace(j.location);return;}if(j.error==='invalid_key'||j.error==='temporarily_unavailable'){var n=document.getElementById('nn');if(n)n.value=j.nonce||'';var em2=document.getElementById('ke');if(em2){em2.textContent=j.message||'Invalid API key. Please check and try again.';em2.style.display='';}showForm();}b.disabled=false;b.textContent='Authorize';});return r.text().then(function(h){document.open();document.write(h);document.close();});}).catch(function(){b.disabled=false;b.textContent='Authorize';});});}})();</script>
 </body></html>`, { status: 200, headers: PAGE_HEADERS });
+}
+
+async function retryConsent(nonceData, client, isXHR, failure) {
+  const retryNonce = crypto.randomUUID();
+  // A consumed nonce stays consumed. Only server-held request values are copied.
+  const stored = await redisSet(`oauth:nonce:${retryNonce}`, { ...nonceData, created_at: Date.now() }, 600);
+  if (!stored) return htmlError('Service Unavailable', 'Authorization service is temporarily unavailable. Please start over shortly.');
+  const headers = { ...PAGE_HEADERS, ...failure.headers };
+  if (isXHR) {
+    return new Response(JSON.stringify({ error: failure.error, message: failure.message, nonce: retryNonce }), {
+      status: failure.status,
+      headers: { ...headers, 'Content-Type': 'application/json' },
+    });
+  }
+  const page = consentPage({ ...nonceData, client_name: client.client_name ?? 'Unknown Client' }, retryNonce, failure.message);
+  return new Response(page.body, { status: failure.status === 400 ? 200 : failure.status, headers });
 }
 
 export default async function handler(req) {
@@ -200,6 +217,30 @@ export default async function handler(req) {
 
   if (method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' } });
+  }
+
+  if (method === 'POST') {
+    // Origin validation: allow any first-party worldmonitor.app host (the consent
+    // page is served host-derived — apex/www/api/variant — so a same-origin JS
+    // fetch or the native form POST to api.worldmonitor.app arrives with any of
+    // those Origins), plus absent origin (server/CLI) and 'null' (WebView with
+    // opaque/sandboxed origin). CSRF nonce provides the actual protection.
+    const origin = req.headers.get('origin');
+    if (origin && origin !== 'null' && !WM_ORIGIN.test(origin)) {
+      return new Response('Forbidden', { status: 403 });
+    }
+  }
+
+  if (method === 'GET' || method === 'POST') {
+    const rl = getRatelimit();
+    if (rl) {
+      try {
+        const { success } = await rl.limit(`ip:${getClientIp(req)}`);
+        if (!success) {
+          return new Response('Too Many Requests', { status: 429 });
+        }
+      } catch { /* graceful degradation */ }
+    }
   }
 
   if (method === 'GET') {
@@ -236,9 +277,6 @@ export default async function handler(req) {
       return htmlError('Redirect URI Mismatch', 'The redirect_uri does not match any registered redirect URI for this client.');
     }
 
-    // Reset client TTL (sliding 90-day window)
-    await redisSet(`oauth:client:${client_id}`, { ...client, last_used: Date.now() }, CLIENT_TTL_SECONDS);
-
     const nonce = crypto.randomUUID();
     const nonceStored = await redisSet(`oauth:nonce:${nonce}`, { client_id, redirect_uri, code_challenge, state, created_at: Date.now() }, 600);
     if (!nonceStored) {
@@ -252,26 +290,6 @@ export default async function handler(req) {
   }
 
   if (method === 'POST') {
-    // Origin validation: allow any first-party worldmonitor.app host (the consent
-    // page is served host-derived — apex/www/api/variant — so a same-origin JS
-    // fetch or the native form POST to api.worldmonitor.app arrives with any of
-    // those Origins), plus absent origin (server/CLI) and 'null' (WebView with
-    // opaque/sandboxed origin). CSRF nonce provides the actual protection.
-    const origin = req.headers.get('origin');
-    if (origin && origin !== 'null' && !WM_ORIGIN.test(origin)) {
-      return new Response('Forbidden', { status: 403 });
-    }
-
-    const rl = getRatelimit();
-    if (rl) {
-      try {
-        const { success } = await rl.limit(`ip:${getClientIp(req)}`);
-        if (!success) {
-          return new Response('Too Many Requests', { status: 429 });
-        }
-      } catch { /* graceful degradation */ }
-    }
-
     let params;
     try {
       params = new URLSearchParams(await req.text());
@@ -322,28 +340,30 @@ export default async function handler(req) {
 
     // Validate API key
     const validKeys = (process.env.WORLDMONITOR_VALID_KEYS || '').split(',').filter(Boolean);
-    if (!await timingSafeIncludes(api_key, validKeys)) {
-      // Generate and store a fresh nonce; fail closed if storage is unavailable
-      const retryNonce = crypto.randomUUID();
-      const retryNonceStored = await redisSet(`oauth:nonce:${retryNonce}`, { client_id, redirect_uri, code_challenge, state, created_at: Date.now() }, 600);
-      if (!retryNonceStored) {
-        return htmlError('Service Unavailable', 'Authorization service is temporarily unavailable. Please try again shortly.');
-      }
-      if (isXHR) {
-        return new Response(JSON.stringify({ error: 'invalid_key', nonce: retryNonce }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    const enterpriseKey = await timingSafeIncludes(api_key, validKeys);
+    let userKey = null;
+    if (!enterpriseKey && api_key.startsWith('wm_')) {
+      const guard = await checkBootstrapUserApiKeyRateLimit(req);
+      if (!guard.ok) return retryConsent(nonceData, client, isXHR, {
+        error: 'temporarily_unavailable', message: guard.error, status: guard.status, headers: guard.headers,
+      });
+      userKey = await validateBootstrapUserApiKey(api_key);
+      if (!userKey.ok && userKey.status === 503) {
+        return retryConsent(nonceData, client, isXHR, {
+          error: 'temporarily_unavailable', message: userKey.error, status: 503, headers: userKey.headers,
         });
       }
-      return consentPage({
-        client_name: client.client_name ?? 'Unknown Client',
-        redirect_uri, client_id, response_type: 'code', code_challenge, code_challenge_method: 'S256', state,
-      }, retryNonce, 'Invalid API key. Please check and try again.');
+    }
+    if (!enterpriseKey && !userKey?.ok) {
+      return retryConsent(nonceData, client, isXHR, {
+        error: 'invalid_key', message: 'Invalid API key. Please check and try again.', status: 400,
+      });
     }
 
     // Issue authorization code — all fields sourced from nonceData
     const code = crypto.randomUUID();
     const codeData = {
+      ...(!enterpriseKey ? { kind: 'user_key' } : {}),
       client_id,
       redirect_uri,
       code_challenge,

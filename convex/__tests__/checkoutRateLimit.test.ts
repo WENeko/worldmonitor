@@ -1,3 +1,4 @@
+import { PRODUCT_CATALOG } from "../config/productCatalog";
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
@@ -283,7 +284,7 @@ describe("relay and public action contracts", () => {
       },
       body: JSON.stringify({
         userId: TEST_USER.subject,
-        productId: "prod_rate_limited",
+        productId: PRODUCT_CATALOG.pro_monthly.dodoProductId!,
       }),
     });
 
@@ -319,7 +320,7 @@ describe("relay and public action contracts", () => {
       },
       body: JSON.stringify({
         userId: ANON_USER_ID,
-        productId: "prod_rate_limited",
+        productId: PRODUCT_CATALOG.pro_monthly.dodoProductId!,
       }),
     });
 
@@ -347,7 +348,7 @@ describe("relay and public action contracts", () => {
       },
       body: JSON.stringify({
         userId: TEST_USER.subject,
-        productId: "prod_rate_limited",
+        productId: PRODUCT_CATALOG.pro_monthly.dodoProductId!,
       }),
     });
 
@@ -385,7 +386,7 @@ describe("relay and public action contracts", () => {
       },
       body: JSON.stringify({
         userId: TEST_USER.subject,
-        productId: "prod_provider_timeout",
+        productId: PRODUCT_CATALOG.pro_monthly.dodoProductId!,
       }),
     });
 
@@ -406,7 +407,7 @@ describe("relay and public action contracts", () => {
     const request = t.withIdentity(TEST_USER).action(
       api.payments.checkout.createCheckout,
       {
-        productId: "prod_rate_limited",
+        productId: PRODUCT_CATALOG.pro_monthly.dodoProductId!,
       },
     );
     await expect(request).rejects.toBeInstanceOf(Error);
@@ -670,7 +671,7 @@ describe("provider client retry contract", () => {
 // ---------------------------------------------------------------------------
 describe("terminal rate-limit alarm", () => {
   const ALARM_USER = "user_alarm_probe";
-  const ALARM_PRODUCT = "prod_alarm_probe";
+  const ALARM_PRODUCT = PRODUCT_CATALOG.pro_monthly.dodoProductId!;
 
   async function readAlarmRows(t: ReturnType<typeof convexTest>) {
     return t.run(async (ctx) =>

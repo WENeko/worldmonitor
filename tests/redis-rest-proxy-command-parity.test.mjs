@@ -184,6 +184,7 @@ describe('redis-rest-proxy command gate', () => {
     for (const dangerous of [
       'FLUSHALL', 'FLUSHDB', 'CONFIG', 'DEBUG', 'SLAVEOF', 'REPLICAOF',
       'SHUTDOWN', 'SCRIPT', 'EVALSHA', 'ACL', 'MODULE', 'MIGRATE', 'RESET', 'CLIENT',
+      'SUBSCRIBE', 'PSUBSCRIBE', 'SSUBSCRIBE', 'UNSUBSCRIBE', 'PUNSUBSCRIBE', 'SUNSUBSCRIBE',
     ]) {
       assert.equal(accepts(gate, [dangerous, 'k']), false, `${dangerous} must stay blocked`);
     }

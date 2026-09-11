@@ -1819,7 +1819,8 @@ describe('api/mcp.ts — PRO MCP Server', () => {
     // says "when no countries filter is supplied" — this regression test
     // pins that contract so a future "should limit further-narrow a
     // countries result" rewrite trips the test instead of breaking callers.
-    const payload = { countries: makeCountryMap('C', 60) };
+    const codes = ['US', 'DE', 'CN', 'IQ', 'FR', 'GB'];
+    const payload = { countries: Object.fromEntries(codes.map((code) => [code, { value: 1 }])) };
     const meta = {
       'seed-meta:economic:imf-macro': { fetchedAt: Date.now() - 60_000, recordCount: 60 },
       'seed-meta:economic:imf-growth': { fetchedAt: Date.now() - 60_000, recordCount: 0 },
@@ -1827,7 +1828,7 @@ describe('api/mcp.ts — PRO MCP Server', () => {
       'seed-meta:economic:imf-external': { fetchedAt: Date.now() - 60_000, recordCount: 0 },
     };
     mockCacheKeys({ 'economic:imf:macro:v2': payload }, meta);
-    const out = await callTool('get_country_macro', { countries: ['C0', 'C1', 'C2', 'C3', 'C4'], limit: 1 });
+    const out = await callTool('get_country_macro', { countries: codes.slice(0, 5), limit: 1 });
     assert.equal(Object.keys(out.data.macro.countries).length, 5,
       'countries filter takes precedence; limit is ignored when countries is supplied');
   });

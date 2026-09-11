@@ -381,6 +381,25 @@ when retained. Coverage diagnostics distinguish `currentCountryCount` from
 `retainedCountryCount` and expose `oldestCountryCacheWrittenAt`. Missing or expired
 countries and unresolved refresh failures still block a healthy publication.
 
+Run logs separate **usable country payloads** from **canonical-list membership**.
+Batch progress describes data assembled in memory; persistence is still pending.
+Only after the Redis transaction is confirmed does the seeder report saved state
+and whether the canonical list advanced or its TTL extension confirmed retention.
+If retention cannot be confirmed, the log labels the starting count as historical
+and reports `canonical retention unconfirmed`. For example:
+
+```text
+Recovery state saved; canonical list retained at 60 countries; usable coverage 150/174; full publication blocked; 0 unresolved refresh failures
+```
+
+Canonical membership is not a current API-availability count: the country reader
+also checks payload presence and age. The legacy `coverage.published` field means
+usable coverage from the run, including retained payloads; it does not mean the
+canonical list advanced. `recordCount` and success clocks remain unchanged on an
+incomplete run, which continues to exit nonzero. A merge or deployment alone does
+not prove recovery. A failed or ambiguous transaction response does not confirm
+that recovery state was saved or that publication advanced.
+
 Unchanged upstream dates also enter the refresh queue before cache expiry. With
 174 countries, the lead reserves seven 12-hour runs after allowing two recurring
 critical-country slots, plus one missed run. Thus full refreshes become due at

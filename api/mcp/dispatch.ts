@@ -42,8 +42,8 @@ import { isPhysicalDivergenceContractError as isMcpStoredContractError } from '.
 // ---------------------------------------------------------------------------
 // Exported as a test seam (like `evaluateFreshness`) so the `_postFilter`
 // throw/fall-back path can be exercised directly — it can't be triggered
-// through the public handler because every registry `_postFilter` is
-// defensively written and won't throw on JSON-RPC input.
+// through the public handler for unexpected programming errors. Country
+// validation errors are tested through dispatch and must propagate.
 export async function executeTool(
   tool: CacheToolDef,
   params: Record<string, unknown> = {},
@@ -169,11 +169,12 @@ export async function executeTool(
     try {
       result = tool._postFilter(structuredClone(data), params);
     } catch (err) {
+      // Input validation must reach the caller instead of serving unfiltered data.
       // A stored-contract violation must NOT fall through to `data`: that path serves the
       // raw, unvalidated blob the filter just refused, which is the opposite of failing
       // closed (#6448 — an unknown state "must surface as an error, never silently map to
       // normal"). Let it out so the tool call errors instead.
-      if (isMcpStoredContractError(err)) throw err;
+      if (isMcpStoredContractError(err) || err instanceof RpcValidationError) throw err;
       // Same minified-frame over-grouping guard as the tool-execution catch
       // below — key on step + tool + error type so a post-filter bug in one
       // tool doesn't merge into the shared api/mcp catch-all (WORLDMONITOR-T8).

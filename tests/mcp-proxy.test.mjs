@@ -160,6 +160,27 @@ describe('api/mcp-proxy', () => {
     globalThis.fetch = originalFetch;
   });
 
+  it('rejects query credentials before resolving or calling an upstream', async () => {
+    let calls = 0;
+    setResolveHostnameForTest(async () => { calls++; return [PUBLIC_TEST_ADDRESS]; });
+    globalThis.fetch = async () => { calls++; throw new Error('unexpected fetch'); };
+    for (const headers of ['', JSON.stringify({ Authorization: 'Bearer synthetic-secret' })]) {
+      const res = await handler(makeGetRequest({ serverUrl: 'https://mcp.example.com/mcp', headers }));
+      assert.equal(res.status, 400);
+      assert.doesNotMatch(await res.text(), /synthetic-secret/);
+    }
+    assert.equal(calls, 0);
+  });
+
+  it('bounds and redacts upstream JSON-RPC error messages', async () => {
+    globalThis.fetch = async () => Response.json({ error: { message: 'synthetic-secret'.repeat(20000) } });
+    const res = await handler(makeGetRequest({ serverUrl: 'https://mcp.example.com/mcp' }));
+    assert.equal(res.status, 422);
+    const text = await res.text();
+    assert.ok(text.length < 200);
+    assert.doesNotMatch(text, /synthetic-secret/);
+  });
+
   // ── Auth gate (issue #3723) ───────────────────────────────────────────────
 
   for (const [name, makeResponse, expected] of [
@@ -316,15 +337,15 @@ describe('api/mcp-proxy', () => {
 
     it('drops Metadata-Flavor / X-aws-ec2-metadata-token but forwards legit headers', async () => {
       const captured = captureForwardedHeaders();
-      const res = await handler(makeGetRequest({
+      const res = await handler(makePostRequest({ action: 'tools/list',
         serverUrl: 'https://mcp.example.com/mcp',
-        headers: JSON.stringify({
+        customHeaders: {
           'Metadata-Flavor': 'Google',
           'metadata': 'true',
           'X-aws-ec2-metadata-token': 'stolen-token',
           'X-aws-ec2-metadata-token-ttl-seconds': '21600',
           'Authorization': 'Bearer legit-mcp-token',
-        }),
+        },
       }));
       assert.equal(res.status, 200);
       assert.ok(captured.headers, 'target fetch must have been called');
@@ -640,7 +661,7 @@ describe('api/mcp-proxy', () => {
       const res = await handler(makeGetRequest({ serverUrl: 'https://mcp.example.com/mcp' }));
       assert.equal(res.status, 422);
       const data = await res.json();
-      assert.match(data.error, /Method not found/i);
+      assert.match(data.error, /MCP server rejected request/i);
     });
 
     it('returns 504 on fetch timeout', async () => {
@@ -655,14 +676,14 @@ describe('api/mcp-proxy', () => {
       assert.match(data.error, /timed out/i);
     });
 
-    it('ignores invalid JSON in headers param', async () => {
+    it('rejects invalid JSON in the removed query-header channel', async () => {
       globalThis.fetch = makeMcpFetch({ tools: [] });
       const url = new URL('https://worldmonitor.app/api/mcp-proxy');
       url.searchParams.set('serverUrl', 'https://mcp.example.com/mcp');
       url.searchParams.set('headers', 'not json');
       const req = new Request(url.toString(), { method: 'GET', headers: { origin: 'https://worldmonitor.app', 'X-WorldMonitor-Key': ENTERPRISE_KEY } });
       const res = await handler(req);
-      assert.equal(res.status, 200);
+      assert.equal(res.status, 400);
     });
 
     it('passes custom headers to upstream', async () => {
@@ -671,9 +692,9 @@ describe('api/mcp-proxy', () => {
         capturedHeaders = Object.fromEntries(Object.entries(opts?.headers || {}));
         return makeMcpFetch({ tools: [] })(url, opts);
       };
-      const res = await handler(makeGetRequest({
+      const res = await handler(makePostRequest({ action: 'tools/list',
         serverUrl: 'https://mcp.example.com/mcp',
-        headers: JSON.stringify({ Authorization: 'Bearer test-key' }),
+        customHeaders: { Authorization: 'Bearer test-key' },
       }));
       assert.equal(res.status, 200);
       assert.equal(capturedHeaders['Authorization'], 'Bearer test-key');
@@ -685,9 +706,9 @@ describe('api/mcp-proxy', () => {
         capturedHeaders = Object.fromEntries(Object.entries(opts?.headers || {}));
         return makeMcpFetch({ tools: [] })(url, opts);
       };
-      const res = await handler(makeGetRequest({
+      const res = await handler(makePostRequest({ action: 'tools/list',
         serverUrl: 'https://mcp.example.com/mcp',
-        headers: JSON.stringify({ 'X-Evil\r\nInjected': 'bad' }),
+        customHeaders: { 'X-Evil\r\nInjected': 'bad' },
       }));
       assert.equal(res.status, 200);
       for (const k of Object.keys(capturedHeaders)) {
@@ -941,7 +962,7 @@ describe('api/mcp-proxy', () => {
       }));
       assert.equal(res.status, 422);
       const data = await res.json();
-      assert.match(data.error, /Unknown tool/i);
+      assert.match(data.error, /MCP server rejected request/i);
     });
 
     it('returns 504 on a native fetch TimeoutError during tool call', async () => {
@@ -1454,10 +1475,11 @@ describe('api/mcp-proxy', () => {
 
     it('audit log contains header NAMES but never header VALUES (no secret leakage)', async () => {
       globalThis.fetch = makeMcpFetch({ tools: [] });
-      const res = await handler(makeGetRequest(
+      const res = await handler(makePostRequest(
         {
+          action: 'tools/list',
           serverUrl: 'https://mcp.example.com/mcp',
-          headers: JSON.stringify({ Authorization: 'Bearer super-secret-token-XYZ', 'X-Api-Key': 'k_abc123' }),
+          customHeaders: { Authorization: 'Bearer super-secret-token-XYZ', 'X-Api-Key': 'k_abc123' },
         },
         'https://worldmonitor.app',
         { extra: { 'cf-connecting-ip': uniqueCallerIp() } },
@@ -1762,7 +1784,7 @@ describe('api/mcp-proxy — observability', () => {
     assert.ok(catchAt > 0, 'the top-level catch still classifies failures');
     const tail = src.slice(catchAt, src.indexOf('logProxyCall({', catchAt));
 
-    assert.match(tail, /captureSilentError\(err,/, 'a swallowed handler fault must not be silent');
+    assert.match(tail, /captureSilentError\(new Error\(/, 'a swallowed handler fault must not be silent');
     assert.match(tail, /step:\s*'proxy-dispatch'/);
     assert.match(
       tail,

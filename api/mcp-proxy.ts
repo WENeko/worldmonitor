@@ -328,7 +328,7 @@ async function defaultResolveHostname(hostname) {
 async function assertServerUrlSafe(url) {
   const hostname = url.hostname.toLowerCase();
   if (BLOCKED_HOSTNAMES.has(hostname)) {
-    throw new McpProxySsrfError(`serverUrl hostname is blocked: ${hostname}`);
+    throw new McpProxySsrfError('serverUrl hostname is blocked');
   }
   if (isBlockedResolvedAddress(hostname)) {
     throwBlockedAddress(hostname);
@@ -501,14 +501,14 @@ async function mcpListTools(serverUrl, customHeaders) {
   if (!initResp.ok) throw new McpProxyUpstreamError(`Initialize failed: HTTP ${initResp.status}`);
   const sessionId = initResp.headers.get('Mcp-Session-Id') || initResp.headers.get('mcp-session-id');
   const initData = await parseJsonRpcResponse(initResp);
-  if (initData.error) throw new McpProxyUpstreamError(`Initialize error: ${initData.error.message}`);
+  if (initData.error) throw new McpProxyUpstreamError('Initialize error: MCP server rejected request');
   await sendInitialized(serverUrl, headers, sessionId);
   const listResp = await postJson(serverUrl, {
     jsonrpc: '2.0', id: 2, method: 'tools/list', params: {},
   }, headers, sessionId);
   if (!listResp.ok) throw new McpProxyUpstreamError(`tools/list failed: HTTP ${listResp.status}`);
   const listData = await parseJsonRpcResponse(listResp);
-  if (listData.error) throw new McpProxyUpstreamError(`tools/list error: ${listData.error.message}`);
+  if (listData.error) throw new McpProxyUpstreamError('tools/list error: MCP server rejected request');
   return listData.result?.tools || [];
 }
 
@@ -518,7 +518,7 @@ async function mcpCallTool(serverUrl, toolName, toolArgs, customHeaders) {
   if (!initResp.ok) throw new McpProxyUpstreamError(`Initialize failed: HTTP ${initResp.status}`);
   const sessionId = initResp.headers.get('Mcp-Session-Id') || initResp.headers.get('mcp-session-id');
   const initData = await parseJsonRpcResponse(initResp);
-  if (initData.error) throw new McpProxyUpstreamError(`Initialize error: ${initData.error.message}`);
+  if (initData.error) throw new McpProxyUpstreamError('Initialize error: MCP server rejected request');
   await sendInitialized(serverUrl, headers, sessionId);
   const callResp = await postJson(serverUrl, {
     jsonrpc: '2.0', id: 3, method: 'tools/call',
@@ -526,7 +526,7 @@ async function mcpCallTool(serverUrl, toolName, toolArgs, customHeaders) {
   }, headers, sessionId);
   if (!callResp.ok) throw new McpProxyUpstreamError(`tools/call failed: HTTP ${callResp.status}`);
   const callData = await parseJsonRpcResponse(callResp);
-  if (callData.error) throw new McpProxyUpstreamError(`tools/call error: ${callData.error.message}`);
+  if (callData.error) throw new McpProxyUpstreamError('tools/call error: MCP server rejected request');
   return callData.result;
 }
 
@@ -722,10 +722,10 @@ async function mcpListToolsSse(serverUrl, customHeaders) {
       capabilities: {},
       clientInfo: { name: 'worldmonitor', version: '1.0' },
     });
-    if (initResp.error) throw new McpProxyUpstreamError(`Initialize error: ${initResp.error.message}`);
+    if (initResp.error) throw new McpProxyUpstreamError('Initialize error: MCP server rejected request');
     await session.notify('notifications/initialized', {});
     const listResp = await session.send(2, 'tools/list', {});
-    if (listResp.error) throw new McpProxyUpstreamError(`tools/list error: ${listResp.error.message}`);
+    if (listResp.error) throw new McpProxyUpstreamError('tools/list error: MCP server rejected request');
     return listResp.result?.tools || [];
   } finally {
     session.close();
@@ -742,10 +742,10 @@ async function mcpCallToolSse(serverUrl, toolName, toolArgs, customHeaders) {
       capabilities: {},
       clientInfo: { name: 'worldmonitor', version: '1.0' },
     });
-    if (initResp.error) throw new McpProxyUpstreamError(`Initialize error: ${initResp.error.message}`);
+    if (initResp.error) throw new McpProxyUpstreamError('Initialize error: MCP server rejected request');
     await session.notify('notifications/initialized', {});
     const callResp = await session.send(2, 'tools/call', { name: toolName, arguments: toolArgs || {} });
-    if (callResp.error) throw new McpProxyUpstreamError(`tools/call error: ${callResp.error.message}`);
+    if (callResp.error) throw new McpProxyUpstreamError('tools/call error: MCP server rejected request');
     return callResp.result;
   } finally {
     session.close();
@@ -771,14 +771,13 @@ function captureMeta(serverUrl: URL, customHeaders: unknown, meta: ProxyMeta): v
 async function handleListTools(req: Request, cors: Record<string, string>, meta: ProxyMeta): Promise<Response> {
   const url = new URL(req.url);
   const rawServer = url.searchParams.get('serverUrl');
-  const rawHeaders = url.searchParams.get('headers');
+  if (url.searchParams.has('headers')) {
+    return jsonResponse({ error: 'Use POST tools/list with customHeaders in the JSON body' }, 400, cors);
+  }
   if (!rawServer) return jsonResponse({ error: 'Missing serverUrl' }, 400, cors);
   const serverUrl = await validateServerUrl(rawServer);
   if (!serverUrl) return jsonResponse({ error: 'Invalid serverUrl' }, 400, cors);
-  let customHeaders = {};
-  if (rawHeaders) {
-    try { customHeaders = JSON.parse(rawHeaders); } catch { /* ignore */ }
-  }
+  const customHeaders = {};
   captureMeta(serverUrl, customHeaders, meta);
   const tools = isSseTransport(serverUrl)
     ? await mcpListToolsSse(serverUrl, customHeaders)
@@ -800,12 +799,19 @@ async function handleCallTool(req: Request, cors: Record<string, string>, meta: 
     }
     return jsonResponse({ error: 'Invalid JSON' }, 400, cors);
   }
-  const { serverUrl: rawServer, toolName, toolArgs, customHeaders } = body;
+  const { serverUrl: rawServer, toolName, toolArgs, customHeaders, action } = body;
   if (!rawServer) return jsonResponse({ error: 'Missing serverUrl' }, 400, cors);
-  if (!toolName) return jsonResponse({ error: 'Missing toolName' }, 400, cors);
+  if (action !== undefined && action !== 'tools/list') return jsonResponse({ error: 'Invalid action' }, 400, cors);
+  if (action !== 'tools/list' && !toolName) return jsonResponse({ error: 'Missing toolName' }, 400, cors);
   const serverUrl = await validateServerUrl(rawServer);
   if (!serverUrl) return jsonResponse({ error: 'Invalid serverUrl' }, 400, cors);
   captureMeta(serverUrl, customHeaders, meta);
+  if (action === 'tools/list') {
+    const tools = isSseTransport(serverUrl)
+      ? await mcpListToolsSse(serverUrl, customHeaders || {})
+      : await mcpListTools(serverUrl, customHeaders || {});
+    return jsonResponse({ tools }, 200, cors);
+  }
   const result = isSseTransport(serverUrl)
     ? await mcpCallToolSse(serverUrl, toolName, toolArgs || {}, customHeaders || {})
     : await mcpCallTool(serverUrl, toolName, toolArgs || {}, customHeaders || {});
@@ -923,7 +929,7 @@ export default async function handler(req, ctx) {
     //
     // targetHost is caller-supplied, so it rides in `extra`, never a tag —
     // an attacker-controlled tag value would shred Sentry's tag cardinality.
-    captureSilentError(err, {
+    captureSilentError(new Error(failure.isTimeout ? 'MCP server timed out' : msg), {
       tags: { route: 'api/mcp-proxy', step: 'proxy-dispatch' },
       extra: { target_host: meta.targetHost, target_path: meta.targetPath, method: req.method },
       level: failure.level,
