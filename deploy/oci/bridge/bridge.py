@@ -323,7 +323,11 @@ def _parse_positions(output: str) -> dict[str, float] | None:
             bare = token.strip(",;()").upper()
             if not (1 <= len(bare) <= 10) or not bare[0].isalpha():
                 continue
-            if not all(char.isalnum() or char in ".-" for char in bare):
+            # ".-" covers equity/venue suffixes (AAPL.US, BRK-B), "/"
+            # covers crypto pairs (BTC/USDT), and "_" covers OANDA forex
+            # pairs (EUR_USD) — so the table parser recognizes all of them
+            # in `connector positions` output.
+            if not all(char.isalnum() or char in "./_-" for char in bare):
                 continue
             if bare in stopwords:
                 continue
@@ -538,26 +542,65 @@ def build_prompt(cfg: BridgeConfig, data: dict) -> str:
         )
     )
     broker_symbol = broker_tool_symbol(instrument) if instrument else ""
-    identity_note = (
-        f"\nRUN INSTRUMENT IDENTITY: {instrument}\n"
-        f"This venue-qualified instrument is the run's locked, pre-authorized "
-        f"identity — canonicalized by the operator before the run started. Do "
-        f"NOT re-resolve it with search_symbol: it is already canonical. Two "
-        f"symbol dialects apply: connector tools (trading_place_order, "
-        f"trading_quote, trading_positions, trading_history, ...) take the "
-        f"broker-native symbol '{broker_symbol}' — never '{instrument}', which "
-        f"the broker rejects (Alpaca error 42210000 asset not found); the "
-        f"identity gate authorizes the bare ticker because it uniquely matches "
-        f"the locked identity."
-        if instrument and broker_symbol
-        else (
+    # A venue-suffixed equity identity (AAPL.US) differs from its broker-native
+    # ticker (AAPL) — the two-dialect note below applies. Crypto (BTC/USD) and
+    # other non-suffixed shapes are their own broker-native symbol, so a single
+    # dialect applies and the note must not tell the agent to "never pass" the
+    # only correct symbol.
+    same_symbol = bool(instrument) and broker_symbol == instrument
+    if instrument and not same_symbol:
+        identity_note = (
             f"\nRUN INSTRUMENT IDENTITY: {instrument}\n"
-            "This instrument is the run's locked, pre-authorized identity. Do "
-            "NOT re-resolve it with search_symbol: it is already canonical."
-            if instrument
-            else ""
+            f"This venue-qualified instrument is the run's locked, pre-authorized "
+            f"identity — canonicalized by the operator before the run started. Do "
+            f"NOT re-resolve it with search_symbol: it is already canonical. Two "
+            f"symbol dialects apply: connector tools (trading_place_order, "
+            f"trading_quote, trading_positions, trading_history, ...) take the "
+            f"broker-native symbol '{broker_symbol}' — never '{instrument}', which "
+            f"the broker rejects (Alpaca error 42210000 asset not found); the "
+            f"identity gate authorizes the bare ticker because it uniquely matches "
+            f"the locked identity."
         )
-    )
+    elif instrument:
+        identity_note = (
+            f"\nRUN INSTRUMENT IDENTITY: {instrument}\n"
+            f"This instrument is the run's locked, pre-authorized identity — "
+            f"canonicalized by the operator before the run started. Connector "
+            f"tools (trading_place_order, trading_quote, trading_positions, "
+            f"trading_history, ...) take this exact symbol. Do NOT re-resolve "
+            f"it with search_symbol: it is already canonical."
+        )
+    else:
+        identity_note = ""
+    if instrument and not same_symbol:
+        rule3 = (
+            f"3. Run-scoped identity is locked on \"{instrument}\" from the start (rule:\n"
+            f"   RUN INSTRUMENT IDENTITY above). Connector tool calls (orders, quotes,\n"
+            f"   positions) must pass the broker-native symbol \"{broker_symbol}\", never\n"
+            f"   \"{instrument}\" — the identity gate authorizes \"{broker_symbol}\"\n"
+            f"   because it uniquely matches the locked identity. Never call\n"
+            f"   search_symbol for this instrument, and never trade any other symbol or\n"
+            f"   venue. If a connector tool still returns an identity gate error\n"
+            f"   (identity_required / identity_conflict / identity_mismatch), that\n"
+            f"   means you batched a resolver with a consumer call: do NOT end the run.\n"
+            f"   Call search_symbol(\"{instrument}\") ALONE in your next turn, wait for\n"
+            f"   its result, then retry the exact mandated order in a following turn.\n"
+            f"   search_symbol must never share a turn with any other tool call."
+        )
+    elif instrument:
+        rule3 = (
+            f"3. Run-scoped identity is locked on \"{instrument}\" from the start (rule:\n"
+            f"   RUN INSTRUMENT IDENTITY above). Connector tool calls (orders, quotes,\n"
+            f"   positions) must pass exactly this symbol: \"{instrument}\". Never call\n"
+            f"   search_symbol for this instrument, and never trade any other symbol or\n"
+            f"   venue. If a connector tool still returns an identity gate error\n"
+            f"   (identity_required / identity_conflict / identity_mismatch), do NOT\n"
+            f"   end the run: call search_symbol ALONE in your next turn, wait for its\n"
+            f"   result, then retry the exact mandated order in a following turn.\n"
+            f"   search_symbol must never share a turn with any other tool call."
+        )
+    else:
+        rule3 = "3. Never trade any symbol other than the directive's target."
     return f"""You are executing a Macro Director directive delivered by the
 operator's automation bridge (Hermès ⇄ Vibe-Trading). Execute it, then report.
 
@@ -568,22 +611,15 @@ EXECUTION RULES (operator contract, non-negotiable):
 1. This is a PAPER environment. Use connector "{cfg.connector}".
    Never select, configure, or reference any live/trading profile.
 2. {order_rule}
-3. Run-scoped identity is locked on "{instrument}" from the start (rule:
-   RUN INSTRUMENT IDENTITY above). Connector tool calls (orders, quotes,
-   positions) must pass the broker-native symbol "{broker_symbol}", never
-   "{instrument}" — the identity gate authorizes "{broker_symbol}"
-   because it uniquely matches the locked identity. Never call
-   search_symbol for this instrument, and never trade any other symbol or
-   venue. If a connector tool still returns an identity gate error
-   (identity_required / identity_conflict / identity_mismatch), that
-   means you batched a resolver with a consumer call: do NOT end the run.
-   Call search_symbol("{instrument}") ALONE in your next turn, wait for
-   its result, then retry the exact mandated order in a following turn.
-   search_symbol must never share a turn with any other tool call.
+{rule3}
 4. Respect Vibe-Trading's own mandate and fail-closed pre-trade checks
    (universe, size caps, exposure, daily cap). If a check blocks the
    order, report the block verbatim — do not work around it.
-5. No leverage, no margin, no options, no fractional size.
+5. No leverage, no margin, no options. Fractional quantities are allowed
+   and encouraged wherever the broker supports them (crypto like
+   BTC/USD, Alpaca fractional shares, OANDA units): size every order so
+   its gross notional stays under the caps — a fractional size that
+   respects the cap is safer than rounding up to a whole unit.
 6. After any order attempt, read connector account and positions and
    include the resulting state in your final summary. If the mandated
    order was rejected, cancelled, or did not fill for any reason (market

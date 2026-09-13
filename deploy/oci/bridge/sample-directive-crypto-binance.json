@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "directive_id": "DIR-SYNTH-BINANCE-20260907-123000-001",
+  "timestamp": "2026-09-07T12:30:00.000Z",
+  "target_asset": "BTC/USDT",
+  "macro_bias": "BULLISH",
+  "confidence_score": 0.9,
+  "timeframe_hours": 1,
+  "action_directive": "INCREASE_LONG_SENSITIVITY",
+  "mode": "PAPER_SYNTHETIC_TEST",
+  "reasoning": "Operator-labelled synthetic crypto test on the Binance spot testnet (testnet.binance.vision): one fractional BTC/USDT market order. Requires BRIDGE_CONNECTOR=binance-paper-trade and testnet keys in ~/.vibe-trading/binance.json (see bridge/README.md).",
+  "execution_request": {
+    "symbol": "BTC/USDT",
+    "side": "BUY",
+    "qty": 0.001,
+    "order_type": "market"
+  }
+}

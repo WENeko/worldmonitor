@@ -78,6 +78,12 @@ services:
       # Set VIBE_TRADING_API_AUTH_KEY in .env before making :8899
       # reachable beyond localhost. Empty keeps dev mode.
       API_AUTH_KEY: ${VIBE_TRADING_API_AUTH_KEY:-}
+      # Web UI: http://127.0.0.1:8899 through an SSH tunnel (see env.template
+      # "Operator UI access"). The SPA is built by stage 1 of
+      # vibe-trading.Dockerfile and installed into the image — `pip install`
+      # alone ships no frontend, so an image built from an older revision of
+      # this file answers API-only. No key is needed through a tunnel while
+      # API_AUTH_KEY is empty; non-loopback calls are refused either way.
 
     deploy:
       resources:
@@ -130,6 +136,12 @@ services:
       BRIDGE_DRY_RUN: ${BRIDGE_DRY_RUN:-0}
       # Research commissions (mode: RESEARCH) — opt-in, off by default.
       BRIDGE_ALLOW_RESEARCH: ${BRIDGE_ALLOW_RESEARCH:-0}
+      # Paper connector profile the agent must use: alpaca-paper-trade
+      # (default) or binance-paper-trade (Binance spot testnet, keys in
+      # ~/.vibe-trading/binance.json on the shared vibe_data volume —
+      # also switch the runtime-selected profile in trading-connections.json;
+      # see bridge/README.md).
+      BRIDGE_CONNECTOR: ${BRIDGE_CONNECTOR:-alpaca-paper-trade}
       TZ: ${TZ:-UTC}
 
     # 2 OCPU / 12 GB host budget (pay-as-you-go beyond). Limits are per-
@@ -171,6 +183,14 @@ services:
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-local-change-me}
+      # Admin UI on the same loopback port: http://127.0.0.1:4000/ui through an
+      # SSH tunnel (see env.template "Operator UI access"). Login is username
+      # "admin" with LITELLM_MASTER_KEY as the password. UI_USERNAME /
+      # UI_PASSWORD are deliberately NOT passed here: an empty value must never
+      # reach a login comparison, and dedicated UI credentials are optional.
+      # The DB-backed tabs (virtual keys, teams, spend history) need a
+      # DATABASE_URL (Postgres); without one the UI still lists the model
+      # groups and runs test calls.
 
     command:
       ["--config", "/app/config.yaml", "--host", "127.0.0.1", "--port", "4000"]

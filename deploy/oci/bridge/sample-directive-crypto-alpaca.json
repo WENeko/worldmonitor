@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "directive_id": "DIR-SYNTH-CRYPTO-20260907-120000-001",
+  "timestamp": "2026-09-07T12:00:00.000Z",
+  "target_asset": "BTC/USD",
+  "macro_bias": "BULLISH",
+  "confidence_score": 0.9,
+  "timeframe_hours": 1,
+  "action_directive": "INCREASE_LONG_SENSITIVITY",
+  "mode": "PAPER_SYNTHETIC_TEST",
+  "reasoning": "Operator-labelled synthetic crypto test on the Alpaca paper account: one fractional BTC/USD market order proves the fractional path end to end (prompt rule 5 allows fractional sizes). Connector stays alpaca-paper-trade.",
+  "execution_request": {
+    "symbol": "BTC/USD",
+    "side": "BUY",
+    "qty": 0.001,
+    "order_type": "market"
+  }
+}

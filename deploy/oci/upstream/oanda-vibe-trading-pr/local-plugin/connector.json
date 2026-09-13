@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "profile": {
+    "id": "oanda-practice-readonly",
+    "connector": "oanda",
+    "label": "OANDA fxTrade Practice · Local Read-Only",
+    "environment": "paper",
+    "readonly": true,
+    "capabilities": ["account.read", "positions.read"],
+    "notes": "User-installed local connector. Credentials remain in the OS credential store."
+  },
+  "entrypoint": "adapter.py",
+  "auth": {
+    "type": "api_key",
+    "fields": [
+      {
+        "name": "api_key",
+        "label": "OANDA API Token (Practice)",
+        "secret": true,
+        "required": true
+      },
+      {
+        "name": "account_id",
+        "label": "Practice Account ID",
+        "secret": false,
+        "required": true
+      }
+    ]
+  }
+}

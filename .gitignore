@@ -147,3 +147,11 @@ playground-pricing.html
 # compile time — `cargo test` fails on a resource path that does not exist.
 src-tauri/notices/*
 !src-tauri/notices/.gitkeep
+
+# Python bytecode from the self-hosted stack under deploy/oci (bridge,
+# seeds-lite, feeds, the OANDA connector package). Importing any of those
+# modules — a smoke test, a local `python3 -c` check — drops __pycache__/
+# beside the source, where a plain `git add deploy/oci` sweeps it into the
+# commit.
+__pycache__/
+*.pyc

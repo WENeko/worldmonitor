@@ -85,7 +85,10 @@ CONTRACT fields. See `sample-directive.json`.
 - Actionable directives → executed by the agent with its **own** mandate and
   fail-closed pre-trade checks (universe, size, exposure, daily cap). The
   bridge adds hard guardrails in the prompt: paper only, connector
-  `alpaca-paper-trade`, max position size, no leverage, no options.
+  `alpaca-paper-trade`, max position size, no leverage, no margin, no
+  options, and fractional quantities allowed **wherever the broker supports
+  them** (crypto, fractional shares, forex units) so orders can be sized
+  *under* the caps instead of rounding up to a whole unit.
 - `mode: RESEARCH` → **never executed against the broker**. It is a read-only
   research commission (quotes, bars, account state, indicator/evidence
   tools) with orders forbidden by prompt. Gated by `BRIDGE_ALLOW_RESEARCH`
@@ -153,6 +156,69 @@ docker exec bridge cat /var/lib/bridge/executions/DIR-SYNTH-20260904-070100-001.
 #   4) receipt status RESEARCH_DONE + findings in the agent JSON result
 ```
 
+## Multi-asset paper: crypto, Binance testnet
+
+Since the fractional ban was lifted (prompt rule 5), `execution_request` can
+carry any positive size the broker accepts — `0.001` BTC, `0.5` share, `2500`
+forex units. The fill guard compares float quantities with a tolerance, so a
+fractional fill verifies exactly like a whole-share one.
+
+- **Crypto on Alpaca paper (zero new setup)**: Alpaca's paper account trades
+  crypto 24/7 (`BTC/USD`, `ETH/USD`, ...) with the same key pair. Drop
+  `sample-directive-crypto-alpaca.json` and keep `BRIDGE_CONNECTOR` at its
+  default — the bridge prompt already canonicalizes `BTC/USD` as the run
+  identity (no `.US` suffix is added to crypto shapes, and the symbol-dialect
+  rule collapses to a single dialect for them).
+- **Binance spot testnet (`testnet.binance.vision`)**: upstream Vibe-Trading
+  ships the `binance-paper-trade` profile (ccxt → testnet host) — the
+  testnet is a developer sandbox: sign in with a **GitHub account** on
+  testnet.binance.vision, mint API keys there (spot trading enabled), and
+  they can only ever reach the sandbox, never real funds. Binance is
+  geo-blocked in France for its *live* service; the testnet is not an
+  exchange service and is unaffected. Wiring:
+  1. Create keys at https://testnet.binance.vision (GitHub login, enable
+     spot + enable reading). Fund the sandbox with the testnet faucet
+     (free BTC/USDT/ETH/USDT).
+  2. Configure the connector in the shared runtime (vibe_data volume) —
+     either `docker exec vibe-trading vibe-trading connector ...`
+     onboarding or a `~/.vibe-trading/binance.json` mirroring
+     `alpaca.json` with `{"api_key": ..., "api_secret": ...,
+     "profile": "paper"}` (paper → testnet host is structural).
+  3. Check the link before any directive:
+     `docker exec vibe-trading vibe-trading connector check
+     binance-paper-trade` — if it reports `ccxt is not installed`, rebuild
+     the image (the repo Dockerfile installs ccxt since 2026-09-07).
+  4. Point the bridge at it: `BRIDGE_CONNECTOR=binance-paper-trade` in
+     `deploy/oci/.env`, then `docker compose up -d bridge` (env changes
+     only apply at container-create time).
+  5. Drop `sample-directive-crypto-binance.json` (`BTC/USDT` 0.001) and
+     read the receipt as usual. Testnet fills simulate the real Binance
+     order book (spread, slippage, partial fills), which makes it a far
+     stricter forward test than Alpaca paper fills for news/momentum
+     edges.
+- **Switching the runtime-selected profile** (any non-default connector):
+  the bridge's fill check runs `vibe-trading connector positions` with no
+  profile flag, and the CLI resolves that call through the selected
+  profile stored in `~/.vibe-trading/trading-connections.json` (upstream
+  `src/trading/profiles.py`). When you point the bridge at a new
+  connector, also switch the selected profile — set it via the CLI
+  onboarding (`vibe-trading connector select <profile>`) or write the
+  file directly:
+  `docker exec vibe-trading sh -c 'echo "{\"selected_profile\":
+  \"<profile>\"}" > /home/vibe/.vibe-trading/trading-connections.json'`
+  — otherwise the agent trades the new connector but the fill guard keeps
+  reading the previous connector's positions.
+- **Forex (OANDA fxTrade Practice)**: not yet a built-in connector upstream.
+  A complete, ready-to-submit connector (reads + orders, zero new runtime
+  dependency — OANDA v20 REST over stdlib) lives in
+  `deploy/oci/upstream/oanda-vibe-trading-pr/` with the PR body and the
+  exact submission commands. Until it merges upstream you can install the
+  read-only practice plugin from the same package today
+  (`vibe-trading connector validate . && vibe-trading connector install .`)
+  for account/position reads and research commissions; order execution
+  needs the full connector (apply the patch to your checkout and build the
+  image from your fork: `VIBE_TRADING_VERSION=feat/oanda-connector`).
+
 ## Kill switch, dry run, env
 
 | Var | Default | Meaning |
@@ -161,8 +227,8 @@ docker exec bridge cat /var/lib/bridge/executions/DIR-SYNTH-20260904-070100-001.
 | `BRIDGE_POLL_S` | `15` | Watch loop tick |
 | `BRIDGE_MAX_ITER` | `30` | Agent iteration cap |
 | `BRIDGE_TIMEOUT_S` | `900` | Agent subprocess timeout |
-| `BRIDGE_CONNECTOR` | `alpaca-paper-trade` | Paper connector profile |
-| `BRIDGE_MAX_QTY` | `3` | Soft per-order cap (embedded in the prompt) |
+| `BRIDGE_CONNECTOR` | `alpaca-paper-trade` | Paper connector profile (`binance-paper-trade` for the Binance spot testnet — also switch the runtime-selected profile, see above; `oanda-practice-trade` once the OANDA PR lands) |
+| `BRIDGE_MAX_QTY` | `3` | Reserved per-order quantity cap (not yet embedded in the prompt — discretionary orders are capped by gross notional ≈ $5k of the $100k paper account; mandated `execution_request` orders are operator-sized) |
 | `BRIDGE_DRY_RUN` | `0` | `1` logs the prompt, never invokes the agent |
 | `BRIDGE_ALLOW_RESEARCH` | `0` | `1` lets `mode: RESEARCH` commissions run as read-only agent tasks |
 | `BRIDGE_SKIP_FILL_CHECK` | `0` | `1` trusts the agent's exit code for `execution_request` directives (disables the positions-based fill verification — not recommended) |
@@ -320,7 +386,13 @@ The bridge is intentionally the *cheapest* container in the stack:
   turn the bridge receipts into the learning loop, plus the directive
   vocabulary (including `RESEARCH` mode) in one prompt.
 - `sample-directive.json` / `sample-directive-synthetic.json` /
-  `sample-directive-research.json` — the three directive shapes.
+  `sample-directive-research.json` — the three directive shapes, plus
+  `sample-directive-crypto-alpaca.json` (BTC/USD 0.001 on
+  `alpaca-paper-trade`),  `sample-directive-crypto-binance.json`
+  (BTC/USDT 0.001 on `binance-paper-trade`).
+- `deploy/oci/upstream/oanda-vibe-trading-pr/` — the ready-to-submit
+  OANDA connector PR for upstream Vibe-Trading (practice/live profiles,
+  PR body, registry changes, local read-only plugin).
 
 ## Limits of this version (declare them)
 
@@ -334,5 +406,12 @@ The bridge is intentionally the *cheapest* container in the stack:
   `BRIDGE_ALLOW_RESEARCH=0` unless you accept that trust boundary.
 - No DE_RISK closing logic yet (recorded, not executed).
 - The agent run is serialized (one directive at a time, per receipt lock).
+- **Paper fills are idealized**: Alpaca paper fills at a reference mid with no
+  spread/slippage — precisely the wrong model for news trading, where
+  execution IS the edge. Vibe-Trading's own backtest fills signals on the
+  **next bar's open** (upstream #1299: no same-bar fill, no lookahead) — a
+  backtest is an estimate of signal quality under that convention, not of
+  live fills. For validation: backtest for signal quality, forward-test on
+  the Binance testnet (real order book simulation) for execution realism.
 - The base image must exist locally before `--build` runs:
   `vibe-trading:arm64` is produced by `docker compose up -d --build vibe-trading`.
