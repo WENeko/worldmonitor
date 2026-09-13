@@ -21,7 +21,12 @@
 # Checks (all over loopback, the same path an SSH tunnel uses)
 #   1. `serve` announced a frontend dir, and it holds index.html + assets/
 #   2. GET /                 -> 200 text/html, Vibe-Trading SPA shell
-#   3. the shell's first hashed bundle reference -> 200
+#   3. the shell's BUILT entry (/assets/index-<hash>.js) -> 200. Vite rewrites
+#      frontend/index.html's <script src="/src/main.tsx"> at build time, so
+#      finding this entry is what separates a built dist/ from a raw frontend/
+#      directory dropped in by mistake. The other references in the shell
+#      (/theme-boot.js, /favicon.svg, the fonts) ship from the static public/
+#      dir and answer 200 even with no bundle at all.
 #   4. GET /runs/<probe>     -> 200 text/html (deep link / browser refresh)
 #   5. /openapi.json         -> application/json (the SPA mount at "/" did not
 #                               swallow the REST API)
@@ -125,13 +130,31 @@ esac
 grep -q '<title>Vibe-Trading' "$ROOT_BODY" \
   || fail "GET $BASE/ did not return the Vibe-Trading SPA shell (title marker missing)"
 
-ASSET_PATH="$(grep -oE '(src|href)="/[^"]+\.(js|css)"' "$ROOT_BODY" | head -n1 | sed -e 's/^[a-z]*="//' -e 's/"$//')"
-if [ -n "$ASSET_PATH" ]; then
-  ASSET_CODE="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE$ASSET_PATH" || true)"
-  [ "$ASSET_CODE" = "200" ] || fail "GET $BASE$ASSET_PATH -> ${ASSET_CODE:-no response} (bundle not served)"
-  ok "GET ${ASSET_PATH} -> 200 (hashed bundle)"
+# The built SPA entry — the only reference in the shell that proves the HTML
+# being served came out of `vite build`. A raw frontend/ directory (its
+# public/ files present, /src/main.tsx entry, no bundle) passes every other
+# check here and still renders a blank page.
+ENTRY_PATH="$(grep -oE 'src="/assets/[^"]+\.js"' "$ROOT_BODY" | head -n1 | sed -e 's/^src="//' -e 's/"$//')"
+[ -n "$ENTRY_PATH" ] \
+  || fail "index.html carries no /assets/*.js module entry — the served index.html is not the built one (Vite rewrites /src/main.tsx at build time)"
+ENTRY_CODE="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE$ENTRY_PATH" || true)"
+[ "$ENTRY_CODE" = "200" ] || fail "GET $BASE$ENTRY_PATH -> ${ENTRY_CODE:-no response} (SPA entry bundle not served)"
+ok "GET ${ENTRY_PATH} -> 200 (hashed SPA entry bundle)"
+
+# Every other absolute asset reference in the shell must resolve too, but a
+# miss there is reported rather than fatal: those files are cosmetic, and a
+# false failure would mask the real signal checked above.
+REF_TOTAL=0
+REF_MISSING=""
+for REF_PATH in $(grep -oE '(src|href)="/[^"]+\.(js|css|svg|woff2)"' "$ROOT_BODY" | sed -e 's/^[a-z]*="//' -e 's/"$//' | sort -u); do
+  REF_TOTAL=$((REF_TOTAL + 1))
+  REF_CODE="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE$REF_PATH" || true)"
+  [ "$REF_CODE" = "200" ] || REF_MISSING="${REF_MISSING} ${REF_PATH}(${REF_CODE:-no response})"
+done
+if [ -n "$REF_MISSING" ]; then
+  warn "static shell references not served:${REF_MISSING}"
 else
-  warn "no hashed js/css reference in index.html; skipped the bundle check"
+  ok "all ${REF_TOTAL} shell asset references -> 200 (entry, theme boot, icons, fonts)"
 fi
 
 DEEP_CODE="$(curl -sS -o "$DEEP_BODY" -w '%{http_code}' -H 'Accept: text/html' "$BASE/runs/ui-verify-probe" || true)"
