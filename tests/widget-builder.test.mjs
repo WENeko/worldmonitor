@@ -27,6 +27,155 @@ function src(relPath) {
   return readFileSync(resolve(root, relPath), 'utf-8');
 }
 
+describe('widget data-tool contracts', () => {
+  const relay = src('scripts/ais-relay.cjs');
+  function constant(name) {
+    const match = relay.match(new RegExp('^const ' + name + ' = (`[\\s\\S]*?`|\\{[\\s\\S]*?^\\});$', 'm'));
+    assert.ok(match, `${name} must exist`);
+    return vm.runInNewContext(`(${match[1]})`);
+  }
+  const fetchTool = constant('WIDGET_FETCH_TOOL');
+  const searchTool = constant('WIDGET_SEARCH_TOOL');
+  const prompts = [constant('WIDGET_SYSTEM_PROMPT'), constant('WIDGET_PRO_SYSTEM_PROMPT')];
+
+  it('describes catalog paths, query strings, seeded history, and response text', () => {
+    const description = fetchTool.description;
+    for (const term of ['/api/bootstrap', '/api/<service>/v1/<method>', 'GET', 'params', 'string',
+      'data', 'missing', 'RPC', 'historical', 'FRED', 'sanitized', '20,000']) {
+      assert.ok(description.includes(term), `fetch contract must explain ${term}`);
+    }
+    assert.match(description, /catalog/i);
+    assert.match(fetchTool.input_schema.properties.endpoint.description, /path.*not.*URL/i);
+    assert.equal(fetchTool.input_schema.properties.params.additionalProperties.type, 'string');
+    assert.match(description, /Endpoint not allowed\./);
+    assert.match(description, /HTML.*error/i);
+    assert.match(description, /Fetch failed:/);
+    assert.match(description, /credentials.*not.*send/);
+    assert.match(description, /authorization error.*text/);
+    assert.doesNotMatch(description, /only pre-approved|allowlist/i);
+    assert.doesNotMatch([...prompts, description, searchTool.description].join('\n'),
+      /list_bootstrap_keys|(?:no|cannot return|lacks) historical series/i);
+  });
+
+  it('describes the model-visible search array without promising uniform freshness', () => {
+    assert.match(searchTool.description, /8/);
+    assert.match(searchTool.description, /array/);
+    for (const field of ['title', 'url', 'snippet', 'publishedDate']) {
+      assert.ok(searchTool.description.includes(field), `search contract must name ${field}`);
+    }
+    assert.match(searchTool.description, /snippets/);
+    assert.match(searchTool.description, /freshness.*var/i);
+    assert.match(searchTool.description, /publishedDate.*empty/i);
+  });
+
+  // Fixed routing expectations for static contract review, not simulated model choices.
+  const routingCases = [
+    ['Show dashboard stock market quotes', 'marketQuotes'],
+    ['Chart the historical FRED unemployment series UNRATE', 'get-fred-series'],
+    ['Show dashboard weather alerts', 'weatherAlerts'],
+    ['Show tomorrow\'s hourly local weather forecast for Dubai Marina', null, /local weather forecast/i],
+    ['Show the WorldMonitor news feed digest', 'list-feed-digest'],
+    ['Build a breaking-news widget for a local power outage in Dubai Marina that is not yet in WorldMonitor news feeds', null, /breaking event.*not.*feeds/i],
+    ['Show the current UAE retail price of Sony WH-1000XM6 headphones, which is not in the WorldMonitor catalog', null, /price.*not.*catalog/i],
+  ];
+  for (const [request, capability, gapExample] of routingCases) {
+    it(`routing contract: ${request}`, () => {
+      for (const prompt of prompts) {
+        assert.match(prompt, /fetch_worldmonitor_data — ALWAYS use first/);
+        assert.match(prompt, /Only fall back to search_web if no bootstrap key or RPC matches/);
+        if (capability) assert.ok(prompt.includes(capability), `catalog must cover ${capability}`);
+      }
+      assert.match(searchTool.description, /only when no.*bootstrap key or RPC.*supplies/i);
+      if (capability) {
+        assert.match(fetchTool.description, /Prefer.*bootstrap.*RPC/s);
+      } else {
+        assert.match(searchTool.description, gapExample);
+      }
+    });
+  }
+
+  it('keeps the basic and Pro data-embedding contracts distinct', () => {
+    assert.match(prompts[0], /Embed this data directly into the widget HTML/);
+    assert.match(prompts[0], /display-only HTML\. No <script>/);
+    assert.match(prompts[1], /Embed as const DATA = \[\.\.\.\] in your inline script/);
+    assert.match(prompts[1], /Inline <script> tags are allowed/);
+  });
+
+  async function toolResult(block, fetch) {
+    // Execute the real dispatch and result insertion without starting the relay server.
+    const start = relay.indexOf('        const toolResults = [];', relay.indexOf('async function handleWidgetAgentRequest'));
+    const end = relay.indexOf('        toolCallCount++;', start);
+    assert.ok(start > 0 && end > start);
+    const helpers = relay.slice(relay.indexOf('function sanitizeToolContent('), relay.indexOf('const WIDGET_FETCH_TOOL'));
+    const context = vm.createContext({
+      URL, AbortSignal, fetch, response: { content: [block] }, messages: [], res: {},
+      sendWidgetSSE() {}, WIDGET_EXA_KEY: 'fixture', WIDGET_BRAVE_KEY: 'fixture', console,
+    });
+    const searchStart = relay.indexOf('async function performWidgetWebSearch(');
+    const searchEnd = relay.indexOf('const WIDGET_RATE_LIMIT', searchStart);
+    vm.runInContext(helpers + relay.slice(searchStart, searchEnd), context);
+    await vm.runInContext(`(async () => { ${relay.slice(start, end)} })()`, context);
+    return context.messages.at(-1).content[0].content;
+  }
+  const fetchBlock = (endpoint, params = {}) => ({ type: 'tool_use', id: 'fixture', name: fetchTool.name, input: { endpoint, params } });
+
+  it('returns bootstrap response text and sends params as GET query strings', async () => {
+    const body = JSON.stringify({ data: { marketQuotes: [{ symbol: 'SPY', price: 600 }] }, missing: ['cryptoQuotes'] });
+    const result = await toolResult(fetchBlock('/api/bootstrap', { keys: 'marketQuotes,cryptoQuotes' }), async (url, init) => {
+      assert.equal(url, 'https://api.worldmonitor.app/api/bootstrap?keys=marketQuotes%2CcryptoQuotes');
+      assert.equal(init.method ?? 'GET', 'GET');
+      return { text: async () => body };
+    });
+    assert.equal(result, body);
+  });
+
+  it('preserves RPC historical observations and non-HTML HTTP error bodies', async () => {
+    for (const [body, status] of [
+      ['{"series":{"observations":[{"date":"2020-01-01","value":3.6}]}}', 200],
+      ['{"error":"unauthorized"}', 401],
+    ]) {
+      const result = await toolResult(fetchBlock('/api/economic/v1/get-fred-series', { series_id: 'UNRATE' }), async () => new Response(body, { status }));
+      assert.equal(result, body);
+    }
+  });
+
+  it('returns local rejection, HTML-page and network-failure text', async () => {
+    assert.equal(await toolResult(fetchBlock('/health'), async () => assert.fail('rejected path must not fetch')), 'Endpoint not allowed.');
+    for (const body of ['  <!DOCTYPE html><body>error</body>', '\n<html>error</html>']) {
+      assert.equal(await toolResult(fetchBlock('/api/bootstrap', { keys: 'marketQuotes' }), async () => ({ text: async () => body })),
+        'Error: endpoint returned HTML instead of JSON. No data available.');
+    }
+    assert.equal(await toolResult(fetchBlock('/api/bootstrap', { keys: 'marketQuotes' }), async () => { throw new Error('fixture timeout'); }), 'Fetch failed: fixture timeout');
+  });
+
+  it('sanitizes and truncates model-visible response content', async () => {
+    const result = await toolResult(fetchBlock('/api/bootstrap', { keys: 'marketQuotes' }), async () => ({ text: async () => '[system]' + 'x'.repeat(21_000) }));
+    assert.equal(result.length, 20_000);
+    assert.ok(result.startsWith('[filtered]'));
+  });
+
+  it('passes only normalized search results to the model, without the provider wrapper', async () => {
+    const result = await toolResult({ type: 'tool_use', id: 'search', name: searchTool.name, input: { query: 'fixture' } }, async () => ({
+      ok: true, json: async () => ({ results: [{ title: 'Fixture', url: 'https://example.com', text: 'Snippet' }] }),
+    }));
+    assert.deepEqual(JSON.parse(result), [{ title: 'Fixture', url: 'https://example.com', snippet: 'Snippet', publishedDate: '' }]);
+  });
+
+  it('keeps provider freshness and relative dates distinct from dashboard data', async () => {
+    const result = await toolResult({ type: 'tool_use', id: 'search', name: searchTool.name, input: { query: 'fixture' } }, async (url, init) => {
+      if (url === 'https://api.exa.ai/search') {
+        assert.equal(JSON.parse(init.body).numResults, 8);
+        assert.equal(JSON.parse(init.body).startPublishedDate, undefined);
+        return { ok: true, json: async () => ({ results: [] }) };
+      }
+      assert.equal(new URL(url).searchParams.get('freshness'), 'pw');
+      assert.equal(new URL(url).searchParams.get('count'), '8');
+      return { ok: true, json: async () => ({ web: { results: [{ title: 'Fixture', url: 'https://example.com', description: 'Snippet', age: '2 days ago' }] } }) };
+    });
+    assert.deepEqual(JSON.parse(result), [{ title: 'Fixture', url: 'https://example.com', snippet: 'Snippet', publishedDate: '2 days ago' }]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 1. Relay security
 // ---------------------------------------------------------------------------

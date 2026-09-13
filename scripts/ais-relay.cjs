@@ -13245,11 +13245,11 @@ function isWidgetEndpointAllowed(endpoint) {
 
 const WIDGET_FETCH_TOOL = {
   name: 'fetch_worldmonitor_data',
-  description: 'Fetch live data from WorldMonitor APIs. Only pre-approved endpoint paths are allowed.',
+  description: 'Fetch structured WorldMonitor data from the catalog in the system prompt. Prefer a matching bootstrap key, then a matching RPC; use search_web only for a data gap. Send a GET to /api/bootstrap with params.keys (comma-separated catalog keys), or /api/<service>/v1/<method> with the cataloged RPC params. Supply a path, not a full URL; params are string query parameters appended to the URL. Some cataloged routes require credentials this tool does not send; their authorization error body is returned as text, not data. Successful bootstrap JSON has { data: { <key>: <array or object> }, missing: [<key>] }; RPC JSON has method-specific fields and can include historical series, such as seeded FRED observations. The model receives sanitized response text, normally JSON, truncated to 20,000 characters; it may be incomplete JSON or an API error body. Local policy rejection returns "Endpoint not allowed."; leading <!DOCTYPE or <html pages return an HTML error message with no data; fetch failures return "Fetch failed: <message>". Treat errors or missing data as unavailable, never as zero.',
   input_schema: {
     type: 'object',
     properties: {
-      endpoint: { type: 'string', description: 'Approved API endpoint path (e.g. /api/market/v1/list-crypto-quotes)' },
+      endpoint: { type: 'string', description: 'Cataloged API path, not a full URL (e.g. /api/bootstrap or /api/economic/v1/get-fred-series); put query parameters in params' },
       params: { type: 'object', description: 'Query parameters as key-value string pairs', additionalProperties: { type: 'string' } },
     },
     required: ['endpoint'],
@@ -13440,7 +13440,7 @@ For modify requests: make targeted changes to improve the widget as requested.`;
 
 const WIDGET_SEARCH_TOOL = {
   name: 'search_web',
-  description: 'Search the web for current news, live data, or any topic not covered by WorldMonitor RPCs. Returns up to 8 results with title, URL, snippet, and publish date. Use this for topics like breaking news, weather, specific events, prices not in RPC catalog, etc.',
+  description: 'Search the web for data to display in a widget, only when no suitable WorldMonitor bootstrap key or RPC supplies the requested data, specificity, or freshness. Prefer matching structured WorldMonitor data, including weatherAlerts, news list-feed-digest, and aviation news. A local weather forecast, a breaking event not yet in the feeds, or a price not in the catalog are valid widget requests: use search_web for these gaps. Requests up to 8 results and returns a sanitized JSON array with title, url, snippet, publishedDate. These are web snippets, not structured dashboard values; freshness varies by provider and publishedDate may be a date, relative age, or empty. No usable results or search failures return error text.',
   input_schema: {
     type: 'object',
     properties: {
