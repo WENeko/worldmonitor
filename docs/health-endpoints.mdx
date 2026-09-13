@@ -593,6 +593,12 @@ Wildfire ingestion retries a transient CWFIS request once, unless the provider's
 
 The first two consecutive exhausted transient CWFIS failures are pending for at most three hours, bounded by the source's three-hour retention limit. The third failed run warns. Missing, malformed, expired, or permanently failed coverage earns no pending period. Recovery state must persist before either public wildfire payload changes. Internal snapshot rows are excluded from both public payloads. The ten-minute cron, six-hour stale threshold, and existing FIRMS partial-coverage policy are unchanged.
 
+BC fire points use the internal `wildfire:bc-source:v1` snapshot to preserve validated source rows and their original success time after a failed request. A failed refresh can reuse source data younger than the existing two-hour wildfire cache lifetime at the source attempt. Repeated failures do not renew that source clock. The resulting aggregate keeps its existing two-hour publication TTL. Missing, malformed, future, or expired source snapshots supply no retained BC rows. A complete valid empty response clears prior BC records. A nonempty WFS page with invalid fire points fails validation.
+
+BC failures remain visible as `BC_WILDFIRE_SOURCE_FAILED` while healthy companion sources can publish. HTTP 400 is not retried and receives no pending allowance. The source snapshot persists before the public payload changes and is excluded from public payloads. Aggregate success and aggregate `fetchedAt` do not establish BC source success.
+
+The `bc_fire_request_failure` log event identifies the KML or WFS request, page offset, HTTP status, and recognized OGC exception code and parameter. It excludes response prose and request URLs. These fields support diagnosis of a future rejection without treating every HTTP 400 as transient.
+
 Selected thresholds from `SEED_META`:
 
 | Domain | Max Stale (min) | Notes |

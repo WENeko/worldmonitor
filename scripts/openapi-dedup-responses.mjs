@@ -282,8 +282,8 @@ export const INLINE_DESCRIPTION_MAX_BYTES = 300;
  * the two cannot drift apart.
  */
 export const INLINE_SUMMARY_OVERRIDES = Object.freeze({
-  JmespathParam: 'Optional JMESPath expression applied server-side to project or reduce the JSON '
-    + 'response before it is returned. Expressions over 1024 UTF-8 bytes or projections '
+  JmespathParam: 'Optional JMESPath query projects the JSON response. '
+    + 'Expressions over 1024 UTF-8 bytes or projections '
     + 'over the 256 KB output cap return HTTP 400.',
 });
 

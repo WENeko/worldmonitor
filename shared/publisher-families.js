@@ -89,7 +89,7 @@ const PUBLISHER_FAMILY_DATA = {
   'eia': { publisher: "US Energy Information Administration", labels: ["EIA Press Room", "EIA Reports"] },
   'fao': { publisher: "UN Food and Agriculture Organization", labels: ["FAO GIEWS", "FAO News"] },
   'financial-times': { publisher: "Financial Times", labels: ["FT Energy", "Financial Times"] },
-  'france-24': { publisher: "France 24", labels: ["France 24", "France 24 LatAm"] },
+  'france-24': { publisher: "France 24", labels: ["France 24", "France 24 Africa", "France 24 Asia Pacific", "France 24 LatAm"] },
   'good-news-network': {
     publisher: "Good News Network",
     labels: [
@@ -105,9 +105,12 @@ const PUBLISHER_FAMILY_DATA = {
   'guardian': {
     publisher: "The Guardian",
     labels: [
+      "Guardian Africa",
       "Guardian Americas",
       "Guardian Australia",
+      "Guardian Caribbean",
       "Guardian ME",
+      "Guardian Pacific",
       "Guardian World",
     ],
   },

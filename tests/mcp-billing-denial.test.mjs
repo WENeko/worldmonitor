@@ -8,6 +8,7 @@ import {
   assertToolFetchOk,
   BillingDenialError,
   RpcValidationError,
+  ToolBackoffError,
   throwIfBillingDenial,
 } from '../api/mcp/billing-denial.ts';
 
@@ -78,6 +79,18 @@ describe('billing-denial propagation helpers', () => {
       () => assertToolFetchOk(bare, 'tool'),
       (err) => !(err instanceof BillingDenialError) && err.message === 'tool HTTP 503',
     );
+  });
+
+  it('preserves backoff only when the caller opts in', async () => {
+    for (const status of [429, 503]) {
+      for (const retryAfter of [null, '5', 'Wed, 21 Oct 2026 07:28:00 GMT']) {
+        const res = response(status, retryAfter === null ? {} : { 'Retry-After': retryAfter });
+        await assert.rejects(() => assertToolFetchOk(res, 'other-tool'),
+          (err) => !(err instanceof ToolBackoffError) && err.message === `other-tool HTTP ${status}`);
+        await assert.rejects(() => assertToolFetchOk(res, 'search-google-dates', { preserveBackoff: true }),
+          (err) => err instanceof ToolBackoffError && err.status === status && err.retryAfter === retryAfter);
+      }
+    }
   });
 
   it('missing Retry-After yields undefined, not 0', () => {

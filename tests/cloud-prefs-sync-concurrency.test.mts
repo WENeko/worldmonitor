@@ -15,6 +15,7 @@ const stubs: Record<string, string> = {
     "export const CANADA_ARCTIC_OPT_IN_SOURCES = ['Globe and Mail', 'Global News', 'Yle News', 'NRK', 'Aftenposten', 'DR Nyheder', 'Arctic Today'];",
     "export const CANADA_DEPTH_OPT_IN_SOURCES = [];",
     "export const CRISIS_FLOOR_OPT_IN_SOURCES = ['WAFA English'];",
+    "export const CURATED_REGIONAL_OPT_IN_SOURCES = ['Guardian Pacific'];",
     'export const FEEDS = {};',
     'export const FRONTLINE_EUROPE_PROTECTED_SOURCES = [];',
     'export const INTEL_SOURCES = [];',
@@ -506,13 +507,17 @@ describe('cloud preference write serialization', () => {
       await cloudPrefs.onSignIn('user-1', 'full');
       cloudPrefs.install('full');
       localStorage.setItem('wm-cloud-prefs-local-schema-version', '4');
+      localStorage.setItem('worldmonitor-disabled-feeds', '["user-choice"]');
       localStorage.setItem('wm-market-watchlist-v1', 'save-before-sign-out');
       cloudPrefs.onSignOut();
       await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
     });
 
-    assert.equal(result.localSchemaVersion, 8);
-    assert.deepEqual(result.acceptedSchemaVersionsByToken['test-token'], [8, 8]);
+    assert.equal(result.localSchemaVersion, 9);
+    assert.deepEqual(result.acceptedSchemaVersionsByToken['test-token'], [9, 9]);
+    const disabled = JSON.parse(result.acceptedDataByToken['test-token']['worldmonitor-disabled-feeds']) as string[];
+    assert.ok(disabled.includes('user-choice'));
+    assert.ok(disabled.includes('Guardian Pacific'));
   });
 
   it('preserves edits made for a new account while its sign-in waits in the queue', async () => {

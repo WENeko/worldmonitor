@@ -259,7 +259,9 @@ const EXCLUDED_FROM_MCP_PARITY = new Map([
   ["POST /api/economic/v1/get-fred-series-batch",
     "manual-mapping: parameterized cache key not statically resolvable — equivalent data covered by sibling cache tool at the prefix level"],
 
-  // === deferred-to-future-tool (60) ===
+  // === deferred-to-future-tool (61) ===
+  ["GET /api/news/v1/list-country-headlines",
+    "deferred-to-future-tool: country snapshot capture reads existing full RSS caches; a future country_headlines tool can expose this uncapped country pool"],
   ["GET /api/consumer-prices/v1/get-consumer-price-basket-series",
     "deferred-to-future-tool: handler reads parameterized consumer-prices:basket-series:<market>:<basket>:<range> key NOT in get_consumer_prices._coverageKeys — bundle into a future expanded_consumer_prices tool that exposes the basket-series time series"],
   ["GET /api/company-monitoring/v1/get-company-coverage",

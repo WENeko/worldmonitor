@@ -50,6 +50,7 @@ import {
   INTEL_SOURCES,
   type ServerFeed,
 } from './_feeds';
+import { FUTURE_DATE_TOLERANCE_MS, resolveMaxAgeMs, rssFeedCacheKey } from './_rss-cache';
 import { classifyByKeyword, hasHistoricalMarker, type ThreatLevel } from './_classifier';
 import {
   buildDigestCoverage,
@@ -361,31 +362,6 @@ function markFallbackCoverageStale(
       staleReason: stale.reason,
     },
   };
-}
-
-// U3 — hard freshness floor (default 96h, env override NEWS_MAX_AGE_HOURS).
-// Items older than this are dropped before scoring. The 24h `recencyScore`
-// component already treats anything older than 24h as zero recency, so the
-// freshness floor is purely a "don't surface week-old news" guard, not a
-// scoring input.
-//
-// 2026-05-03: bumped 48 → 96 after a production incident where every
-// single-source category panel (GitHub Trending: github.blog/feed/, Product
-// Hunt: producthunt.com/feed) went UNAVAILABLE over a weekend. Both feeds
-// publish on a weekday cadence; over a Sat-Sun window their newest item
-// sits at ~50-70h old, which the 48h floor wholesale dropped → category
-// renders zero items → panel reads "UNAVAILABLE". 96h covers a Fri→Mon
-// weekend with margin so we don't flip empty on Sunday-night dashboard
-// checks. The 24h recencyScore still naturally de-ranks 48-96h items vs
-// anything fresher, so the visible-but-de-ranked outcome is correct:
-// better than "no news" but lower priority than today.
-//
-// Out-of-range / unparseable env values fall back to the default silently.
-// See R3 in docs/plans/2026-04-26-001-fix-brief-static-page-contamination-plan.md.
-function resolveMaxAgeMs(): number {
-  const raw = Number.parseInt(process.env.NEWS_MAX_AGE_HOURS ?? '', 10);
-  const hours = Number.isInteger(raw) && raw > 0 ? raw : 96;
-  return hours * 60 * 60 * 1000;
 }
 
 const LEVEL_TO_PROTO: Record<ThreatLevel, ProtoThreatLevel> = {
@@ -866,7 +842,7 @@ export async function fetchAndParseRss(
   // v8→v9 (#7083): ParseResult gained the `attempt` field. Warm v8 rows
   // lack it, so zero-item entries could not be classified between
   // negative-cache and fresh-failure; force a cold parse on rollout.
-  const cacheKey = `rss:feed:v9:${variant}:${feed.url}`;
+  const cacheKey = rssFeedCacheKey(variant, feed.url);
 
   try {
     // Read cache unconditionally — the v5 prefix guarantees pre-fix
@@ -999,9 +975,6 @@ const DATE_TAG_PRIORITY = {
   rss: ['pubDate', 'dc:date', 'dc:Date.Issued', 'published'] as const,
   atom: ['published', 'updated', 'dc:date', 'dc:Date.Issued'] as const,
 };
-
-// Future-dated guard: items > 1h ahead of now are clock-skew or malformed.
-const FUTURE_DATE_TOLERANCE_MS = 60 * 60 * 1000;
 
 // RSS <source> is upstream-provided text. Only these server-configured
 // aggregator endpoints are allowed to vouch for it as publisher provenance;

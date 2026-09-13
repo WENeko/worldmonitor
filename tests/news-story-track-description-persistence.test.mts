@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { __testing__ } from '../server/worldmonitor/news/v1/list-feed-digest';
+import { rssFeedCacheKey } from '../server/worldmonitor/news/v1/_rss-cache';
 import { shouldDropOpinionTrack } from '../scripts/lib/digest-opinion-track-filter.mjs';
 
 const {
@@ -488,9 +489,14 @@ describe('fetchAndParseRss — cache prefix invalidation contract', () => {
     // v8→v9: cached ParseResult rows now carry the fetch attempt verdict
     // (source + failure classification, #7083). Warm v8 rows lack the
     // attempt field and would misreport feed health as an unknown state.
+    assert.equal(
+      rssFeedCacheKey('full', 'https://example.com/rss'),
+      'rss:feed:v9:full:https://example.com/rss',
+      'rss:feed cache key must use the per-attempt verdict format',
+    );
     assert.ok(
-      src.includes("`rss:feed:v9:${variant}:${feed.url}`"),
-      'rss:feed cache key must use v9 prefix — see comment above the cacheKey assignment in fetchAndParseRss',
+      src.includes('const cacheKey = rssFeedCacheKey(variant, feed.url);'),
+      'fetchAndParseRss must use the shared versioned cache key',
     );
     assert.ok(
       !src.includes("`rss:feed:v8:${variant}:${feed.url}`") &&

@@ -66,6 +66,31 @@ describe('api/mcp — usage telemetry (#4866)', () => {
     Object.assign(process.env, originalEnv);
   });
 
+  for (const [status, retryAfter, reason] of [[429, '60', 'rate_limit_429'], [503, '5', 'rate_limit_degraded']]) {
+    it(`Google Dates downstream ${status} preserves backoff and usage through MCP dispatch`, async () => {
+      const { deps } = makeProDeps();
+      const events = captureAxiom();
+      const transport = globalThis.fetch;
+      globalThis.fetch = async (url, init) => String(url).includes('/api/aviation/v1/search-google-dates')
+        ? new Response(JSON.stringify({ error: 'private upstream detail' }), { status, headers: { 'Retry-After': retryAfter } })
+        : transport(url, init);
+      const { ctx, settle } = makeCtx();
+      const res = await mcpHandler(proReq('POST', callBody('search_flight_prices_by_date', {
+        origin: 'DXB', destination: 'LHR', start_date: '2026-10-01', end_date: '2026-10-31',
+      })), deps, ctx);
+      assert.equal(res.status, status);
+      assert.equal(res.headers.get('Retry-After'), retryAfter);
+      assert.equal(res.headers.get('Cache-Control'), 'no-store');
+      const payload = await res.json();
+      assert.equal(payload.error.code, status === 429 ? -32029 : -32603);
+      assert.ok(!JSON.stringify(payload).includes('private upstream detail'));
+      await settle();
+      assert.equal(events.length, 1);
+      assert.equal(events[0].status, status);
+      assert.equal(events[0].reason, reason);
+    });
+  }
+
   it('anonymous tools/list emits an ok request event with origin_kind mcp', async () => {
     const { deps } = makeProDeps();
     const events = captureAxiom();

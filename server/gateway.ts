@@ -353,6 +353,7 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/supply-chain/v1/get-chokepoint-status': 'medium',
   '/api/supply-chain/v1/get-chokepoint-history': 'slow',
   '/api/news/v1/list-feed-digest': 'slow',
+  '/api/news/v1/list-country-headlines': 'fast',
   '/api/intelligence/v1/get-country-facts': 'daily',
   '/api/intelligence/v1/list-security-advisories': 'slow',
   '/api/intelligence/v1/list-satellites': 'static',
@@ -1999,8 +2000,9 @@ export function createDomainGateway(
     // Gateway rate limiting — two-phase: endpoint-specific first, then global fallback.
     // Confirmed paid principals use per-user buckets; other traffic uses IP.
     //
-    // Flight searches need their tighter upstream budget even after MCP admission.
-    if (internalMcpVerified && pathname === '/api/aviation/v1/search-google-flights') {
+    // Google searches need their tighter upstream budget even after MCP admission.
+    if (internalMcpVerified && (pathname === '/api/aviation/v1/search-google-flights'
+      || pathname === '/api/aviation/v1/search-google-dates')) {
       const endpointRlResponse = await checkEndpointRateLimit(request, pathname, corsHeaders, {
         principalUserId: request.headers.get(TRUSTED_USER_ID_HEADER)!,
         principalScope: 'session',

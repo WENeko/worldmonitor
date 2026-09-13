@@ -5,7 +5,7 @@ import { isAppOwnedRedisKey } from '../_redis-key-ownership.js';
 import { captureSilentError } from '../_sentry-edge.js';
 import { secondsUntilUtcMidnight } from '../../server/_shared/pro-mcp-token';
 import { getMcpBillingVerificationDenial, wwwAuthHeader } from './auth';
-import { BillingDenialError, RpcValidationError } from './billing-denial';
+import { BillingDenialError, RpcValidationError, ToolBackoffError } from './billing-denial';
 import {
   BothSourcesFailedError,
   createMcpToolExecutionContext,
@@ -592,6 +592,16 @@ export async function dispatchToolsCall(
         id,
       );
       if (denial) return denial;
+    }
+    if (err instanceof ToolBackoffError) {
+      return rpcError(
+        id,
+        err.status === 429 ? -32029 : -32603,
+        err.status === 429 ? 'Too many requests' : 'Service temporarily unavailable',
+        { ...corsHeaders, ...(err.retryAfter === null ? {} : { 'Retry-After': err.retryAfter }) },
+        undefined,
+        err.status,
+      );
     }
     if (err instanceof McpSourceUnavailableError) {
       return rpcError(

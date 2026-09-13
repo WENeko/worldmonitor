@@ -2895,7 +2895,7 @@ export const RPC_TOOLS: ToolDef[] = [
         headers: { ...auth, 'User-Agent': 'worldmonitor-mcp-edge/1.0' },
         signal: AbortSignal.timeout(25_000),
       });
-      await assertToolFetchOk(res, 'search-google-dates');
+      await assertToolFetchOk(res, 'search-google-dates', { preserveBackoff: true });
       return res.json();
     },
     _apiPaths: [

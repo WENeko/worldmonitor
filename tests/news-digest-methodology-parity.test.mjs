@@ -56,6 +56,10 @@ const digestSrc = readFileSync(
   resolve(repoRoot, 'server/worldmonitor/news/v1/list-feed-digest.ts'),
   'utf8',
 );
+const rssCacheSrc = readFileSync(
+  resolve(repoRoot, 'server/worldmonitor/news/v1/_rss-cache.ts'),
+  'utf8',
+);
 const classifierSrc = readFileSync(
   resolve(repoRoot, 'server/worldmonitor/news/v1/_classifier.ts'),
   'utf8',
@@ -582,8 +586,9 @@ describe('news digest methodology parity', () => {
 
   it('documents the ingest freshness floor default', () => {
     assert.ok(
-      digestSrc.includes('process.env.NEWS_MAX_AGE_HOURS') &&
-        /const\s+hours\s*=.*\?\s*raw\s*:\s*96\s*;/s.test(digestSrc),
+      rssCacheSrc.includes('process.env.NEWS_MAX_AGE_HOURS') &&
+        /const\s+hours\s*=.*\?\s*raw\s*:\s*96\s*;/s.test(rssCacheSrc) &&
+        digestSrc.includes('const maxAgeMs = resolveMaxAgeMs();'),
       'resolveMaxAgeMs must still default NEWS_MAX_AGE_HOURS to 96h',
     );
     assertDocIncludes('NEWS_MAX_AGE_HOURS', 'freshness env var');
