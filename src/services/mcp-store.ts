@@ -115,6 +115,14 @@ export const MCP_PRESETS: McpPreset[] = [
     name: 'Weather Forensics',
     icon: '🌦️',
     description: 'Free historical and current weather data — hourly, daily, and severe events',
+    // This is the vendor's published entry point, and it currently answers 308
+    // to a Cloud Run backend. Record the published address, never one found by
+    // resolving a redirect: the 308 is the vendor's own indirection layer, and
+    // pinning past it takes away the ability to move the endpoint that the
+    // proxy's one-hop follow exists to absorb. The failure modes are also not
+    // symmetric — a vanity domain that moves again still redirects, while a
+    // retired backend host (a run.app name is derived from project number and
+    // region) just stops resolving, with no hop to catch it.
     serverUrl: 'https://weatherforensics.dev/mcp/free',
     defaultTool: 'noaa_ncei_daily_weather_for_location_date',
     defaultArgs: { latitude: 33.8938, longitude: 35.5018, date: '2026-03-19' },

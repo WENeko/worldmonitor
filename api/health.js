@@ -726,16 +726,16 @@ const SEED_META = {
   newsFeedHealth:   { key: 'seed-meta:news:feed-health',        maxStaleMin: 2880 },
   newsRecallBenchmark: { key: 'seed-meta:news:recall-benchmark', maxStaleMin: 2880 },
   marketQuotes:     { key: 'seed-meta:market:stocks',         maxStaleMin: 30 },
-  // #6235: the country-index RPC is seeded for the whole 45-country enum. The
-  // seeding pass is deliberately best-effort (one country's provider failure
-  // must not cost the other 44 their refresh) and therefore never throws — so
-  // without this entry a run where every country failed would leave
+  // #6235: the country-index RPC is seeded for every serviceable country in the
+  // enum. The seeding pass is deliberately best-effort (one country's provider
+  // failure must not cost the others their refresh) and therefore never
+  // throws — so without this entry a run where every country failed would leave
   // seed-meta:market:stocks fresh and health green while the country caches
   // expired and the RPC silently reverted to per-request Yahoo fetches.
-  // minRecordCount measured 2026-08-05: 37/45 symbols return usable 1mo daily
-  // closes; RU, PL, EG, CL, PE, PT, CZ and HU fail permanently on Yahoo's side
-  // (see #6240). 30 leaves headroom for ~7 transient failures below that
-  // measured floor without alarming on the known-dead eight.
+  // #6240: countries whose Yahoo symbol is dead carry `unavailable` in
+  // shared/openapi-filter-param-contracts.json and are not seeded (38 of 45 as
+  // of 2026-09-13). 30 leaves headroom for 8 transient failures;
+  // tests/country-stock-index-health.test.mjs keeps it below the seedable count.
   countryStockIndexes: { key: 'seed-meta:market:country-indexes', maxStaleMin: 30, minRecordCount: 30 },
   commodityQuotes:  { key: 'seed-meta:market:commodities',    maxStaleMin: 30 },
   physicalPremiums: {

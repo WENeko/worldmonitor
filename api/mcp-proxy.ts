@@ -291,16 +291,17 @@ function throwBlockedAddress(blockedAddress) {
   throw new McpProxySsrfError(SSRF_BLOCKED_PUBLIC_MESSAGE);
 }
 
-async function resolveDnsJson(hostname, recordType) {
+async function resolveDnsJson(hostname, recordType, signal) {
   const url = new URL(DNS_JSON_ENDPOINT);
   url.searchParams.set('name', hostname);
   url.searchParams.set('type', recordType);
+  const dnsTimeout = AbortSignal.timeout(DNS_RESOLUTION_TIMEOUT_MS);
   const response = await fetch(url.toString(), {
     headers: {
       Accept: 'application/dns-json',
       'User-Agent': 'WorldMonitor-MCP-Proxy/1.0',
     },
-    signal: AbortSignal.timeout(DNS_RESOLUTION_TIMEOUT_MS),
+    signal: signal ? AbortSignal.any([signal, dnsTimeout]) : dnsTimeout,
   });
   if (!response.ok) {
     throw new Error(`DNS ${recordType} lookup failed: HTTP ${response.status}`);
@@ -315,17 +316,18 @@ async function resolveDnsJson(hostname, recordType) {
     .map(answer => answer.data);
 }
 
-async function defaultResolveHostname(hostname) {
+async function defaultResolveHostname(hostname, signal) {
   const resolveHostnameForTest = getResolveHostnameForTest();
-  if (resolveHostnameForTest) return resolveHostnameForTest(hostname);
+  if (resolveHostnameForTest) return resolveHostnameForTest(hostname, signal);
   const records = await Promise.all([
-    resolveDnsJson(hostname, 'A'),
-    resolveDnsJson(hostname, 'AAAA'),
+    resolveDnsJson(hostname, 'A', signal),
+    resolveDnsJson(hostname, 'AAAA', signal),
   ]);
   return records.flat();
 }
 
-async function assertServerUrlSafe(url) {
+async function assertServerUrlSafe(url, signal) {
+  signal?.throwIfAborted();
   const hostname = url.hostname.toLowerCase();
   if (BLOCKED_HOSTNAMES.has(hostname)) {
     throw new McpProxySsrfError('serverUrl hostname is blocked');
@@ -336,10 +338,12 @@ async function assertServerUrlSafe(url) {
 
   let resolvedAddresses;
   try {
-    resolvedAddresses = await defaultResolveHostname(hostname);
+    resolvedAddresses = await defaultResolveHostname(hostname, signal);
   } catch (error) {
+    signal?.throwIfAborted();
     throw new McpProxySsrfError('serverUrl DNS resolution failed', { cause: error });
   }
+  signal?.throwIfAborted();
 
   if (!resolvedAddresses.length) {
     throw new McpProxySsrfError('serverUrl DNS resolution returned no addresses');
@@ -361,8 +365,8 @@ async function assertServerUrlSafe(url) {
 // dispatch NARROWS that DNS-rebinding window but does not close it. The
 // residual rebind window is an ACCEPTED limitation of the Edge runtime (no
 // socket-level pin available) — documented, not fixed here (P2, issue #5061).
-async function revalidateBeforeFetch(url) {
-  await assertServerUrlSafe(url);
+async function revalidateBeforeFetch(url, signal) {
+  await assertServerUrlSafe(url, signal);
 }
 
 function buildInitPayload() {
@@ -434,18 +438,90 @@ function buildHeaders(customHeaders) {
 
 // --- Streamable HTTP transport (MCP 2025-03-26) ---
 
+// Bounded redirect follow. `redirect: 'manual'` below stays load-bearing: the
+// Edge runtime cannot pin a TLS connection to a vetted address, so every
+// dispatch re-resolves the host through assertServerUrlSafe. Letting `fetch()`
+// follow a redirect on its own would hand an upstream a way to bounce this
+// proxy onto an internal address without that re-check. So we follow at most
+// ONE hop by hand, and only after the Location clears the same guard the
+// original serverUrl did.
+//
+// Vendors do move a published MCP endpoint and leave a permanent redirect
+// behind (a shipped preset went dark this way — every call died on the 308
+// rather than the one-line move the vendor intended).
+const MAX_REDIRECT_HOPS = 1;
+
+// Only method-preserving redirects are followed. 301/302/303 permit a client to
+// rewrite the request to GET, which is meaningless for JSON-RPC and would
+// silently turn a tools/call into a bodyless GET.
+const METHOD_PRESERVING_REDIRECTS = new Set([307, 308]);
+
+// Headers that may cross an origin boundary. Everything else this proxy is
+// carrying is caller-supplied credential material (the Alpha Vantage, Datadog
+// and Slack presets all send a Bearer token; Mcp-Session-Id is a session
+// credential minted by the *previous* origin), and an upstream chooses the
+// redirect target — forwarding those to whatever host it names in a Location
+// header would hand the caller's key to a third party. This is an allowlist on
+// purpose: a denylist of known-sensitive header names is exactly the
+// name-shaped trampoline that cannot match the spelling it has not seen.
+const CROSS_ORIGIN_SAFE_HEADERS = new Set(['content-type', 'accept', 'user-agent']);
+
+function redirectTargetFor(response, fromUrl) {
+  const location = response.headers.get('location');
+  if (!location) return null;
+  let next;
+  try {
+    next = new URL(location, fromUrl);
+  } catch {
+    return null;
+  }
+  // assertServerUrlSafe vets the host but not the scheme, and the entry-point
+  // https check in validateServerUrl never sees a redirect target — so a
+  // downgrade to http:// has to be refused right here.
+  if (next.protocol !== 'https:') return null;
+  return next;
+}
+
+function stripToCrossOriginSafeHeaders(headers) {
+  const out = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (CROSS_ORIGIN_SAFE_HEADERS.has(key.toLowerCase())) out[key] = value;
+  }
+  return out;
+}
+
 async function postJson(url, body, headers, sessionId) {
   const h = { ...headers };
   if (sessionId) h['Mcp-Session-Id'] = sessionId;
-  await revalidateBeforeFetch(url);
-  const resp = await fetchMcpUpstream(url.toString(), {
-    method: 'POST',
-    headers: h,
-    body: JSON.stringify(body),
-    redirect: 'manual',
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  });
-  return resp;
+  const payload = JSON.stringify(body);
+  let target = url;
+  let outboundHeaders = h;
+  // ONE deadline for the whole exchange, not one per hop — a per-hop signal
+  // would quietly hand a redirecting upstream twice the budget every other
+  // dispatch gets.
+  const signal = AbortSignal.timeout(TIMEOUT_MS);
+  for (let hop = 0; ; hop++) {
+    await revalidateBeforeFetch(target, signal);
+    signal.throwIfAborted();
+    const resp = await fetchMcpUpstream(target.toString(), {
+      method: 'POST',
+      headers: outboundHeaders,
+      body: payload,
+      redirect: 'manual',
+      signal,
+    });
+    if (hop >= MAX_REDIRECT_HOPS || !METHOD_PRESERVING_REDIRECTS.has(resp.status)) {
+      return { response: resp, url: target, headers: outboundHeaders };
+    }
+    const next = redirectTargetFor(resp, target);
+    // An unfollowable redirect (no Location, unparseable, or an http://
+    // downgrade) is returned as-is so the caller still reports the upstream
+    // status it actually got, exactly as before this hop existed.
+    if (!next) return { response: resp, url: target, headers: outboundHeaders };
+    await cancelResponseBody(resp);
+    if (next.origin !== target.origin) outboundHeaders = stripToCrossOriginSafeHeaders(outboundHeaders);
+    target = next;
+  }
 }
 
 async function cancelResponseBody(response) {
@@ -483,7 +559,7 @@ async function parseJsonRpcResponse(resp) {
 
 async function sendInitialized(serverUrl, headers, sessionId) {
   try {
-    const response = await postJson(serverUrl, {
+    const { response } = await postJson(serverUrl, {
       jsonrpc: '2.0',
       method: 'notifications/initialized',
       params: {},
@@ -496,14 +572,15 @@ async function sendInitialized(serverUrl, headers, sessionId) {
 }
 
 async function mcpListTools(serverUrl, customHeaders) {
-  const headers = buildHeaders(customHeaders);
-  const initResp = await postJson(serverUrl, buildInitPayload(), headers, null);
+  const { response: initResp, url: sessionUrl, headers } = await postJson(
+    serverUrl, buildInitPayload(), buildHeaders(customHeaders), null,
+  );
   if (!initResp.ok) throw new McpProxyUpstreamError(`Initialize failed: HTTP ${initResp.status}`);
   const sessionId = initResp.headers.get('Mcp-Session-Id') || initResp.headers.get('mcp-session-id');
   const initData = await parseJsonRpcResponse(initResp);
   if (initData.error) throw new McpProxyUpstreamError('Initialize error: MCP server rejected request');
-  await sendInitialized(serverUrl, headers, sessionId);
-  const listResp = await postJson(serverUrl, {
+  await sendInitialized(sessionUrl, headers, sessionId);
+  const { response: listResp } = await postJson(sessionUrl, {
     jsonrpc: '2.0', id: 2, method: 'tools/list', params: {},
   }, headers, sessionId);
   if (!listResp.ok) throw new McpProxyUpstreamError(`tools/list failed: HTTP ${listResp.status}`);
@@ -513,14 +590,15 @@ async function mcpListTools(serverUrl, customHeaders) {
 }
 
 async function mcpCallTool(serverUrl, toolName, toolArgs, customHeaders) {
-  const headers = buildHeaders(customHeaders);
-  const initResp = await postJson(serverUrl, buildInitPayload(), headers, null);
+  const { response: initResp, url: sessionUrl, headers } = await postJson(
+    serverUrl, buildInitPayload(), buildHeaders(customHeaders), null,
+  );
   if (!initResp.ok) throw new McpProxyUpstreamError(`Initialize failed: HTTP ${initResp.status}`);
   const sessionId = initResp.headers.get('Mcp-Session-Id') || initResp.headers.get('mcp-session-id');
   const initData = await parseJsonRpcResponse(initResp);
   if (initData.error) throw new McpProxyUpstreamError('Initialize error: MCP server rejected request');
-  await sendInitialized(serverUrl, headers, sessionId);
-  const callResp = await postJson(serverUrl, {
+  await sendInitialized(sessionUrl, headers, sessionId);
+  const { response: callResp } = await postJson(sessionUrl, {
     jsonrpc: '2.0', id: 3, method: 'tools/call',
     params: { name: toolName, arguments: toolArgs || {} },
   }, headers, sessionId);

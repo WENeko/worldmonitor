@@ -250,6 +250,13 @@ export function parseBcFireGeoJson(payload) {
   if (!doc || typeof doc !== 'object' || doc.type !== 'FeatureCollection' || !Array.isArray(doc.features)) {
     throw new BcFirePointsError('BC wildfire GeoJSON is not a FeatureCollection');
   }
+  for (const [field, value] of [['numberMatched', doc.numberMatched ?? doc.totalFeatures], ['numberReturned', doc.numberReturned]]) {
+    if (value == null || (field === 'numberMatched' && value === 'unknown')) continue;
+    const count = asFiniteNumber(value);
+    if (!Number.isSafeInteger(count) || count < 0) {
+      throw new BcFirePointsError(`BC wildfire invalid ${field} count`);
+    }
+  }
   const fireDetections = [];
   const seen = new Set();
   const pageRowKeys = [];
@@ -413,23 +420,29 @@ async function fetchBcFireKmlTree({ fetchFn, cache, maxHops = BC_MAX_NETWORKLINK
   return fireDetections;
 }
 
-async function fetchBcFireWfs({ fetchFn, cache, pageSize = BC_WFS_PAGE_SIZE, maxPages = BC_WFS_MAX_PAGES } = {}) {
+async function fetchBcFireWfs({ fetchFn, cache, pageSize = BC_WFS_PAGE_SIZE, maxPages = BC_WFS_MAX_PAGES, confirmEmpty = false } = {}) {
   const fireDetections = [];
   const seen = new Set();
   const seenPageRows = new Set();
   let paginationComplete = false;
   let lastProgress = 0;
   let lastMatched = null;
-  for (let page = 0; page < maxPages; page += 1) {
-    const startIndex = page * pageSize;
+  let startIndex = 0;
+  let confirmingEmpty = false;
+  for (let request = 0; request < maxPages; request += 1) {
     const url = buildBcWfsUrl({ startIndex, count: pageSize });
     const response = await fetchApprovedBcUrl(url, {
       fetchFn,
-      cache,
+      cache: confirmingEmpty ? undefined : cache,
       cacheKey: bcFireCacheKey({ kind: 'wfs', startIndex }),
       accept: 'application/json, application/geo+json, */*',
     });
     const parsed = parseBcFireGeoJson(response.text);
+    if (confirmingEmpty || (confirmEmpty && parsed.numberReturned === 0)) {
+      console.warn(JSON.stringify({ event: 'bc_fire_empty_confirmation',
+        confirmation: confirmingEmpty, startIndex,
+        numberMatched: parsed.numberMatched, numberReturned: parsed.numberReturned }));
+    }
     let newPageRows = 0;
     for (const rowKey of parsed.pageRowKeys) {
       if (seenPageRows.has(rowKey)) continue;
@@ -450,12 +463,17 @@ async function fetchBcFireWfs({ fetchFn, cache, pageSize = BC_WFS_PAGE_SIZE, max
     lastProgress = progress;
     lastMatched = matched;
     if ((matched != null && progress >= matched) || (matched == null && returned < pageSize)) {
+      if (confirmEmpty && !confirmingEmpty && fireDetections.length === 0) {
+        confirmingEmpty = true;
+        continue;
+      }
       paginationComplete = true;
       break;
     }
     if (returned === 0) {
       throw new BcFirePointsError(`BC wildfire WFS pagination made no progress at startIndex=${startIndex}`);
     }
+    startIndex += pageSize;
   }
   if (!paginationComplete) {
     const expected = lastMatched == null ? 'unknown' : lastMatched;
@@ -471,6 +489,7 @@ async function fetchCurrentBcFirePoints({
   cache,
   pageSize = BC_WFS_PAGE_SIZE,
   maxPages = BC_WFS_MAX_PAGES,
+  confirmEmpty = false,
 } = {}) {
   let kmlDetections = [];
   let kmlError = null;
@@ -484,7 +503,7 @@ async function fetchCurrentBcFirePoints({
   }
 
   try {
-    const wfsDetections = await fetchBcFireWfs({ fetchFn, cache, pageSize, maxPages });
+    const wfsDetections = await fetchBcFireWfs({ fetchFn, cache, pageSize, maxPages, confirmEmpty });
     return { fireDetections: wfsDetections, _bcVia: 'wfs', _bcCount: wfsDetections.length };
   } catch (err) {
     if (kmlError) {
@@ -511,7 +530,8 @@ function usableBcSnapshot(snapshot, nowMs) {
 
 export async function fetchBcFirePoints({ previousSnapshot, nowMs = Date.now(), ...options } = {}) {
   try {
-    const data = await fetchCurrentBcFirePoints(options);
+    const data = await fetchCurrentBcFirePoints({ ...options,
+      confirmEmpty: usableBcSnapshot(previousSnapshot, nowMs) && previousSnapshot.fireDetections.length > 0 });
     return {
       ...data,
       _bcState: 'ok',

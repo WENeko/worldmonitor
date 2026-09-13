@@ -67,7 +67,8 @@ import {
   INTERNAL_MCP_REPLAY_CACHE_TTL_SECONDS,
   getInternalMcpVerifiedNonce,
   sha256Hex,
-  verifyInternalMcpRequest,
+  verifyInternalMcpRequestDetailed,
+  type InternalMcpVerifyFailure,
 } from './_shared/mcp-internal-hmac';
 import { buildUsageIdentity, hashKeySync, type UsageIdentityInput } from './_shared/usage-identity';
 import { runRedisPipeline } from './_shared/redis';
@@ -144,6 +145,44 @@ export const serverOptions: ServerOptions = {
 const MAX_INTERNAL_MCP_BODY = 256 * 1024;
 
 type InternalMcpReplayClaim = 'fresh' | 'replay' | 'unavailable';
+
+/**
+ * The ONE response every internal-MCP signature rejection returns.
+ *
+ * Routed through a single constructor on purpose: the security property is
+ * that a caller cannot tell a stale timestamp from a forged signature from a
+ * spent nonce, and that property is only as strong as the guarantee that no
+ * branch builds its own subtly different reply. Add a new rejection mode and
+ * it returns this too — status, body and headers, identical.
+ */
+function internalMcpSignatureDenial(corsHeaders: Record<string, string>): Response {
+  return new Response(
+    JSON.stringify({ error: 'invalid_internal_mcp_signature' }),
+    { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
+  );
+}
+
+/**
+ * Server-side telemetry label for a verification failure. This is the half of
+ * the rejection that IS allowed to differ — it goes to wm_api_usage, never to
+ * the caller.
+ */
+function internalMcpReasonFor(failure: InternalMcpVerifyFailure): RequestReason {
+  switch (failure) {
+    // Cannot normally happen here: the handler returns 500 CONFIGURATION
+    // before reaching the verifier when the secret is absent. Mapped to the
+    // existing config reason so a deploy incident never lands in an auth
+    // dashboard.
+    case 'no_secret': return 'hmac_secret_unconfigured';
+    case 'no_user_id': return 'internal_mcp_no_user';
+    case 'missing_signature':
+    case 'malformed_signature': return 'internal_mcp_malformed_sig';
+    case 'invalid_nonce': return 'internal_mcp_bad_nonce';
+    case 'timestamp_window': return 'internal_mcp_ts_window';
+    case 'malformed_request': return 'internal_mcp_bad_request';
+    case 'signature_mismatch': return 'internal_mcp_sig_mismatch';
+  }
+}
 
 function getRateLimitTelemetryReason(
   response: Response,
@@ -1221,11 +1260,8 @@ export function createDomainGateway(
         try {
           bodyBytes = await request.clone().arrayBuffer();
         } catch {
-          emitRequest(401, 'auth_401', null);
-          return new Response(
-            JSON.stringify({ error: 'invalid_internal_mcp_signature' }),
-            { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
-          );
+          emitRequest(401, 'internal_mcp_bad_request', null);
+          return internalMcpSignatureDenial(corsHeaders);
         }
         if (bodyBytes.byteLength > MAX_INTERNAL_MCP_BODY) {
           emitRequest(413, 'malformed_request', null);
@@ -1242,19 +1278,18 @@ export function createDomainGateway(
           body: bodyBytes,
         });
       }
-      // verifyInternalMcpRequest returns null when X-WM-MCP-User-Id is
-      // missing, signature header is malformed, timestamp is out of
-      // window, or the HMAC compare fails. All collapse to a single 401 —
-      // intentionally do NOT distinguish (don't leak which piece failed
-      // to a forge probe).
-      const verified = await verifyInternalMcpRequest(request, hmacSecret);
-      if (!verified) {
-        emitRequest(401, 'auth_401', null);
-        return new Response(
-          JSON.stringify({ error: 'invalid_internal_mcp_signature' }),
-          { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
-        );
+      // X-WM-MCP-User-Id missing, malformed signature header, timestamp out of
+      // window, and a failed HMAC compare all collapse to ONE 401 — telling a
+      // forge probe which piece failed is exactly the oracle this must not be.
+      // That stays true below: every branch returns the identical response
+      // built in one place. Only the emitted telemetry reason differs, and it
+      // never leaves the server.
+      const verifyResult = await verifyInternalMcpRequestDetailed(request, hmacSecret);
+      if (!verifyResult.ok) {
+        emitRequest(401, internalMcpReasonFor(verifyResult.failure), null);
+        return internalMcpSignatureDenial(corsHeaders);
       }
+      const verified = verifyResult.verified;
       const replayClaim = await claimInternalMcpReplayNonce(verified.userId, verified.nonce);
       if (replayClaim === 'unavailable') {
         // Fail closed: without an atomic replay-cache claim, a valid captured
@@ -1266,11 +1301,10 @@ export function createDomainGateway(
         );
       }
       if (replayClaim === 'replay') {
-        emitRequest(401, 'auth_401', null);
-        return new Response(
-          JSON.stringify({ error: 'invalid_internal_mcp_signature' }),
-          { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
-        );
+        // Same response as a bad signature, by design — a probe must not learn
+        // that its nonce was the thing that was already spent.
+        emitRequest(401, 'internal_mcp_replay', null);
+        return internalMcpSignatureDenial(corsHeaders);
       }
       // Entitlement re-check at the gateway: the MCP edge already verifies
       // tier ≥ 1 + mcpAccess + validUntil before signing the outbound

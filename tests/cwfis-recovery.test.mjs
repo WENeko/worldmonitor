@@ -270,7 +270,8 @@ async function seedProcess(initial, now, mode, activeFixture, bcFixture) {
         if (url.pathname.includes('/kml/')) return new Response('<kml/>');
         calls.bc = (calls.bc || 0) + 1;
         if (mode === 'bc-fail' || mode === 'bc-read-fail') return new Response('<ows:ExceptionReport/>', { status: 400 });
-        if (mode !== 'bc-empty') return Response.json(bcFixture);
+        if (mode === 'bc-empty-fail' && calls.bc > 1) return new Response('', { status: 400 });
+        if (mode !== 'bc-empty' && !(mode.startsWith('bc-empty-') && calls.bc === 1)) return Response.json(bcFixture);
       }
       return mode.startsWith('all-sources-fail') ? new Response('', { status: 403 })
         : Response.json({ type: 'FeatureCollection', features: [], numberMatched: 0, numberReturned: 0 });
@@ -292,10 +293,10 @@ async function seedProcess(initial, now, mode, activeFixture, bcFixture) {
   await import(new URL('../scripts/seed-fire-detections.mjs', process.env.TEST_MODULE_URL));
 }
 
-test('BC HTTP 400 keeps source records and clocks through the real seeder and RPC reader', () => {
+test('BC failures and unconfirmed empty results keep source coverage through the real seeder and RPC reader', () => {
   let previous = [];
   let goodSnapshot;
-  for (const [minute, mode] of [[0, 'bc-ok'], [10, 'bc-fail'], [20, 'bc-fail'], [120, 'bc-fail'], [130, 'bc-ok'], [135, 'bc-read-fail'], [140, 'bc-write-fail'], [145, 'bc-meta-fail'], [150, 'bc-empty'], [160, 'bc-fail']]) {
+  for (const [minute, mode] of [[0, 'bc-ok'], [10, 'bc-fail'], [20, 'bc-fail'], [30, 'bc-empty-fail'], [40, 'bc-empty-fail'], [120, 'bc-fail'], [130, 'bc-ok'], [135, 'bc-read-fail'], [140, 'bc-write-fail'], [145, 'bc-meta-fail'], [150, 'bc-empty-recovered'], [160, 'bc-empty'], [170, 'bc-fail']]) {
     const now = NOW + minute * MIN;
     const captured = runSeedFixture(previous, now, mode);
     const persistenceFailed = ['bc-read-fail', 'bc-write-fail', 'bc-meta-fail'].includes(mode);
@@ -313,13 +314,18 @@ test('BC HTTP 400 keeps source records and clocks through the real seeder and RP
     assert.equal(sourceMeta.fetchedAt, snapshot.fetchedAt);
     assert.equal(sourceMeta.lastAttemptAt, now);
     assert.equal(sourceMeta.errorCode, snapshot.errorCode);
-    if (mode === 'bc-ok' || mode === 'bc-empty') goodSnapshot = snapshot;
+    assert.equal(sourceMeta.recordCount, snapshot.fireDetections.length);
+    assert.equal(sourceMeta.sourceState, snapshot.errorCode ? 'degraded' : 'ok');
+    if (mode === 'bc-ok' || mode === 'bc-empty' || mode === 'bc-empty-recovered') goodSnapshot = snapshot;
+    const sourceFailed = mode === 'bc-fail' || mode === 'bc-empty-fail';
     const expired = minute === 120;
+    assert.equal(snapshot.fireDetections.length, expired || minute >= 160 ? 0 : 4);
     assert.equal(snapshot.fetchedAt, expired ? null : goodSnapshot.fetchedAt);
     assert.equal(snapshot.lastAttemptAt, now);
     assert.deepEqual(snapshot.fireDetections, expired ? [] : goodSnapshot.fireDetections);
-    assert.equal(captured.calls.bc, 1, captured.output);
+    assert.equal(captured.calls.bc, mode.startsWith('bc-empty') ? 2 : 1, captured.output);
     assert.equal(captured.calls.firms, 27);
+    assert.equal(JSON.parse(store.get('wildfire:cwfis-source:v1')).fetchedAt, now);
     for (const key of ['wildfire:fires:v1', 'wildfire:fires-bootstrap:v1']) {
       const payload = JSON.parse(store.get(key)).data;
       assert.equal('_bcSnapshot' in payload, false);
@@ -330,8 +336,8 @@ test('BC HTTP 400 keeps source records and clocks through the real seeder and RP
     const metaKey = health.SEED_META.wildfires.key;
     const meta = JSON.parse(store.get(metaKey));
     assert.equal(meta.fetchedAt, now + 3 * MIN);
-    assert.equal(meta.sourceState, mode === 'bc-fail' ? 'degraded' : 'ok');
-    if (mode === 'bc-fail') assert.equal(meta.errorCode, 'BC_WILDFIRE_SOURCE_FAILED');
+    assert.equal(meta.sourceState, sourceFailed ? 'degraded' : 'ok');
+    if (sourceFailed) assert.equal(meta.errorCode, 'BC_WILDFIRE_SOURCE_FAILED');
     const expectedPublic = JSON.parse(store.get('wildfire:fires-bootstrap:v1')).data.fireDetections;
     assert.deepEqual(captured.reader.fireDetections, expectedPublic);
     assert.ok(captured.reader.fireDetections.some(row => row.source === 'firms' && row.detectedAt === now - MIN));
@@ -346,7 +352,7 @@ test('BC HTTP 400 keeps source records and clocks through the real seeder and RP
       keyErrors: new Map(), keyMetaErrors: new Map(), keyMetaValues: new Map([[metaKey, store.get(metaKey)]]),
       now: now + 3 * MIN,
     });
-    assert.equal(entry.status, mode === 'bc-fail' ? 'SEED_ERROR' : 'OK');
+    assert.equal(entry.status, sourceFailed ? 'SEED_ERROR' : 'OK');
     assert.equal(entry.sourceFailurePendingUntil, undefined);
     previous = captured.store;
   }

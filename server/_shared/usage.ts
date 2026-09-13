@@ -91,6 +91,19 @@ export type RequestReason =
   // deploy/config incident out of caller-auth dashboards. Distinct from
   // auth_401, which still covers malformed or invalid signatures.
   | 'hmac_secret_unconfigured'
+  // Internal-MCP signature rejections, split out of auth_401 the same way
+  // replay_cache_unavailable and hmac_secret_unconfigured were. The caller
+  // still gets one indistinguishable 401 — only the telemetry separates
+  // these, because collapsed they describe a rare failure nobody can
+  // reproduce: clock skew, a real forgery, and a replayed nonce all looked
+  // identical. Split, a week of rows names the cause.
+  | 'internal_mcp_no_user'
+  | 'internal_mcp_malformed_sig'
+  | 'internal_mcp_bad_nonce'
+  | 'internal_mcp_ts_window'
+  | 'internal_mcp_bad_request'
+  | 'internal_mcp_sig_mismatch'
+  | 'internal_mcp_replay'
   | 'unknown_route'
   | 'method_not_allowed'
   | 'cors_error'

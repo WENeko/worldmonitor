@@ -389,6 +389,32 @@ function parseSignatureHeader(value: string | null): { ts: number; sigB64u: stri
 }
 
 /**
+ * Why a verification attempt was rejected.
+ *
+ * The caller-facing 401 deliberately does NOT distinguish these — telling a
+ * forge probe which piece failed is exactly the oracle this path must not be.
+ * But collapsing them at the point of failure also left us unable to diagnose
+ * a real one: a rare internal-MCP 401 across three routes was indistinguishable
+ * between clock skew, a genuine signature mismatch, and a replayed nonce, so
+ * there was nothing to reproduce from. This type carries the distinction to
+ * SERVER-SIDE TELEMETRY ONLY. It must never reach a response body, a header,
+ * or a status code.
+ */
+export type InternalMcpVerifyFailure =
+  | 'no_secret'
+  | 'no_user_id'
+  | 'missing_signature'
+  | 'malformed_signature'
+  | 'invalid_nonce'
+  | 'timestamp_window'
+  | 'malformed_request'
+  | 'signature_mismatch';
+
+export type InternalMcpVerifyResult =
+  | { ok: true; verified: VerifiedInternalMcpRequest }
+  | { ok: false; failure: InternalMcpVerifyFailure };
+
+/**
  * Verify an inbound internal-MCP request signed by U7's sign helpers.
  *
  * Reads `X-WM-MCP-Internal` (`<ts>.<base64url-sig>`), `X-WM-MCP-User-Id`,
@@ -406,6 +432,10 @@ function parseSignatureHeader(value: string | null): { ts: number; sigB64u: stri
  * mismatch). The gateway treats null as 401 `invalid_internal_mcp_signature`
  * and MUST NOT fall through to other auth paths.
  *
+ * This is a thin wrapper over `verifyInternalMcpRequestDetailed`, which names
+ * the failing check for telemetry. Use that one only to label a server-side
+ * metric; the distinction must never reach the caller.
+ *
  * @param req     The inbound `Request` (edge runtime).
  * @param secret  `MCP_INTERNAL_HMAC_SECRET`. Caller provides explicitly so
  *                tests can inject without env mutation.
@@ -417,25 +447,47 @@ export async function verifyInternalMcpRequest(
   secret: string,
   now?: number,
 ): Promise<VerifiedInternalMcpRequest | null> {
-  if (!secret) return null;
+  const result = await verifyInternalMcpRequestDetailed(req, secret, now);
+  return result.ok ? result.verified : null;
+}
+
+/**
+ * Identical checks, in identical order, to the wrapper above — the only
+ * difference is that a rejection names which check failed. Keeping the order
+ * fixed keeps the two indistinguishable in timing.
+ */
+export async function verifyInternalMcpRequestDetailed(
+  req: Request,
+  secret: string,
+  now?: number,
+): Promise<InternalMcpVerifyResult> {
+  if (!secret) return { ok: false, failure: 'no_secret' };
 
   const sigHeader = req.headers.get(INTERNAL_MCP_SIG_HEADER);
   const userId = req.headers.get(INTERNAL_MCP_USER_ID_HEADER);
   const nonce = req.headers.get(INTERNAL_MCP_NONCE_HEADER);
-  if (!sigHeader || !userId || !nonce || !isValidInternalMcpNonce(nonce)) return null;
+  if (!userId) return { ok: false, failure: 'no_user_id' };
+  if (!sigHeader) {
+    return { ok: false, failure: 'missing_signature' };
+  }
+  if (!nonce || !isValidInternalMcpNonce(nonce)) {
+    return { ok: false, failure: 'invalid_nonce' };
+  }
 
   const parsed = parseSignatureHeader(sigHeader);
-  if (!parsed) return null;
+  if (!parsed) return { ok: false, failure: 'malformed_signature' };
   const { ts, sigB64u } = parsed;
 
   const nowSec = Math.floor(now ?? Date.now() / 1000);
-  if (Math.abs(nowSec - ts) > INTERNAL_MCP_TIMESTAMP_WINDOW_SECONDS) return null;
+  if (Math.abs(nowSec - ts) > INTERNAL_MCP_TIMESTAMP_WINDOW_SECONDS) {
+    return { ok: false, failure: 'timestamp_window' };
+  }
 
   let url: URL;
   try {
     url = new URL(req.url);
   } catch {
-    return null;
+    return { ok: false, failure: 'malformed_request' };
   }
 
   // Vercel's filesystem router serves every gateway domain through a dynamic
@@ -467,7 +519,7 @@ export async function verifyInternalMcpRequest(
     const buf = await req.clone().arrayBuffer();
     bodyBytes = new Uint8Array(buf);
   } catch {
-    return null;
+    return { ok: false, failure: 'malformed_request' };
   }
   // sha256Hex takes a string; coerce raw bytes via TextDecoder. Empty body →
   // empty string → SHA-256(""), matching the signer's `coerceBodyToString`.
@@ -488,6 +540,6 @@ export async function verifyInternalMcpRequest(
   const expectedSig = await hmacSha256Base64Url(secret, expectedPayload);
 
   const ok = await timingSafeStringEqual(expectedSig, sigB64u);
-  if (!ok) return null;
-  return { userId, nonce };
+  if (!ok) return { ok: false, failure: 'signature_mismatch' };
+  return { ok: true, verified: { userId, nonce } };
 }

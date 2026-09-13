@@ -593,7 +593,9 @@ Wildfire ingestion retries a transient CWFIS request once, unless the provider's
 
 The first two consecutive exhausted transient CWFIS failures are pending for at most three hours, bounded by the source's three-hour retention limit. The third failed run warns. Missing, malformed, expired, or permanently failed coverage earns no pending period. Recovery state must persist before either public wildfire payload changes. Internal snapshot rows are excluded from both public payloads. The ten-minute cron, six-hour stale threshold, and existing FIRMS partial-coverage policy are unchanged.
 
-BC fire points use the internal `wildfire:bc-source:v1` snapshot to preserve validated source rows and their original success time after a failed request. A failed refresh can reuse source data younger than the existing two-hour wildfire cache lifetime at the source attempt. Repeated failures do not renew that source clock. The resulting aggregate keeps its existing two-hour publication TTL. Missing, malformed, future, or expired source snapshots supply no retained BC rows. A complete valid empty response clears prior BC records. A nonempty WFS page with invalid fire points fails validation.
+BC fire points use the internal `wildfire:bc-source:v1` snapshot to preserve validated source rows and their original success time after a failed request. A failed refresh can reuse source data younger than the existing two-hour wildfire cache lifetime at the source attempt. Repeated failures do not renew that source clock. The resulting aggregate keeps its existing two-hour publication TTL. Missing, malformed, future, or expired source snapshots supply no retained BC rows. A nonempty WFS page with invalid fire points fails validation.
+
+When a usable populated BC snapshot exists, an empty WFS result requires one uncached confirmation read before it can clear prior records. Confirmation and any following pages share the existing eight-request WFS budget and 30-second per-request timeout. A second complete empty result clears prior records; complete nonempty confirmation replaces them. Failed, malformed, or incomplete confirmation uses the same finite retention and failure metadata as a failed request. Without usable populated source data, complete empty results do not require confirmation. The `bc_fire_empty_confirmation` log event records the confirmation stage, page offset, and matched/returned counts without response prose.
 
 BC failures remain visible as `BC_WILDFIRE_SOURCE_FAILED` while healthy companion sources can publish. HTTP 400 is not retried and receives no pending allowance. The source snapshot persists before the public payload changes and is excluded from public payloads. Aggregate success and aggregate `fetchedAt` do not establish BC source success.
 
@@ -637,6 +639,35 @@ node scripts/check-seed-freshness.mjs \
 
 The command still exits nonzero when operational acceptance fails. It writes
 both reports from the same health observation before returning that verdict.
+
+### MCP preset liveness
+
+The **MCP Preset Liveness** workflow checks the Quick Connect catalog every
+Monday at 06:23 UTC and supports manual runs. It runs
+`LIVE_MCP_TESTS=1 node --test tests/mcp-presets.test.mjs`, deriving each endpoint
+and its authentication expectation from `MCP_PRESETS` in `src/services/mcp-store.ts`.
+Reserved example-domain templates, including the self-hosted PostgreSQL preset,
+are excluded. No vendor credentials are used.
+
+Open presets require HTTP 200. Keyed presets also accept HTTP 401 or 403,
+preserving the existing live suite's reachability contract. Redirects, other
+HTTP statuses, DNS errors and timeouts are findings. Probes do not follow
+redirects, stop after 15 seconds, and run at most four at once. This proves HTTP
+reachability only; it does not prove authenticated tool execution.
+
+Findings create or update one open issue titled **MCP preset liveness: endpoint
+findings**, with preset names, catalog URLs, observed results and a workflow-run
+link. Maintainers should recheck the finding, repair or remove the catalog entry,
+and close the issue after confirming recovery. Healthy runs create no issue and
+do not close an existing incident. The workflow summary reports the latest
+finding count. A successful run can therefore still have endpoint findings.
+
+This weekly workflow is separate from PR and deployment gates. Vendor failures
+are reported as issues; missing or incomplete probe reports and publishing
+failures fail the monitor itself. To inspect the same observation locally without
+publishing an issue, set `MCP_PRESET_REPORT=/tmp/mcp-presets.json` when running the
+live suite. After this workflow is merged, validate its first manual or scheduled
+run within one week; confirm the probe count, summary, and any incident issue.
 
 ### Example Requests
 

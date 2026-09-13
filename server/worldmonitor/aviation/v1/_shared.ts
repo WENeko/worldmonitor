@@ -58,7 +58,6 @@ export async function requireLiveAviationAccess(request: Request): Promise<void>
 // ---------- Constants ----------
 
 export const FAA_URL = 'https://nasstatus.faa.gov/api/airport-status-information';
-export const AVIATIONSTACK_URL = 'https://api.aviationstack.com/v1/flights';
 export const ICAO_NOTAM_URL = 'https://dataservices.icao.int/api/notams-realtime-list';
 export const DEFAULT_WATCHED_AIRPORTS = ['IST', 'ESB', 'SAW', 'LHR', 'FRA', 'CDG'];
 
@@ -73,9 +72,6 @@ export const IATA_RE = /^[A-Z]{3}$/;
 // spend — 26 codes meant 26 paid calls from one anonymous request. Sized to
 // DEFAULT_WATCHED_AIRPORTS so the full watched set still resolves in one call.
 export const MAX_AIRPORTS_PER_REQUEST = DEFAULT_WATCHED_AIRPORTS.length;
-const BATCH_CONCURRENCY = 10;
-const MIN_FLIGHTS_FOR_CLOSURE = 10;
-const RESOLVED_STATUSES = new Set(['cancelled', 'landed', 'active', 'arrived', 'diverted']);
 const NOTAM_CLOSURE_QCODES = new Set(['FA', 'AH', 'AL', 'AW', 'AC', 'AM']);
 const NOTAM_RESTRICTION_QCODES = new Set(['RA', 'RO']);
 
@@ -254,162 +250,6 @@ export function determineSeverity(avgDelayMinutes: number, delayedPct?: number):
   if (avgDelayMinutes >= t.moderate.avgDelayMinutes || (delayedPct && delayedPct >= t.moderate.delayedPct)) return 'moderate';
   if (avgDelayMinutes >= t.minor.avgDelayMinutes || (delayedPct && delayedPct >= t.minor.delayedPct)) return 'minor';
   return 'normal';
-}
-
-// ---------- AviationStack integration ----------
-
-interface AviationStackFlight {
-  flight_status?: string;
-  flight_date?: string;
-  departure?: { delay?: number };
-}
-
-export interface AviationStackResult {
-  alerts: AirportDelayAlert[];
-  healthy: boolean;
-}
-
-export async function fetchAviationStackDelays(
-  allAirports: MonitoredAirport[]
-): Promise<AviationStackResult> {
-  const apiKey = process.env.AVIATIONSTACK_API;
-  if (!apiKey) {
-    console.warn('[Aviation] No AVIATIONSTACK_API key — skipping');
-    return { alerts: [], healthy: false };
-  }
-
-  const alerts: AirportDelayAlert[] = [];
-  let succeeded = 0, failed = 0;
-  const deadline = Date.now() + 50_000;
-
-  for (let i = 0; i < allAirports.length; i += BATCH_CONCURRENCY) {
-    if (Date.now() >= deadline) {
-      console.warn(`[Aviation] Deadline hit after ${succeeded + failed}/${allAirports.length} airports`);
-      break;
-    }
-    const chunk = allAirports.slice(i, i + BATCH_CONCURRENCY);
-    const results = await Promise.allSettled(
-      chunk.map(airport => fetchSingleAirport(apiKey, airport))
-    );
-    for (const r of results) {
-      if (r.status === 'fulfilled') {
-        if (r.value.ok) { succeeded++; if (r.value.alert) alerts.push(r.value.alert); }
-        else failed++;
-      } else {
-        failed++;
-      }
-    }
-  }
-
-  const healthy = allAirports.length < 5 || failed <= succeeded;
-  console.warn(`[Aviation] Done: ${succeeded} ok, ${failed} failed, ${alerts.length} alerts, healthy=${healthy}`);
-  if (!healthy) {
-    console.warn(`[Aviation] Systemic failure: ${failed}/${failed + succeeded} airports failed`);
-  }
-  return { alerts, healthy };
-}
-
-interface FetchResult { ok: boolean; alert: AirportDelayAlert | null; }
-
-async function fetchSingleAirport(
-  apiKey: string, airport: MonitoredAirport
-): Promise<FetchResult> {
-  try {
-    const today = new Date().toISOString().slice(0, 10);
-    const params = new URLSearchParams({
-      access_key: apiKey,
-      dep_iata: airport.iata,
-      flight_date: today,
-      limit: '100',
-    });
-    const url = `${AVIATIONSTACK_URL}?${params}`;
-    const resp = await fetch(url, {
-      headers: { 'User-Agent': CHROME_UA },
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!resp.ok) {
-      if (resp.status === 401 || resp.status === 403) incrementProviderCounter('aviationStackAuthRejection');
-      else incrementProviderCounter('aviationStackTerminalFailure');
-      console.warn(`[Aviation] ${airport.iata}: HTTP ${resp.status}`);
-      return { ok: false, alert: null };
-    }
-    const json = await resp.json() as { data?: AviationStackFlight[]; error?: { message?: string } };
-    if (json.error) {
-      incrementProviderCounter('aviationStackTerminalFailure');
-      console.warn(`[Aviation] ${airport.iata}: API error: ${json.error.message}`);
-      return { ok: false, alert: null };
-    }
-    const flights = json?.data ?? [];
-    incrementProviderCounter('aviationStackSuccess');
-    const alert = aggregateFlights(airport, flights);
-    return { ok: true, alert };
-  } catch (err) {
-    const isTimeout = err instanceof Error && (err.name === 'TimeoutError' || err.message.includes('timed out'));
-    if (isTimeout) incrementProviderCounter('aviationStackTimeout');
-    else incrementProviderCounter('aviationStackTerminalFailure');
-    console.warn(`[Aviation] ${airport.iata}: fetch error: ${err instanceof Error ? err.message : 'unknown'}`);
-    return { ok: false, alert: null };
-  }
-}
-
-function aggregateFlights(
-  airport: MonitoredAirport, flights: AviationStackFlight[]
-): AirportDelayAlert | null {
-  if (flights.length === 0) return null;
-
-  let delayed = 0, cancelled = 0, totalDelay = 0, resolved = 0;
-  for (const f of flights) {
-    if (RESOLVED_STATUSES.has(f.flight_status ?? '')) resolved++;
-    if (f.flight_status === 'cancelled') cancelled++;
-    if (f.departure?.delay && f.departure.delay > 0) {
-      delayed++;
-      totalDelay += f.departure.delay;
-    }
-  }
-
-  const total = resolved >= MIN_FLIGHTS_FOR_CLOSURE ? resolved : flights.length;
-  const cancelledPct = (cancelled / total) * 100;
-  const delayedPct = (delayed / total) * 100;
-  const avgDelay = delayed > 0 ? Math.round(totalDelay / delayed) : 0;
-
-  let severity: string, delayType: string, reason: string;
-  if (cancelledPct >= 80 && total >= MIN_FLIGHTS_FOR_CLOSURE) {
-    severity = 'severe'; delayType = 'closure';
-    reason = 'Airport closure / airspace restrictions';
-  } else if (cancelledPct >= 50 && total >= MIN_FLIGHTS_FOR_CLOSURE) {
-    severity = 'major'; delayType = 'ground_stop';
-    reason = `${Math.round(cancelledPct)}% flights cancelled`;
-  } else if (cancelledPct >= 20 && total >= MIN_FLIGHTS_FOR_CLOSURE) {
-    severity = 'moderate'; delayType = 'ground_delay';
-    reason = `${Math.round(cancelledPct)}% flights cancelled`;
-  } else if (cancelledPct >= 10 && total >= MIN_FLIGHTS_FOR_CLOSURE) {
-    severity = 'minor'; delayType = 'general';
-    reason = `${Math.round(cancelledPct)}% flights cancelled`;
-  } else if (avgDelay > 0) {
-    severity = determineSeverity(avgDelay, delayedPct);
-    delayType = avgDelay >= 60 ? 'ground_delay' : 'general';
-    reason = `Avg ${avgDelay}min delay, ${Math.round(delayedPct)}% delayed`;
-  } else {
-    return null;
-  }
-  if (severity === 'normal') return null;
-
-  return {
-    id: `avstack-${airport.iata}`,
-    iata: airport.iata, icao: airport.icao,
-    name: airport.name, city: airport.city, country: airport.country,
-    location: { latitude: airport.lat, longitude: airport.lon },
-    region: toProtoRegion(airport.region),
-    delayType: toProtoDelayType(delayType),
-    severity: toProtoSeverity(severity),
-    avgDelayMinutes: avgDelay,
-    delayedFlightsPct: Math.round(delayedPct),
-    cancelledFlights: cancelled,
-    totalFlights: total,
-    reason,
-    source: toProtoSource('aviationstack'),
-    updatedAt: Date.now(),
-  };
 }
 
 // ---------- NOTAM closure detection (ICAO API) ----------

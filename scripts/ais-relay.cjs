@@ -13619,6 +13619,8 @@ function handleWidgetAgentHealthRequest(req, res) {
   return safeEnd(res, 200, { 'Content-Type': 'application/json' }, JSON.stringify(status));
 }
 
+const WIDGET_MAX_TOOL_CALLS = 3;
+
 async function handleWidgetAgentRequest(req, res) {
   const status = requireWidgetAgentAccess(req, res);
   if (!status) return;
@@ -13710,6 +13712,7 @@ async function handleWidgetAgentRequest(req, res) {
   // Error (log-failed)" — defeating the entire diagnostic value of this
   // log line. `completed` doesn't need hoisting (not read in catch).
   let toolCallCount = 0;
+  let toolExecutionCount = 0;
 
   try {
     const { default: Anthropic } = await import('@anthropic-ai/sdk');
@@ -13730,13 +13733,16 @@ async function handleWidgetAgentRequest(req, res) {
     messages.push({ role: 'user', content: String(prompt).slice(0, 2000) });
 
     let completed = false;
+    const recoveryCandidates = [];
+    let incompleteMessage = `Widget generation incomplete: tool loop exhausted (${maxTurns} turns)`;
+    let finalizing = false;
+    let truncatedResponses = 0;
     for (let turn = 0; turn < maxTurns; turn++) {
       if (cancelled) break;
 
-      // Option D: on penultimate turn, inject a final-turn directive so the model
-      // emits HTML with whatever data it has instead of making another tool call.
-      const isLastChance = turn === maxTurns - 2;
-      const turnMessages = isLastChance
+      // Finalization is irreversible, including after an incomplete response.
+      finalizing ||= toolCallCount >= WIDGET_MAX_TOOL_CALLS || turn >= maxTurns - 2;
+      const turnMessages = finalizing
         ? [...messages, { role: 'user', content: 'FINAL TURN: You have used all available tool calls. You MUST emit the completed widget HTML now using the data you already have. No more tool calls — output <!-- widget-html --> immediately.' }]
         : messages;
 
@@ -13744,47 +13750,81 @@ async function handleWidgetAgentRequest(req, res) {
         model,
         max_tokens: maxTokens,
         system: systemPrompt,
-        tools: isLastChance ? [] : [WIDGET_FETCH_TOOL, WIDGET_SEARCH_TOOL],
+        // Keep schemas for tool blocks in history while prohibiting new calls.
+        tools: [WIDGET_FETCH_TOOL, WIDGET_SEARCH_TOOL],
+        tool_choice: { type: finalizing ? 'none' : 'auto' },
         messages: turnMessages,
       });
+      if (cancelled) break;
 
-      if (response.stop_reason === 'end_turn') {
+      const hasToolRequests = response.content.some(b => b.type === 'tool_use');
+      if (response.stop_reason === 'end_turn' && !hasToolRequests) {
         const textBlock = response.content.find(b => b.type === 'text');
         const text = textBlock?.text ?? '';
-        const { html, title } = parseWidgetAgentResponse(text, maxHtml);
+        const { html, title, isComplete } = parseWidgetAgentResponse(text, maxHtml);
+        if (!isComplete) {
+          incompleteMessage = 'Widget generation incomplete: expected nonempty HTML inside complete widget-html markers.';
+          break;
+        }
         sendWidgetSSE(res, 'html_complete', { html });
         sendWidgetSSE(res, 'done', { title });
         completed = true;
         break;
       }
 
-      if (response.stop_reason === 'tool_use') {
+      if (hasToolRequests) {
         const toolResults = [];
         for (const block of response.content) {
           if (block.type !== 'tool_use') continue;
+          if (cancelled) break;
+
+          // Count attempts, including invalid/failed/unknown requests. Rejection
+          // never refunds the shared budget, and every block gets a result.
+          toolCallCount++;
+          const rejectTool = content => toolResults.push({ type: 'tool_result', tool_use_id: block.id, is_error: true, content });
+          if (toolCallCount > WIDGET_MAX_TOOL_CALLS) {
+            rejectTool('Tool call budget exhausted. Generate the widget using existing data.');
+            continue;
+          }
+          if (finalizing || response.stop_reason !== 'tool_use') {
+            rejectTool('Tools disabled during finalization or an incomplete response. Generate the complete widget using existing data.');
+            continue;
+          }
+          if (!block.input || typeof block.input !== 'object' || Array.isArray(block.input)) {
+            rejectTool('Invalid tool input.');
+            continue;
+          }
 
           if (block.name === 'search_web') {
             const { query = '' } = block.input;
+            if (typeof query !== 'string') {
+              rejectTool('Invalid search query.');
+              continue;
+            }
             sendWidgetSSE(res, 'tool_call', { endpoint: `search:${String(query).slice(0, 80)}` });
             try {
+              toolExecutionCount++;
               const searchResult = await performWidgetWebSearch(String(query));
               if (searchResult) {
                 toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: sanitizeToolContent(JSON.stringify(searchResult.results)) });
               } else {
-                toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: 'No search results available. No search provider configured.' });
+                rejectTool('No search results available. No search provider configured.');
               }
             } catch (err) {
-              toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: `Search failed: ${err.message}` });
+              rejectTool(`Search failed: ${err.message}`);
             }
             continue;
           }
 
-          if (block.name !== 'fetch_worldmonitor_data') continue;
+          if (block.name !== 'fetch_worldmonitor_data') {
+            rejectTool('Unknown tool.');
+            continue;
+          }
           const { endpoint, params = {} } = block.input;
           sendWidgetSSE(res, 'tool_call', { endpoint });
 
-          if (!isWidgetEndpointAllowed(endpoint)) {
-            toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: 'Endpoint not allowed.' });
+          if (typeof endpoint !== 'string' || !isWidgetEndpointAllowed(endpoint)) {
+            rejectTool('Endpoint not allowed.');
             continue;
           }
 
@@ -13793,6 +13833,7 @@ async function handleWidgetAgentRequest(req, res) {
             for (const [k, v] of Object.entries(params)) {
               url.searchParams.set(k, String(v));
             }
+            toolExecutionCount++;
             const dataRes = await fetch(url.toString(), {
               headers: { 'User-Agent': 'WorldMonitor-WidgetAgent/1.0' },
               signal: AbortSignal.timeout(15_000),
@@ -13800,30 +13841,51 @@ async function handleWidgetAgentRequest(req, res) {
             const data = await dataRes.text();
             const trimmed = data.trimStart();
             if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')) {
-              toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: 'Error: endpoint returned HTML instead of JSON. No data available.' });
+              rejectTool('Error: endpoint returned HTML instead of JSON. No data available.');
             } else {
               toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: sanitizeToolContent(data) });
             }
           } catch (err) {
-            toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: `Fetch failed: ${err.message}` });
+            rejectTool(`Fetch failed: ${err.message}`);
           }
         }
         messages.push({ role: 'assistant', content: response.content });
         messages.push({ role: 'user', content: toolResults });
-        toolCallCount++;
+        if (response.stop_reason === 'tool_use') recoveryCandidates.push(response.content);
+      } else {
+        messages.push({ role: 'assistant', content: response.content });
+      }
+      if (cancelled) break;
+
+      // The installed SDK also exposes pause_turn, refusal and stop_sequence.
+      // Keep partial content in history, but never promote it to success.
+      switch (response.stop_reason) {
+        case 'tool_use':
+          if (!hasToolRequests) throw new Error('Widget generation incomplete: tool stop without tool requests');
+          break;
+        case 'max_tokens':
+          finalizing = true;
+          if (++truncatedResponses > 1) throw new Error('Widget generation incomplete: response truncated twice at the token limit');
+          messages.push({ role: 'user', content: 'The previous response was truncated. Generate the entire completed widget again, more concisely, using existing data. Do not continue the partial HTML.' });
+          break;
+        case 'pause_turn':
+          finalizing = true;
+          break;
+        case 'refusal':
+          throw new Error('Widget generation refused by the AI backend');
+        case 'stop_sequence':
+          throw new Error('Widget generation incomplete: unexpected stop sequence');
+        default:
+          throw new Error('Widget generation incomplete: unexpected stop reason');
       }
     }
     if (!completed && !cancelled) {
-      // Partial recovery: scan all assistant messages for any widget-html markers
-      // emitted mid-loop (e.g. model tried to output but was truncated).
+      // Recover the newest complete tool-turn output from this request only.
       let recovered = false;
-      for (const msg of messages) {
-        if (msg.role !== 'assistant') continue;
-        const text = Array.isArray(msg.content)
-          ? msg.content.filter(b => b.type === 'text').map(b => b.text).join('')
-          : String(msg.content ?? '');
+      for (let i = recoveryCandidates.length - 1; i >= 0; i--) {
+        const text = recoveryCandidates[i].filter(b => b.type === 'text').map(b => b.text).join('');
         const parsed = parseWidgetAgentResponse(text, maxHtml);
-        if (parsed.hasHtmlMarkers && parsed.html.trim()) {
+        if (parsed.isComplete) {
           sendWidgetSSE(res, 'html_complete', { html: parsed.html });
           sendWidgetSSE(res, 'done', { title: parsed.title });
           recovered = true;
@@ -13831,7 +13893,7 @@ async function handleWidgetAgentRequest(req, res) {
         }
       }
       if (!recovered) {
-        sendWidgetSSE(res, 'error', { message: `Widget generation incomplete: tool loop exhausted (${maxTurns} turns)` });
+        sendWidgetSSE(res, 'error', { message: incompleteMessage });
       }
     }
   } catch (err) {
@@ -13843,24 +13905,22 @@ async function handleWidgetAgentRequest(req, res) {
     if (!cancelled) {
       sendWidgetSSE(res, 'error', { message: classifyWidgetAgentError(err, model) });
     }
-    // Verbose structured log so Railway operators can diagnose without
-    // server-side reproduction. Includes status + type + request shape;
-    // omits headers/body to avoid leaking the prompt or auth headers.
+    // Log metadata only: SDK error messages and stacks can contain request
+    // or response bodies, including prompts and credentials.
     try {
       console.error('[widget-agent] Error:', JSON.stringify({
-        message: err && err.message ? String(err.message).slice(0, 500) : String(err).slice(0, 500),
         status: err && typeof err.status === 'number' ? err.status : null,
         type: (err && err.error && err.error.type) || (err && err.type) || null,
         name: err && err.name ? String(err.name) : null,
         isPro,
         model,
         toolCallCount,
+        toolExecutionCount,
         promptLen: typeof prompt === 'string' ? prompt.length : 0,
         historyLen: Array.isArray(conversationHistory) ? conversationHistory.length : 0,
       }));
-      if (err && err.stack) console.error('[widget-agent] Stack:', err.stack);
     } catch (logErr) {
-      console.error('[widget-agent] Error (log-failed):', err && err.message);
+      console.error('[widget-agent] Error (log-failed)');
     }
   } finally {
     clearTimeout(timeout);

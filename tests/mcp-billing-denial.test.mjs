@@ -229,3 +229,42 @@ describe('assertToolFetchOk RPC validation 400s', () => {
     );
   });
 });
+
+describe('internal signature failure classification', () => {
+  it('preserves confirmed signature failures across tools for fingerprinting', async () => {
+    const { mcpErrorFingerprint } = await import('../api/mcp/error-fingerprint.ts');
+    for (const operation of ['list-global-tenders', 'get-country-risk', 'deduct-situation']) {
+      await assert.rejects(
+        () => assertToolFetchOk(new Response(JSON.stringify({ error: 'invalid_internal_mcp_signature' }), {
+          status: 401, headers: { 'Content-Type': 'application/json' },
+        }), operation),
+        (error) => {
+          assert.deepEqual(mcpErrorFingerprint('tool-execution', operation, error), ['mcp-internal-auth-401']);
+          return true;
+        },
+      );
+    }
+  });
+
+  it('keeps entitlement, unknown, malformed and empty 401s out of the signature group', async () => {
+    const { mcpErrorFingerprint } = await import('../api/mcp/error-fingerprint.ts');
+    for (const body of [
+      JSON.stringify({ error: 'insufficient_entitlement' }),
+      JSON.stringify({ error: 'invalid_api_key' }),
+      JSON.stringify({ error: 'unknown' }),
+      JSON.stringify({ error: 'invalid_internal_mcp_signature_extra' }),
+      JSON.stringify({ code: 'insufficient_entitlement', error: 'invalid_internal_mcp_signature' }),
+      'null', '', '{broken',
+      JSON.stringify({ padding: 'x'.repeat(4096), error: 'invalid_internal_mcp_signature' }),
+    ]) {
+      await assert.rejects(
+        () => assertToolFetchOk(new Response(body, { status: 401 }), 'tool'),
+        (error) => {
+          assert.equal(error.message, 'tool HTTP 401');
+          assert.deepEqual(mcpErrorFingerprint('tool-execution', 'tool', error), ['mcp-tool-execution', 'tool', 'tool:401']);
+          return true;
+        },
+      );
+    }
+  });
+});

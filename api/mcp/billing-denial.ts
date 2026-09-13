@@ -190,6 +190,7 @@ export async function extractSafeRpcViolations(
  * preserveBackoff, 429/503 retain transport backoff through ToolBackoffError; everything
  * else keeps the existing `<label> HTTP <status>` Error contract.
  *
+ * HTTP 401 bodies preserve only confirmed internal-signature rejection codes.
  * HTTP 400 response bodies are consumed only to classify violations. Callers
  * must await this helper — a forgotten await would let execution continue
  * and treat the 400 as success.
@@ -201,6 +202,19 @@ export async function assertToolFetchOk(
 ): Promise<void> {
   if (response.ok) return;
   throwIfBillingDenial(response, label);
+  if (response.status === 401) {
+    const detail = await readBoundedResponseText(response, 4096);
+    let signatureRejected = false;
+    try {
+      const body = JSON.parse(detail) as { error?: unknown; code?: unknown } | null;
+      signatureRejected = (body?.code ?? body?.error) === 'invalid_internal_mcp_signature';
+    } catch {
+      // Unknown or malformed bodies retain the generic status-only error.
+    }
+    if (signatureRejected) {
+      throw new Error(`${label} HTTP 401: invalid_internal_mcp_signature`);
+    }
+  }
   if (preserveBackoff && (response.status === 429 || response.status === 503)) {
     throw new ToolBackoffError(response.status, response.headers?.get('Retry-After') ?? null, label);
   }
