@@ -1,5 +1,8 @@
 import { COUNTRY_ARG_HINT, echoCountryInput, requireCountryCode } from '../_country-args';
 import COUNTRY_BBOXES from '../../../shared/country-bboxes.js';
+import { countryBox, splitCountryBox } from '../../../shared/country-bbox';
+import type { ListMilitaryFlightsResponse } from '../../../src/generated/server/worldmonitor/military/v1/service_server';
+import type { TrackAircraftResponse } from '../../../src/generated/server/worldmonitor/aviation/v1/service_server';
 import { resolveCountryCode } from '../../../shared/country-code-resolve';
 import { countryMentionTerms, mentionsCountry } from '../../../shared/country-mention.js';
 import { isOpenSkyProvider } from '../../../shared/provider-redistribution';
@@ -2398,8 +2401,8 @@ export const RPC_TOOLS: ToolDef[] = [
   },
   {
     name: 'get_airspace',
-    // Two downstream fetches (civilian ADS-B + military aircraft providers).
-    _weight: 3,
+    // Up to four downstream fetches: two providers across two dateline halves.
+    _weight: 5,
     _outputBudgetBytes: 262144,
     description: 'Live ADS-B aircraft over a country. Returns Wingbits-backed civilian flights and identified military aircraft from redistributable providers, with callsigns, positions, altitudes, and headings. Answers questions like "how many planes are over the UAE right now?" or "are there military aircraft over Taiwan?"',
     inputSchema: {
@@ -2459,40 +2462,39 @@ export const RPC_TOOLS: ToolDef[] = [
       }
       const bbox = COUNTRY_BBOXES[code];
       if (!bbox) return { error: `No airspace coverage for ${code}: that country has no bounding box in the dataset.` };
+      const box = countryBox(code);
+      const queryBoxes = box ? splitCountryBox(box) : [];
+      if (!queryBoxes.length) return { error: `No airspace coverage for ${code}: its full-longitude extent cannot scope a country flight query.` };
       const [sw_lat, sw_lon, ne_lat, ne_lon] = bbox;
       const type = String(params.type ?? 'all');
       const UA = 'worldmonitor-mcp-edge/1.0';
-      const bboxQ = `sw_lat=${sw_lat}&sw_lon=${sw_lon}&ne_lat=${ne_lat}&ne_lon=${ne_lon}`;
+      const queries = queryBoxes.map(bounds =>
+        `sw_lat=${bounds.south}&sw_lon=${bounds.west}&ne_lat=${bounds.north}&ne_lon=${bounds.east}`);
 
-      type CivilianResp = {
-        positions?: { callsign: string; icao24: string; lat: number; lon: number; altitude_m: number; ground_speed_kts: number; track_deg: number; on_ground: boolean }[];
-        source?: string;
-        updated_at?: number;
-      };
-      type MilResp = {
-        flights?: { callsign: string; hex_code: string; aircraft_type: string; aircraft_model: string; operator: string; operator_country: string; location?: { latitude: number; longitude: number }; altitude: number; heading: number; speed: number; is_interesting: boolean; note: string; source?: string }[];
-      };
-
-      const civUrl = `${base}/api/aviation/v1/track-aircraft?${bboxQ}`;
-      const milUrl = `${base}/api/military/v1/list-military-flights?${bboxQ}&page_size=100`;
-      const civAuth = type === 'military' ? null : await buildAuthHeaders(context, 'GET', civUrl, null);
-      const milAuth = type === 'civilian' ? null : await buildAuthHeaders(context, 'GET', milUrl, null);
+      async function fetchParts<T>(urls: string[], operation: string): Promise<(T | null)[]> {
+        const parts = await Promise.allSettled(urls.map(async url => {
+          const auth = await buildAuthHeaders(context, 'GET', url, null);
+          if (!auth) return null;
+          const response = await fetch(url, { headers: { ...auth, 'User-Agent': UA }, signal: AbortSignal.timeout(8_000) });
+          throwIfBillingDenial(response, operation);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json() as Promise<T>;
+        }));
+        // A failure in one half must not hide a billing denial in the other.
+        for (const part of parts) {
+          if (part.status === 'rejected' && part.reason instanceof BillingDenialError) throw part.reason;
+        }
+        return parts.map(part => {
+          if (part.status === 'rejected') throw part.reason;
+          return part.value;
+        });
+      }
 
       const [civResult, milResult] = await Promise.allSettled([
-        type === 'military' || !civAuth
-          ? Promise.resolve(null)
-          : fetch(civUrl, { headers: { ...civAuth, 'User-Agent': UA }, signal: AbortSignal.timeout(8_000) })
-              .then(r => {
-                throwIfBillingDenial(r, 'get-airspace-civilian');
-                return r.ok ? r.json() as Promise<CivilianResp> : Promise.reject(new Error(`HTTP ${r.status}`));
-              }),
-        type === 'civilian' || !milAuth
-          ? Promise.resolve(null)
-          : fetch(milUrl, { headers: { ...milAuth, 'User-Agent': UA }, signal: AbortSignal.timeout(8_000) })
-              .then(r => {
-                throwIfBillingDenial(r, 'get-airspace-military');
-                return r.ok ? r.json() as Promise<MilResp> : Promise.reject(new Error(`HTTP ${r.status}`));
-              }),
+        type === 'military' ? Promise.resolve(null) : fetchParts<TrackAircraftResponse>(
+          queries.map(query => `${base}/api/aviation/v1/track-aircraft?${query}`), 'get-airspace-civilian'),
+        type === 'civilian' ? Promise.resolve(null) : fetchParts<ListMilitaryFlightsResponse>(
+          queries.map(query => `${base}/api/military/v1/list-military-flights?${query}&page_size=100`), 'get-airspace-military'),
       ]);
 
       // A billing denial is user-level, not a data-source outage: never serve
@@ -2506,7 +2508,7 @@ export const RPC_TOOLS: ToolDef[] = [
       }
 
       const civRaw = civResult.status === 'fulfilled' ? civResult.value : null;
-      const civProviderAllowed = !civRaw || !isOpenSkyProvider(civRaw.source);
+      const civProviderAllowed = !civRaw || civRaw.every(part => !isOpenSkyProvider(part?.source));
       const civOk = type === 'military' || (civResult.status === 'fulfilled' && civProviderAllowed);
       const milOk = type === 'civilian' || milResult.status === 'fulfilled';
 
@@ -2524,24 +2526,27 @@ export const RPC_TOOLS: ToolDef[] = [
       if (!civOk) warnings.push('civilian ADS-B data unavailable');
       if (!milOk) warnings.push('military flight data unavailable');
 
-      const civilianFlights = (civ?.positions ?? []).slice(0, 100).map(p => ({
+      const positions = [...new Map((civ ?? []).flatMap(part => part?.positions ?? []).map(p => [p.icao24, p])).values()];
+      const flights = [...new Map((mil ?? []).flatMap(part => part?.flights ?? []).map(f => [f.hexCode, f])).values()];
+      const civilianUpdatedAt = (civ ?? []).map(part => part?.updatedAt).filter((stamp): stamp is number => !!stamp && Number.isFinite(stamp));
+      const civilianFlights = positions.slice(0, 100).map(p => ({
         callsign: p.callsign, icao24: p.icao24,
         lat: p.lat, lon: p.lon,
-        altitude_m: p.altitude_m, speed_kts: p.ground_speed_kts,
-        heading_deg: p.track_deg, on_ground: p.on_ground,
+        altitude_m: p.altitudeM, speed_kts: p.groundSpeedKts,
+        heading_deg: p.trackDeg, on_ground: p.onGround,
       }));
-      const redistributableMilitaryFlights = (mil?.flights ?? [])
+      const redistributableMilitaryFlights = flights
         .filter((flight) => !isOpenSkyProvider(flight.source));
-      if (redistributableMilitaryFlights.length !== (mil?.flights ?? []).length) {
+      if (redistributableMilitaryFlights.length !== flights.length) {
         warnings.push('some military flight observations unavailable');
       }
       const militaryFlights = redistributableMilitaryFlights.slice(0, 100).map(f => ({
-        callsign: f.callsign, hex_code: f.hex_code,
-        aircraft_type: f.aircraft_type, aircraft_model: f.aircraft_model,
-        operator: f.operator, operator_country: f.operator_country,
+        callsign: f.callsign, hex_code: f.hexCode,
+        aircraft_type: f.aircraftType, aircraft_model: f.aircraftModel,
+        operator: f.operator, operator_country: f.operatorCountry,
         lat: f.location?.latitude, lon: f.location?.longitude,
         altitude: f.altitude, heading: f.heading, speed: f.speed,
-        is_interesting: f.is_interesting, ...(f.note ? { note: f.note } : {}),
+        is_interesting: f.isInteresting, ...(f.note ? { note: f.note } : {}),
       }));
 
       return {
@@ -2552,8 +2557,8 @@ export const RPC_TOOLS: ToolDef[] = [
         ...(type !== 'military' && { civilian_flights: civilianFlights }),
         ...(type !== 'civilian' && { military_flights: militaryFlights }),
         ...(warnings.length > 0 && { partial: true, warnings }),
-        source: civ?.source ?? redistributableMilitaryFlights.find((flight) => flight.source)?.source ?? 'none',
-        updated_at: civ?.updated_at ? new Date(civ.updated_at).toISOString() : new Date().toISOString(),
+        source: civ?.find(part => part?.source)?.source ?? redistributableMilitaryFlights.find((flight) => flight.source)?.source ?? 'none',
+        updated_at: civilianUpdatedAt.length ? new Date(Math.min(...civilianUpdatedAt)).toISOString() : new Date().toISOString(),
       };
     },
     _apiPaths: [
@@ -2655,8 +2660,7 @@ export const RPC_TOOLS: ToolDef[] = [
         // Source boxes stored wrapped (sw_lon > ne_lon) span the dateline;
         // unwrap to a monotonic interval before reasoning about the pad.
         const hi = (sw_lon > ne_lon ? ne_lon + 360 : ne_lon) + PAD_DEG;
-        // Pad widened the interval to the full circle — AQ and RU are stored
-        // as -180..180 spans, so every longitude matches.
+        // Polar AQ legitimately covers all longitudes.
         if (hi - lo >= 360) return true;
         // The pad itself can push a ±180-adjacent box past the dateline
         // (FJ ne_lon=180 → hi=183; NZ 178.29 → 181.29): points just across

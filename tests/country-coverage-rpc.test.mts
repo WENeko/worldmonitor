@@ -17,11 +17,10 @@ import {
 } from '../server/worldmonitor/intelligence/v1/get-country-coverage.ts';
 import {
   collectStructuredIncidents,
-  countryBox,
-  inBox,
   type StructuredDependencies,
   type StructuredSourceResult,
 } from '../server/worldmonitor/intelligence/v1/_country-coverage-structured.ts';
+import { countryBox, inBox } from '../shared/country-bbox.ts';
 import {
   buildEventQueryTerms,
   countryEventFeed,
@@ -524,6 +523,23 @@ describe('GetCountryCoverage — refresh behaviour', () => {
 });
 
 describe('GetCountryCoverage — geographic containment', () => {
+  it('contains Russia on both sides of the dateline without matching western Europe or North America', () => {
+    const box = countryBox('RU');
+    for (const [lat, lon] of [[55.75, 37.62], [65, 179], [65, -175]]) {
+      assert.equal(inBox(box, lat, lon), true, `${lat},${lon} belongs in Russia's bounds`);
+    }
+    for (const [lat, lon] of [[52.52, 13.4], [48.86, 2.35], [51.51, -0.13], [43.65, -79.38], [47.61, -122.33]]) {
+      assert.equal(inBox(box, lat, lon), false, `${lat},${lon} must not match Russia`);
+    }
+  });
+
+  it('rejects collapsed country boxes and invalid geographic coordinates', () => {
+    assert.equal(inBox({ south: 41.21, west: -180, north: 81.29, east: 180 }, 52.52, 13.4), false);
+    assert.equal(inBox({ south: 60, west: 170, north: 70, east: -170 }, 65, 540), false);
+    assert.equal(inBox(countryBox('AQ'), -75, 0), true, 'full-longitude polar containment remains valid');
+    assert.equal(inBox(countryBox('AQ'), -75, 175), true);
+  });
+
   it('reads the shared bounding box as [south, west, north, east]', () => {
     const box = countryBox('IL');
     assert.ok(box, 'Israel must have a bounding box');
@@ -618,6 +634,80 @@ describe('collectStructuredIncidents — producer status', () => {
     assert.ok(match, `expected a ${source} producer`);
     return match!;
   }
+
+  it('keeps Russian incidents across the dateline and rejects foreign attribution in every geographic lane', async () => {
+    const points = [
+      { name: 'Moscow', country: 'RU', lat: 55.75, lon: 37.62 },
+      { name: 'Chukotka east', country: '', lat: 65, lon: 179 },
+      { name: 'Chukotka west', country: '', lat: 65, lon: -175 },
+      { name: 'Berlin', country: 'Germany', lat: 52.52, lon: 13.4 },
+      { name: 'Toronto', country: 'Canada', lat: 43.65, lon: -79.38 },
+    ];
+    const namedProtests = [...points, { name: 'Kazakhstan labelled', country: 'Kazakhstan', lat: 55, lon: 70 }];
+    const queries: { swLon: number; neLon: number; cursor: string }[] = [];
+    const results = await collectStructuredIncidents({
+      ctx, code: 'RU', countryName: 'Russia', cutoffMs: NOW_MS - DAY, now: NOW_MS,
+      deps: structuredDeps({
+        listUnrestEvents: async () => ({ events: namedProtests.map(p => ({
+          id: p.name, title: p.name, country: p.country, occurredAt: NOW_MS - HOUR,
+          severity: 'SEVERITY_LEVEL_HIGH', location: { latitude: p.lat, longitude: p.lon },
+        })) }),
+        listEarthquakes: async () => ({ earthquakes: points.map(p => ({
+          id: p.name, place: p.name, magnitude: 5, occurredAt: NOW_MS - HOUR,
+          location: { latitude: p.lat, longitude: p.lon },
+        })) }),
+        listIranEvents: async () => ({ scrapedAt: String(NOW_MS), events: points.map(p => ({
+          id: p.name, title: p.name, latitude: p.lat, longitude: p.lon,
+          timestamp: String(NOW_MS - HOUR), severity: 'high',
+        })) }),
+        listMilitaryFlights: async (_ctx, req) => {
+          queries.push(req);
+          assert.ok(req.swLon <= req.neLon && req.neLon - req.swLon < 360, 'only ordinary bounded queries reach flights');
+          const matches = points.filter(p => p.lon >= req.swLon && p.lon <= req.neLon);
+          const page = req.cursor ? matches.slice(1) : matches.slice(0, 1);
+          return {
+            flights: page.map(p => ({ ...flight(p.name), location: { latitude: p.lat, longitude: p.lon } })),
+            clusters: [], pagination: { nextCursor: !req.cursor && matches.length > 1 ? 'page2' : '', totalCount: matches.length },
+          };
+        },
+      } as Partial<StructuredDependencies>),
+    });
+    for (const source of ['structured:protests', 'structured:earthquakes', 'structured:strikes', 'structured:military-flights']) {
+      const result = find(results, source);
+      assert.equal(result.state, 'ok');
+      assert.equal(result.incidents.length, 3, source);
+      assert.ok(result.incidents.every(i => !/Berlin|Toronto|Kazakhstan/.test(i.label)), source);
+    }
+    assert.deepEqual(queries.map(q => [q.swLon, q.neLon, q.cursor]), [
+      [19.6, 180, ''], [19.6, 180, 'page2'], [-180, -169.7, ''],
+    ]);
+  });
+
+  it('reports a split flight query failure and never queries full-longitude countries', async () => {
+    const ru = await collectStructuredIncidents({
+      ctx, code: 'RU', countryName: 'Russia', cutoffMs: NOW_MS - DAY, now: NOW_MS,
+      deps: structuredDeps({ listMilitaryFlights: async (_ctx, req) => {
+        if (req.swLon < 0) throw new Error('east-of-dateline query failed');
+        return { flights: [{ ...flight('MOSCOW'), location: { latitude: 55.75, longitude: 37.62 } }], clusters: [] };
+      } } as Partial<StructuredDependencies>),
+    });
+    assert.equal(find(ru, 'structured:military-flights').state, 'failed');
+    assert.deepEqual(find(ru, 'structured:military-flights').incidents, []);
+    let calls = 0;
+    const aq = await collectStructuredIncidents({
+      ctx, code: 'AQ', countryName: 'Antarctica', cutoffMs: NOW_MS - DAY, now: NOW_MS,
+      deps: structuredDeps({
+        listMilitaryFlights: async () => { calls++; throw new Error('must not call'); },
+        listEarthquakes: async () => ({ earthquakes: [{
+          id: 'polar-quake', place: 'Southern Ocean', magnitude: 5, occurredAt: NOW_MS - HOUR,
+          location: { latitude: -75, longitude: 175 },
+        }] }),
+      } as Partial<StructuredDependencies>),
+    });
+    assert.equal(calls, 0);
+    assert.equal(find(aq, 'structured:military-flights').state, 'unavailable');
+    assert.equal(find(aq, 'structured:earthquakes').incidents.length, 1);
+  });
 
   it('always reports all six producers, in a stable order', async () => {
     const results = await collect();

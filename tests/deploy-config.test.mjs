@@ -5451,15 +5451,12 @@ describe('cold-load metric evidence reaches the CI artifact (#7837)', () => {
     assert.match(testWorkflowSource, /path: test-results\//);
   });
 
-  // #7848 moved the readiness gate to first paint; #7837 added a settled
-  // sample beside it that is deliberately NOT asserted, because a slow runner
-  // must never redden this required job. Folding the settled sample into the
-  // budget assertion would reintroduce exactly the flake both issues exist to
-  // remove — visibly, but only after a live CI run.
-  it('asserts the dashboard budgets against the first-paint sample only', () => {
+  // #7867 gives the first-paint sample its own CI-derived budget. The settled
+  // diagnostic remains optional because hydration readiness is incomplete on CI.
+  it('asserts the first-paint budgets against the first-paint sample only', () => {
     assert.match(
       mapBudgetE2eSource,
-      /assertDashboardMetricBudgets\(samples\.map\(\(sample\) => sample\.firstPaint\.postGc\)\)/,
+      /assertDashboardMetricBudgets\(samples\.map\(\(sample\) => sample\.firstPaint\.postGc\), FIRST_PAINT_METRIC_BUDGETS\)/,
     );
     assert.doesNotMatch(
       mapBudgetE2eSource,

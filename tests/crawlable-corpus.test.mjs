@@ -3796,6 +3796,14 @@ describe('crawlable corpus generator', () => {
       );
       assertDataCatalogPresent(norway, '/countries/norway/');
 
+      const russiaDataset = jsonLdObjects(read(outDir, 'countries/russia/index.html'))
+        .flatMap(entry => collectDatasets(entry))
+        .find(entry => entry.spatialCoverage?.identifier === 'RU');
+      assert.deepEqual(russiaDataset.spatialCoverage.geo, [
+        { '@type': 'GeoShape', box: '41.21 19.6 81.29 180' },
+        { '@type': 'GeoShape', box: '41.21 -180 81.29 -169.7' },
+      ], 'Russia metadata must describe two ordinary boxes across the dateline');
+
       const chokepointsIndex = read(outDir, 'chokepoints/index.html');
       const chokepointsDocument = htmlDocument(
         chokepointsIndex,

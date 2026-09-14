@@ -90,9 +90,9 @@ export interface BaseToolDef {
   _freeTier?: true;
   // Budget units this tool charges, overriding the class default in
   // `registry/index.ts::toolWeight`. Set it only when the tool's downstream
-  // fan-out differs from its class — the two tools that fetch twice. A tool
-  // that grows a second fetch and forgets this is undercharging, which
-  // `tests/mcp-tool-weight.test.mjs` catches by re-deriving fan-out from source.
+  // maximum downstream fan-out differs from its class. A tool that adds a
+  // fetch and forgets this undercharges; `tests/mcp-tool-weight.test.mjs`
+  // checks source call sites and measures input-dependent airspace requests.
   _weight?: number;
   // Spec-defined `Tool.outputSchema` (MCP 2025-06-18+). JSON Schema fragment
   // describing the tool's normal (non-envelope) response shape so a compliant

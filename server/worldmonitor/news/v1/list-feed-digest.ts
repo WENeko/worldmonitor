@@ -117,6 +117,7 @@ const RSS_ACCEPT = 'application/rss+xml, application/xml, text/xml, */*';
 const VALID_VARIANTS = new Set(['full', 'tech', 'finance', 'happy', 'commodity']);
 const fallbackDigestCache = new Map<string, { data: ListFeedDigestResponse; ts: number }>();
 const ITEMS_PER_FEED = 5;
+const COUNTRY_ITEMS_PER_FEED = 20;
 const MAX_ITEMS_PER_CATEGORY = 20;
 const FEED_TIMEOUT_MS = 8_000;
 // Vercel Edge functions have a 25s initial-response ceiling. The digest
@@ -783,8 +784,10 @@ async function fetchRssText(
  */
 export interface ParseResult {
   items: ParsedItem[];
-  parsedTotal: number;     // count of <item>/<entry> blocks attempted
-  droppedUndated: number;  // count dropped because every recognized date tag was empty/unparseable/future
+  // Lightweight entries after the dashboard cap, for full-variant country snapshots.
+  countryItems?: Pick<ParsedItem, 'source' | 'title' | 'link' | 'publishedAt' | 'originPublisher' | 'originPublisherTrusted'>[];
+  parsedTotal: number;     // titled blocks attempted within the dashboard cap
+  droppedUndated: number;  // dashboard entries with empty/unparseable/future dates
   droppedFeedCap?: number; // #4920: items beyond ITEMS_PER_FEED, previously uncounted
   // #7083: how the fetch leg of this attempt actually ended. Absent on
   // cache entries written before the field existed.
@@ -842,6 +845,7 @@ export async function fetchAndParseRss(
   // v8→v9 (#7083): ParseResult gained the `attempt` field. Warm v8 rows
   // lack it, so zero-item entries could not be classified between
   // negative-cache and fresh-failure; force a cold parse on rollout.
+  // v9→v10 (#7748): retain a bounded country headline pool beyond entry five.
   const cacheKey = rssFeedCacheKey(variant, feed.url);
 
   try {
@@ -1003,6 +1007,8 @@ function extractFirstDateTag(block: string, isAtom: boolean): string {
 
 function parseRssXml(xml: string, feed: ServerFeed, variant: string): ParseResult | null {
   const items: ParsedItem[] = [];
+  const countryItems: NonNullable<ParseResult['countryItems']> = [];
+  const retainCountryItems = variant === 'full';
   let parsedTotal = 0;
   let droppedUndated = 0;
 
@@ -1012,18 +1018,21 @@ function parseRssXml(xml: string, feed: ServerFeed, variant: string): ParseResul
   let matches = [...xml.matchAll(itemRegex)];
   const isAtom = matches.length === 0;
   if (isAtom) matches = [...xml.matchAll(entryRegex)];
+  const originPublisherTrusted = !isAtom && isTrustedOriginAggregator(feed.url);
 
   // #4920 coverage ledger: items beyond the per-feed cap were previously
   // dropped with no counter anywhere — fully invisible.
   const droppedFeedCap = Math.max(0, matches.length - ITEMS_PER_FEED);
 
-  for (const match of matches.slice(0, ITEMS_PER_FEED)) {
+  const parseLimit = retainCountryItems ? COUNTRY_ITEMS_PER_FEED : ITEMS_PER_FEED;
+  for (const [index, match] of matches.slice(0, parseLimit).entries()) {
     const block = match[1]!;
+    const forDigest = index < ITEMS_PER_FEED;
 
     const title = extractTag(block, 'title');
     if (!title) continue;
 
-    parsedTotal++;
+    if (forDigest) parsedTotal++;
 
     let link: string;
     if (isAtom) {
@@ -1041,24 +1050,20 @@ function parseRssXml(xml: string, feed: ServerFeed, variant: string): ParseResul
     // (which is the bug that let static institutional pages reach the brief).
     const pubDateStr = extractFirstDateTag(block, isAtom);
     if (!pubDateStr) {
-      droppedUndated++;
+      if (forDigest) droppedUndated++;
       continue;
     }
     const parsedDate = new Date(pubDateStr);
     const parsedMs = parsedDate.getTime();
     if (Number.isNaN(parsedMs)) {
-      droppedUndated++;
+      if (forDigest) droppedUndated++;
       continue;
     }
     if (parsedMs > Date.now() + FUTURE_DATE_TOLERANCE_MS) {
-      droppedUndated++;
+      if (forDigest) droppedUndated++;
       continue;
     }
     const publishedAt = parsedMs;
-
-    const threat = classifyByKeyword(title, variant);
-    const isAlert = threat.level === 'critical' || threat.level === 'high';
-    const description = extractDescription(block, isAtom, title);
 
     // RSS 2.0 <source url="...">Name</source> — the originating publisher,
     // emitted per item by Google News. Atom's <source> is a metadata
@@ -1066,12 +1071,30 @@ function parseRssXml(xml: string, feed: ServerFeed, variant: string): ParseResul
     // dialect is read; extractTag's [^<]* body would not match a container
     // anyway, but skipping Atom keeps that an invariant rather than a
     // regex accident.
-    const originPublisher = isAtom ? '' : extractTag(block, 'source');
+    const extractedOriginPublisher = isAtom ? '' : extractTag(block, 'source');
+    // Ordinary feeds cannot vouch for RSS <source>. The country reader already
+    // ignores untrusted origin metadata, so keep those late headlines and store
+    // an empty publisher. Trusted aggregators still have the 200-character
+    // identity bound.
+    const originPublisher = originPublisherTrusted ? extractedOriginPublisher : '';
+    if (!forDigest) {
+      if (title.length <= 1000 && link.length <= 2048 && originPublisher.length <= 200) {
+        countryItems.push({
+          source: feed.name, title, link, publishedAt,
+          originPublisher, originPublisherTrusted,
+        });
+      }
+      continue;
+    }
+
+    const threat = classifyByKeyword(title, variant);
+    const isAlert = threat.level === 'critical' || threat.level === 'high';
+    const description = extractDescription(block, isAtom, title);
 
     items.push({
       source: feed.name,
-      originPublisher,
-      originPublisherTrusted: !isAtom && isTrustedOriginAggregator(feed.url),
+      originPublisher: extractedOriginPublisher,
+      originPublisherTrusted,
       title,
       link,
       publishedAt,
@@ -1110,23 +1133,15 @@ function parseRssXml(xml: string, feed: ServerFeed, variant: string): ParseResul
     );
   }
 
-  // Two cases:
-  //
-  // (a) parsedTotal > 0 — we recognized at least one <item>/<entry> block in
-  //     the XML, so the stats are meaningful (whether all dropped, partially
-  //     dropped, or none dropped). Return the struct so cachedFetchJson
-  //     positive-caches it for the full TTL and the 'all-undated' branch in
-  //     buildDigest's caller can fire (parsedTotal>0 ∧ items=[] ∧ dropped>0).
-  //
-  // (b) parsedTotal === 0 — the XML body had no recognizable items at all.
-  //     This covers genuinely empty feeds (channel exists, no items),
-  //     malformed XML responses, transient block pages, and Cloudflare
-  //     interstitials that don't match the item/entry regexes. Return null
-  //     so cachedFetchJson writes NEG_SENTINEL with the short negativeTtl
-  //     (default 120s) — the feed retries quickly instead of being pinned
-  //     empty for the full 3600s TTL.
-  if (parsedTotal === 0) return null;
-  return { items, parsedTotal, droppedUndated, droppedFeedCap };
+  // Keep dashboard health counters even when its dated items are empty.
+  // Later country entries can survive an untitled first-five window; retain
+  // them while preserving the digest's empty-result counters and short TTL.
+  if (parsedTotal === 0 && countryItems.length === 0) return null;
+  return {
+    items, parsedTotal, droppedUndated,
+    ...(parsedTotal > 0 ? { droppedFeedCap } : {}),
+    ...(retainCountryItems ? { countryItems } : {}),
+  };
 }
 
 /**

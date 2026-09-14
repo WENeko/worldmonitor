@@ -37,11 +37,10 @@ export function isQuotaExemptMetadataTool(tool: ToolDef): boolean {
  * per-account meter for internal-MCP callers — so the edge has to charge that
  * work here or it goes unbilled entirely.
  *
- * The measured spread is 1-2 downstream calls per tool, not the 10x an
- * "MCP call = many API calls" intuition suggests, so the table is two values
- * plus per-tool overrides for the pair that genuinely fetch twice. Deriving the
- * class from `_execute` rather than a hand-maintained list means a new tool
- * inherits the right weight by construction.
+ * Most execution tools make one downstream call. Per-tool overrides cover
+ * the maximum fan-out of country briefs (two) and airspace (four when split
+ * at the dateline). The weight is fixed before execution, including when a
+ * request selects fewer sources or needs only one longitude interval.
  */
 export function toolWeight(tool: ToolDef): number {
   if (tool._weight !== undefined) return tool._weight;

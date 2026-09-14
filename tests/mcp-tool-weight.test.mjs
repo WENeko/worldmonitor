@@ -18,6 +18,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { TOOL_REGISTRY, toolWeight } from '../api/mcp/registry/index.ts';
+import COUNTRY_BBOXES from '../shared/country-bboxes.js';
 
 const REGISTRY_DIR = fileURLToPath(new URL('../api/mcp/registry/', import.meta.url));
 
@@ -126,6 +127,38 @@ function authenticatedFanOut(execute, helpers = SIGNING_HELPERS) {
     total += countCalls(src, name) * fan;
   }
   return total;
+}
+
+/** A source call-site count cannot measure the airspace helper's URL loop. */
+async function registryFanOut(tool, helpers = SIGNING_HELPERS) {
+  if (tool.name !== 'get_airspace') return authenticatedFanOut(tool._execute, helpers);
+  const originalFetch = globalThis.fetch;
+  let maximum = 0;
+  try {
+    const cases = Object.keys(COUNTRY_BBOXES).map(country_code => ({
+      country_code, type: 'all', expected: country_code === 'AQ' ? 0 : country_code === 'RU' ? 4 : 2,
+    }));
+    for (const type of ['civilian', 'military']) {
+      cases.push({ country_code: 'RU', type, expected: 2 }, { country_code: 'AE', type, expected: 1 });
+    }
+    for (const { country_code, type, expected } of cases) {
+      let calls = 0;
+      globalThis.fetch = async (url, init) => {
+        assert.equal(new Headers(init.headers).get('X-WorldMonitor-Key'), 'weight-test');
+        const query = new URL(url).searchParams;
+        const span = Number(query.get('ne_lon')) - Number(query.get('sw_lon'));
+        assert.ok(span >= 0 && span < 360, `${country_code} must send bounded intervals`);
+        calls += 1;
+        return Response.json({ positions: [], flights: [], source: 'wingbits' });
+      };
+      await tool._execute({ country_code, type }, 'https://example.test', { kind: 'env_key', apiKey: 'weight-test' });
+      assert.equal(calls, expected, `${country_code}/${type} signed fetch count`);
+      maximum = Math.max(maximum, calls);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  return maximum;
 }
 
 function isPositiveInt(value) {
@@ -260,7 +293,7 @@ describe('registry class defaults match the published table', () => {
 });
 
 /** The rule both published-override checks apply, so they cannot disagree. */
-function assertOverrideMatchesFanOut(tool, helpers = SIGNING_HELPERS) {
+async function assertOverrideMatchesFanOut(tool, helpers = SIGNING_HELPERS) {
   assert.ok(
     isPositiveInt(tool._weight),
     `${tool.name}._weight must be a positive integer, got ${JSON.stringify(tool._weight)}`,
@@ -270,7 +303,7 @@ function assertOverrideMatchesFanOut(tool, helpers = SIGNING_HELPERS) {
     'function',
     `${tool.name} publishes _weight but has no _execute — cache tools use the class default`,
   );
-  const fanOut = authenticatedFanOut(tool._execute, helpers);
+  const fanOut = await registryFanOut(tool, helpers);
   assert.equal(
     tool._weight,
     1 + fanOut,
@@ -281,21 +314,21 @@ function assertOverrideMatchesFanOut(tool, helpers = SIGNING_HELPERS) {
 }
 
 describe('explicit _weight values', () => {
-  it('every published override is a positive integer matching 1 + derived fan-out', () => {
+  it('every published override matches 1 + maximum fan-out, measured for every airspace country', async () => {
     const overrides = TOOL_REGISTRY.filter((tool) => tool._weight !== undefined);
     assert.ok(
       overrides.length >= 2,
-      'the two double-fetch tools must keep publishing _weight; do not delete the overrides to silence this',
+      'the two multi-fetch tools must keep publishing _weight; do not delete the overrides to silence this',
     );
-    for (const tool of overrides) assertOverrideMatchesFanOut(tool);
+    for (const tool of overrides) await assertOverrideMatchesFanOut(tool);
   });
 
-  it('a CORRECT override on a helper-delegating tool is accepted', () => {
+  it('a CORRECT override on a helper-delegating tool is accepted', async () => {
     // The second half of the old defect. A tool that signs nothing itself and
     // delegates twice genuinely costs 3, and publishing 3 was rejected with
     // "must be 1" — so the only way to satisfy the guard was to UNDER-bill.
     const helpers = new Map([['fetchDigest', 1]]);
-    assertOverrideMatchesFanOut({
+    await assertOverrideMatchesFanOut({
       name: 'delegating_double',
       _weight: 3,
       _execute: async () => {
@@ -306,9 +339,9 @@ describe('explicit _weight values', () => {
     }, helpers);
   });
 
-  it('an under-billing override on the same tool is still rejected', () => {
+  it('an under-billing override on the same tool is still rejected', async () => {
     const helpers = new Map([['fetchDigest', 1]]);
-    assert.throws(() => assertOverrideMatchesFanOut({
+    await assert.rejects(() => assertOverrideMatchesFanOut({
       name: 'delegating_double',
       _weight: 1,
       _execute: async () => {
@@ -321,11 +354,11 @@ describe('explicit _weight values', () => {
 });
 
 describe('derived downstream fan-out', () => {
-  it('a second authenticated fetch in _execute requires the matching weight override', () => {
+  it('multiple authenticated fetches in _execute require the matching weight override', async () => {
     const multiFetch = [];
     for (const tool of TOOL_REGISTRY) {
       if (typeof tool._execute !== 'function') continue;
-      const fanOut = authenticatedFanOut(tool._execute);
+      const fanOut = await registryFanOut(tool);
       if (fanOut < 2) continue;
       multiFetch.push({ name: tool.name, fanOut, weight: tool._weight });
       assert.ok(

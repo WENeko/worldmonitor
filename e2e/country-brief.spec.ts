@@ -612,6 +612,10 @@ for (const { mobile, light } of [{ mobile: false, light: false }, { mobile: true
       await details.locator('summary').click();
     } else if (commodity === 'wheat') {
       expect(snapshot.candidates.map((c: { origin: string }) => c.origin)).toEqual(['AU']);
+      expect(snapshot.candidates[0].routeState).toBe('unknown');
+      expect(snapshot.candidates[0].routeIds).toEqual([]);
+      expect(snapshot.candidates[0].transitChokepoints).toEqual([]);
+      await expect(paper.locator('[data-origin="AU"]')).toContainText('Route unknown');
       await expect(paper).toContainText('2023');
       await expect(paper).not.toContainText('hospital');
     } else {

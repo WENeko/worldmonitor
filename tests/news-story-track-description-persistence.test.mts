@@ -469,7 +469,7 @@ describe('buildStoryTrackHsetFields — story:track:v1 HSET contract', () => {
 });
 
 describe('fetchAndParseRss — cache prefix invalidation contract', () => {
-  it('rss:feed cache prefix is v9 (per-attempt fetch verdicts), not v4/v5/v6/v7/v8', () => {
+  it('rss:feed cache prefix is v10 (bounded country reporting)', () => {
     // Pre-PR ParsedItems cached at rss:feed:v4 lack the
     // isEphemeralLiveCoverage field. If a cache hit returned one of those,
     // the falsy-coerce in
@@ -486,13 +486,11 @@ describe('fetchAndParseRss — cache prefix invalidation contract', () => {
       resolve(__dirname, '..', 'server', 'worldmonitor', 'news', 'v1', 'list-feed-digest.ts'),
       'utf-8',
     );
-    // v8→v9: cached ParseResult rows now carry the fetch attempt verdict
-    // (source + failure classification, #7083). Warm v8 rows lack the
-    // attempt field and would misreport feed health as an unknown state.
+    // v9→v10: warm v9 rows retain only the first five RSS entries.
     assert.equal(
       rssFeedCacheKey('full', 'https://example.com/rss'),
-      'rss:feed:v9:full:https://example.com/rss',
-      'rss:feed cache key must use the per-attempt verdict format',
+      'rss:feed:v10:full:https://example.com/rss',
+      'rss:feed cache key must invalidate the five-entry country pool',
     );
     assert.ok(
       src.includes('const cacheKey = rssFeedCacheKey(variant, feed.url);'),
