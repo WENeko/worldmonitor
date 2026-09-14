@@ -1,5 +1,5 @@
 {
-  "comment": "Initial /dashboard bundle-size budgets (#7111). Gated on raw bytes: per chunk ±max(2048 B, 2%), total ±max(16384 B, 0.25%). Tolerance fields here are informational — the gate enforces its own constants and rejects a snapshot that disagrees. Regenerate after \"npm run build:pro && VITE_VARIANT=full ./node_modules/.bin/vite build\" with: npm run bundle:budgets",
+  "comment": "Initial /dashboard bundle-size budgets (#7111). Gated on raw bytes: per chunk ±max(2048 B, 2%), total ±max(16384 B, 0.25%). The \"deferred\" section gates the application graph the entry imports on every visit with the same tolerances. Tolerance fields here are informational — the gate enforces its own constants and rejects a snapshot that disagrees. Regenerate after \"npm run build:pro && VITE_VARIANT=full ./node_modules/.bin/vite build\" with: npm run bundle:budgets",
   "surface": "dashboard",
   "variant": "full",
   "tolerancePct": 2,
@@ -7,96 +7,155 @@
   "totalTolerancePct": 0.25,
   "totalToleranceBytes": 16384,
   "total": {
-    "raw": 1755552
+    "raw": 440067
   },
   "chunks": {
-    "analytics": {
-      "raw": 133239,
-      "files": 1
-    },
-    "cached-risk-scores": {
-      "raw": 24604,
-      "files": 1
-    },
     "clerk": {
-      "raw": 18223,
+      "raw": 18229,
       "files": 1
     },
-    "continuous": {
-      "raw": 4933,
-      "files": 1
-    },
-    "cross-domain-storage": {
-      "raw": 415,
-      "files": 1
-    },
-    "data-freshness": {
-      "raw": 85940,
+    "debugbear-rum": {
+      "raw": 28211,
       "files": 1
     },
     "dom-utils": {
-      "raw": 3856,
+      "raw": 2747,
       "files": 1
     },
-    "embed-url": {
-      "raw": 63771,
+    "entitlements": {
+      "raw": 2507,
       "files": 1
     },
     "font-settings": {
-      "raw": 1440,
+      "raw": 465,
       "files": 1
     },
-    "gdelt-intel": {
-      "raw": 133788,
+    "geo-convergence": {
+      "raw": 9680,
+      "files": 1
+    },
+    "geo-distance": {
+      "raw": 28468,
+      "files": 1
+    },
+    "globe-marker-probe": {
+      "raw": 427,
       "files": 1
     },
     "i18n": {
       "raw": 52460,
       "files": 1
     },
-    "layout-batch": {
-      "raw": 17352,
-      "files": 1
-    },
     "main": {
-      "raw": 985080,
-      "files": 1
-    },
-    "panel-gating": {
-      "raw": 3144,
+      "raw": 126103,
       "files": 1
     },
     "panels": {
-      "raw": 147801,
+      "raw": 37234,
       "files": 1
     },
-    "persistent-cache": {
-      "raw": 3697,
-      "files": 1
-    },
-    "storage-facility-registry-store": {
-      "raw": 14203,
-      "files": 1
-    },
-    "string": {
-      "raw": 20823,
+    "theme-colors": {
+      "raw": 132059,
       "files": 1
     },
     "theme-manager": {
-      "raw": 1474,
+      "raw": 1477,
       "files": 1
+    }
+  },
+  "deferred": {
+    "total": {
+      "raw": 1362036
     },
-    "timeout-signal": {
-      "raw": 776,
-      "files": 1
-    },
-    "user-location": {
-      "raw": 12676,
-      "files": 1
-    },
-    "widget-store": {
-      "raw": 25857,
-      "files": 1
+    "chunks": {
+      "App": {
+        "raw": 871148,
+        "files": 1
+      },
+      "base": {
+        "raw": 2335,
+        "files": 1
+      },
+      "cached-risk-scores": {
+        "raw": 14915,
+        "files": 1
+      },
+      "checkout": {
+        "raw": 30441,
+        "files": 1
+      },
+      "continuous": {
+        "raw": 4507,
+        "files": 1
+      },
+      "cross-domain-storage": {
+        "raw": 418,
+        "files": 1
+      },
+      "data-freshness": {
+        "raw": 11151,
+        "files": 1
+      },
+      "feeds": {
+        "raw": 111294,
+        "files": 1
+      },
+      "gdelt-intel": {
+        "raw": 105467,
+        "files": 1
+      },
+      "index": {
+        "raw": 36600,
+        "files": 1
+      },
+      "layout-batch": {
+        "raw": 17357,
+        "files": 1
+      },
+      "panel-gating": {
+        "raw": 3206,
+        "files": 1
+      },
+      "panel-storage": {
+        "raw": 1748,
+        "files": 1
+      },
+      "persistent-cache": {
+        "raw": 3771,
+        "files": 1
+      },
+      "sanitize": {
+        "raw": 1146,
+        "files": 1
+      },
+      "source-provenance": {
+        "raw": 76020,
+        "files": 1
+      },
+      "storage-facility-registry-store": {
+        "raw": 14199,
+        "files": 1
+      },
+      "string": {
+        "raw": 20823,
+        "files": 1
+      },
+      "sync-keys": {
+        "raw": 984,
+        "files": 1
+      },
+      "timeout-signal": {
+        "raw": 776,
+        "files": 1
+      },
+      "user-location": {
+        "raw": 10386,
+        "files": 1
+      },
+      "widget-store": {
+        "raw": 23344,
+        "files": 1
+      }
     }
   }
 }

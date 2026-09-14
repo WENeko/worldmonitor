@@ -869,17 +869,40 @@ describe('marketing beforeSend — wallet JSON-RPC rejection (WORLDMONITOR-107)'
 
   it('drops the rest of the JSON-RPC reserved range', () => {
     // -32000 (server error) and -32700 (parse error) bound the reserved block;
-    // wallets use several of them (4001 user-rejected is NOT in this range and
-    // is deliberately left reporting).
+    // wallets use several of them.
     for (const code of [-32000, -32700, -32768]) {
       assert.equal(marketingBeforeSend(rejection(code)), null, `code ${code}`);
     }
   });
 
-  it('KEEPS a plain-object rejection whose code is outside the reserved range', () => {
+  it('drops the dominant production shape: an EIP-1193 4001 from the wallet', () => {
+    // 8 of the issue's 9 events, including its first, were this payload. The
+    // original rule matched only the one -32603 event, so the issue kept
+    // regressing after every resolve.
+    assert.equal(marketingBeforeSend({
+      exception: {
+        values: [{
+          type: 'UnhandledRejection',
+          value: 'Object captured as promise rejection with keys: code, message',
+        }],
+      },
+      extra: { __serialized__: { code: 4001, message: 'synthetic wallet account error' } },
+    }), null);
+  });
+
+  it('drops every EIP-1193 provider error code', () => {
+    // EIP-1193 §Provider Errors: 4001 user rejected, 4100 unauthorized,
+    // 4200 unsupported method, 4900 disconnected, 4901 chain disconnected.
+    for (const code of [4001, 4100, 4200, 4900, 4901]) {
+      assert.equal(marketingBeforeSend(rejection(code)), null, `code ${code}`);
+    }
+  });
+
+  it('KEEPS a plain-object rejection whose code is not protocol-defined', () => {
     // Positive control: our own bundle rejecting with `{code, message}` — an
-    // HTTP status, an app error code, EIP-1193's own 4001 — must still report.
-    for (const code of [500, 4001, -1, 0]) {
+    // HTTP status or an app error code — must still report. The neighbours of
+    // every EIP-1193 code pin the set as exact values, not a 4000-4999 range.
+    for (const code of [500, 4000, 4002, 4099, 4101, 4199, 4201, 4899, 4902, -1, 0, -31999, -32769]) {
       assert.ok(marketingBeforeSend(rejection(code)) !== null, `code ${code}`);
     }
   });
@@ -888,6 +911,8 @@ describe('marketing beforeSend — wallet JSON-RPC rejection (WORLDMONITOR-107)'
     // Absence of evidence is not evidence of an extension.
     assert.ok(marketingBeforeSend(rejection(undefined)) !== null);
     assert.ok(marketingBeforeSend(rejection('-32603')) !== null, 'string code is not proof');
+    assert.ok(marketingBeforeSend(rejection('4001')) !== null, 'string EIP-1193 code is not proof');
+    assert.ok(marketingBeforeSend(rejection(4001.5)) !== null, 'non-integer code is not proof');
     assert.ok(marketingBeforeSend({
       exception: { values: [{ type: 'UnhandledRejection', value: 'Object captured as promise rejection with keys: code, message' }] },
     }) !== null, 'no extra at all');
@@ -945,6 +970,52 @@ describe('marketing beforeSend — wallet JSON-RPC rejection (WORLDMONITOR-107)'
       .map((f) => f.rel);
     assert.deepEqual(offenders, [],
       'a JSON-RPC client on the marketing surface invalidates the WORLDMONITOR-107 rule');
+  });
+
+  // Wallet-provider access, a Clerk Web3 sign-in call, or a literal EIP-1193
+  // code. Bare `ethereum` is not enough: the teaser strip quotes the coin by
+  // that id. The lookarounds skip decimals such as a coordinate ending in
+  // `.4100`.
+  //
+  // The Clerk half matters because `@clerk/clerk-js` bundles wallet SDKs and
+  // its Web3 helpers rethrow provider errors. That path is reachable only when
+  // our code calls those helpers (scanned here) or Web3 sign-in is enabled on
+  // the Clerk instance, which no repo test can see.
+  const WALLET_PROVIDER_CODE =
+    /\bwindow\.ethereum\b|\bethereum\.(?:request|enable|send|on)\b|\beth_[a-z]\w*|eip-?1193|\bauthenticateWith(?:Metamask|CoinbaseWallet|OKXWallet|Base|Solana|Web3)\b|\bweb3_?wallet\b|(?<![\d.])(?:4001|4100|4200|4900|4901)(?![\d.])/i;
+
+  it('pins the marketing bundle as wallet-free, which is what licenses the EIP-1193 codes', () => {
+    // The EIP-1193 codes prove third-party origin only while no first-party code
+    // here talks to a wallet provider or mints one of those codes itself.
+    const offenders = marketingFirstPartySources()
+      .filter((f) => !f.rel.includes('sentry-filter-policy'))
+      .filter((f) => WALLET_PROVIDER_CODE.test(f.code))
+      .map((f) => f.rel);
+    assert.deepEqual(offenders, [],
+      'wallet-provider code on the marketing surface invalidates the WORLDMONITOR-107 EIP-1193 rule');
+  });
+
+  it('the wallet-free scan flags real provider code and ignores coin ids and decimals', () => {
+    for (const code of [
+      "await window.ethereum.request({ method: 'eth_requestAccounts' })",
+      'provider.ethereum.on("accountsChanged", fn)',
+      'reject({ code: 4001, message: "User rejected" })',
+      'if (err.code === 4900) retry()',
+      '// EIP-1193 provider',
+      'await clerk.authenticateWithMetamask({ redirectUrl })',
+      'await signIn.authenticateWithCoinbaseWallet()',
+      "strategy: 'web3_wallet'",
+    ]) {
+      assert.ok(WALLET_PROVIDER_CODE.test(code), `must flag: ${code}`);
+    }
+    for (const code of [
+      "const CRYPTO_QUOTE_IDS = ['bitcoin', 'ethereum'];",
+      "ETH: 'Ethereum',",
+      "node('khorgos', 'Khorgos', 'crossing', 44.2140, 80.4100)",
+      'const port = 40010;',
+    ]) {
+      assert.ok(!WALLET_PROVIDER_CODE.test(code), `must not flag: ${code}`);
+    }
   });
 
   it('the JSON-RPC scan reaches the whole bundle, shared/ included', () => {

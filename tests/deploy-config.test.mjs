@@ -1302,6 +1302,27 @@ describe('welcome landing page routing', () => {
     }
   });
 
+  it('opens deployment and branch preview roots through the dashboard route', () => {
+    for (const host of [
+      'worldmonitor-h0zk88n4l-eliewm.vercel.app',
+      'worldmonitor-git-perf-defer-dashboard-app-eliewm.vercel.app',
+    ]) {
+      const redirect = firstRedirectFor({ host, path: '/' });
+      assert.equal(redirect?.destination, '/dashboard');
+      assert.equal(redirect.permanent, false);
+      assert.equal(firstRewriteFor({ host, path: redirect.destination })?.destination, DASHBOARD_HTML_DESTINATION);
+      assert.equal(firstRedirectFor({ host, path: '/', query: { mode: 'agent' } }), null);
+      assert.equal(firstRewriteFor({ host, path: '/', query: { mode: 'agent' } })?.destination, '/agent-view.json');
+    }
+  });
+
+  it('keeps preview root routing off production homepages, unknown pages, and lookalike hosts', () => {
+    for (const host of ['worldmonitor.app', 'www.worldmonitor.app', 'example.com', 'preview.vercel.app.evil.example']) {
+      assert.equal(firstRedirectFor({ host, path: '/' }), null);
+    }
+    assert.equal(firstRedirectFor({ host: 'preview.vercel.app', path: '/missing-page' }), null);
+  });
+
   it('keeps variant canonicals aligned with the /dashboard routing strategy', () => {
     const variantUrls = getVariantUrls();
     assert.equal(variantUrls.full, 'https://www.worldmonitor.app/dashboard');

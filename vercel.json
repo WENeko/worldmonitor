@@ -4,6 +4,7 @@
   "crons": [],
   "redirects": [
     { "source": "/", "has": [{ "type": "host", "value": "^(?:tech|finance|commodity|happy|energy)\\.worldmonitor\\.app$" }], "missing": [{ "type": "query", "key": "mode", "value": "agent" }], "destination": "/dashboard", "permanent": true },
+    { "source": "/", "has": [{ "type": "host", "value": "^[a-z0-9-]+\\.vercel\\.app$" }], "missing": [{ "type": "query", "key": "mode", "value": "agent" }], "destination": "/dashboard", "permanent": false },
     { "source": "/", "has": [{ "type": "host", "value": "^api\\.worldmonitor\\.app$" }], "destination": "https://www.worldmonitor.app/", "permanent": true },
     { "source": "/docs/:match(.*)", "has": [{ "type": "host", "value": "^(?:tech|finance|commodity|happy|energy|api)\\.worldmonitor\\.app$" }], "destination": "https://www.worldmonitor.app/docs/:match", "permanent": true },
     { "source": "/blog", "has": [{ "type": "host", "value": "^(?:tech|finance|commodity|happy|energy|api)\\.worldmonitor\\.app$" }], "destination": "https://www.worldmonitor.app/blog/", "permanent": true },
