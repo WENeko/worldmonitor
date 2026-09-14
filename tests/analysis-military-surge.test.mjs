@@ -22,6 +22,13 @@ import { MILITARY_BASES_EXPANDED } from '../shared/military-bases-data.ts';
 
 const HOUR_MS = 60 * 60 * 1000;
 
+it('posture theaters reference only regions emitted by the presence detector', () => {
+  const regionIds = new Set(SENSITIVE_REGIONS.map(region => region.id));
+  for (const theater of POSTURE_THEATERS) {
+    for (const region of theater.regions) assert.ok(regionIds.has(region), `${theater.id}: ${region}`);
+  }
+});
+
 // Al Udeid (Qatar) — a `middle-east` theater base, so flights parked on it
 // resolve their theater through the proximity lookup rather than the 1500km
 // center fallback.

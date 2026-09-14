@@ -930,7 +930,6 @@
   "components": {
     "webcams": {
       "paused": "Webcams paused",
-      "pausedIdle": "Webcams paused — move mouse to resume",
       "play": "Play",
       "previewStatus": "Live preview",
       "regions": {
@@ -1639,9 +1638,12 @@
       "compiledFrom": "Compiled from {{stories}} stories across {{sources}} sources",
       "provenanceTitle": "Coverage provenance: how many ingested stories and distinct sources this brief was selected from",
       "briefFreshness": "Generated {{minutes}}m ago · newest source {{hours}}h old",
-      "briefStoryDetails": "Story details ({{count}})",
+      "briefStoryDetails": "Подробиці новини ({{count}})",
       "sources_few": "{{count}} джерела",
-      "sources_many": "{{count}} джерел"
+      "sources_many": "{{count}} джерел",
+      "streamIdleStopLabel": "Зупинити пряму трансляцію відео при бездіяльності",
+      "streamIdleStopDesc": "Зупиняє Live News і Live Webcams після цього часу без активності та показує повідомлення на панелі.",
+      "streamIdleStopNever": "Ніколи"
     },
     "settings": {
       "exportSettings": "Export Settings",
@@ -2743,7 +2745,14 @@
       "analyzing": "Analyzing...",
       "viewOnMap": "View on map",
       "signals_few": "{{count}} сигнали",
-      "signals_many": "{{count}} сигналів"
+      "signals_many": "{{count}} сигналів",
+      "waiting": "Очікування наступного оновлення даних. Ця панель оновлюється автоматично.",
+      "offline": "Очікування з’єднання. Ця панель оновиться автоматично після відновлення з’єднання.",
+      "updated": "Оновлено {{time}}",
+      "saved": "Останнє відоме оновлення {{time}} · Перевірка оновлень",
+      "savedOffline": "Останнє відоме оновлення {{time}} · Немає з’єднання",
+      "localSignals": "На основі завантажених сигналів панелі моніторингу",
+      "emptySaved": "В останньому відомому оновленні конвергенції не виявлено."
     },
     "thermalEscalation": {
       "title": "Thermal Escalation",
@@ -2917,6 +2926,14 @@
       "captured": "Завантажено. Перед збереженням перевірте дати спостережень та обмеження.",
       "failed": "Не вдалося завантажити сценарії. Перевірте доступ і повторіть спробу. Немає результату для експорту.",
       "locked": "Зведення для ухвалення рішення доступне в Pro."
+    },
+    "liveMedia": {
+      "idleStatus": "Призупинено через бездіяльність",
+      "idleBody": "Пряму трансляцію відео зупинено після {{duration}} без активності миші, клавіатури чи сенсора.",
+      "idleResume": "Відновити",
+      "idleKeepPlaying": "Продовжити відтворення при бездіяльності",
+      "idleSettingsHint": "Змінити це можна будь-коли в Параметри › Медіа.",
+      "idleKeepPlayingToast": "Пряма трансляція відео продовжиться при бездіяльності. Змініть у Параметри › Медіа."
     }
   },
   "popups": {

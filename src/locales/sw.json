@@ -924,7 +924,6 @@
   "components": {
     "webcams": {
       "paused": "Kamera za wavuti zimesitishwa",
-      "pausedIdle": "Kamera za wavuti zimesitishwa - sogeza kipanya ili uendelee",
       "play": "Cheza",
       "previewStatus": "Onyesho la kukagua moja kwa moja",
       "regions": {
@@ -1631,7 +1630,10 @@
       "compiledFrom": "Imekusanywa kutoka kwa hadithi {{stories}} kwenye vyanzo {{sources}}",
       "provenanceTitle": "Utangulizi wa habari: ni hadithi ngapi zilizomezwa na vyanzo tofauti muhtasari huu ulichaguliwa kutoka",
       "briefFreshness": "Ilizalishwa dakika {{minutes}} zilizopita · chanzo kipya zaidi cha saa {{hours}}",
-      "briefStoryDetails": "Story details ({{count}})"
+      "briefStoryDetails": "Maelezo ya habari ({{count}})",
+      "streamIdleStopLabel": "Simamisha video moja kwa moja wakati umekaa bila kufanya kitu",
+      "streamIdleStopDesc": "Husimamisha Habari za Moja kwa Moja na Kamera za Moja kwa Moja baada ya muda huu bila shughuli na kuonyesha onyo katika paneli.",
+      "streamIdleStopNever": "Kamwe"
     },
     "settings": {
       "exportSettings": "Hamisha Mipangilio",
@@ -2609,7 +2611,14 @@
       "signals_one": "{{count}} mawimbi",
       "signals_other": "Ishara {{count}}",
       "analyzing": "Inachanganua...",
-      "viewOnMap": "Tazama kwenye ramani"
+      "viewOnMap": "Tazama kwenye ramani",
+      "waiting": "Inasubiri sasisho linalofuata la data. Paneli hii husasishwa kiotomatiki.",
+      "offline": "Inasubiri muunganisho. Paneli hii husasishwa kiotomatiki unapounganishwa tena mtandaoni.",
+      "updated": "Imesasishwa {{time}}",
+      "saved": "Sasisho la mwisho linalojulikana {{time}} · Inatafuta masasisho",
+      "savedOffline": "Sasisho la mwisho linalojulikana {{time}} · Nje ya mtandao",
+      "localSignals": "Kulingana na ishara zilizopakiwa kwenye dashibodi",
+      "emptySaved": "Hakukuwa na muunganiko katika sasisho la mwisho linalojulikana."
     },
     "thermalEscalation": {
       "title": "Kuongezeka kwa joto",
@@ -2879,6 +2888,14 @@
       "captured": "Imepatikana. Kagua tarehe za uchunguzi na vikwazo kabla ya kupakua.",
       "failed": "Imeshindwa kupata hali hizo. Kagua ruhusa yako ya kufikia na ujaribu tena. Hakuna matokeo ya kuhamisha.",
       "locked": "Muhtasari wa uamuzi unapatikana kwa Pro."
+    },
+    "liveMedia": {
+      "idleStatus": "Iliyotegezwa kwa sababu ya kutokuwepo na kufanya kitu",
+      "idleBody": "Video moja kwa moja ilisimamishwa baada ya {{duration}} bila shughuli ya kipanya, kibodi au kugusa.",
+      "idleResume": "Endelea",
+      "idleKeepPlaying": "Endelea kumweka video moja kwa moja ikicheza wakati umekaa bila kufanya kitu",
+      "idleSettingsHint": "Badilisha hii wakati wowote katika Mipangilio › Media.",
+      "idleKeepPlayingToast": "Video moja kwa moja itaendelea kumweka ikicheza wakati umekaa bila kufanya kitu. Badilisha katika Mipangilio › Media."
     }
   },
   "popups": {

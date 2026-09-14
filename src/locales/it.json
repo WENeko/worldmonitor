@@ -875,7 +875,6 @@
         "space": "SPAZIO"
       },
       "paused": "Webcam in pausa",
-      "pausedIdle": "Webcam in pausa — muovi il mouse per riprendere",
       "play": "Riproduci",
       "previewStatus": "Anteprima live"
     },
@@ -1842,7 +1841,10 @@
       "provenanceTitle": "Provenienza della copertura: quante storie acquisite e quante fonti distinte sono state utilizzate per selezionare questo briefing",
       "compiledFrom": "Compilato da {{stories}} storie provenienti da {{sources}} fonti",
       "briefFreshness": "Generato {{minutes}}m fa · fonte più recente {{hours}}h fa",
-      "briefStoryDetails": "Story details ({{count}})"
+      "briefStoryDetails": "Dettagli della notizia ({{count}})",
+      "streamIdleStopLabel": "Arresta il video in diretta durante l'inattività",
+      "streamIdleStopDesc": "Interrompe Live News e Live Webcams dopo questo periodo di inattività e mostra un avviso nel pannello.",
+      "streamIdleStopNever": "Mai"
     },
     "etfFlows": {
       "unavailable": "Dati ETF temporaneamente non disponibili",
@@ -2641,7 +2643,14 @@
       "signals_other": "{{count}} segnali",
       "analyzing": "Analisi in corso...",
       "viewOnMap": "Visualizza sulla mappa",
-      "signals_many": "{{count}} segnali"
+      "signals_many": "{{count}} segnali",
+      "waiting": "In attesa del prossimo aggiornamento dei dati. Questo pannello si aggiorna automaticamente.",
+      "offline": "In attesa di una connessione. Questo pannello si aggiorna automaticamente quando torni online.",
+      "updated": "Aggiornato {{time}}",
+      "saved": "Ultimo aggiornamento noto {{time}} · Ricerca di aggiornamenti",
+      "savedOffline": "Ultimo aggiornamento noto {{time}} · Non in linea",
+      "localSignals": "Basato sui segnali caricati nella dashboard",
+      "emptySaved": "Nessuna convergenza nell’ultimo aggiornamento noto."
     },
     "thermalEscalation": {
       "title": "Escalation Termica",
@@ -2829,6 +2838,14 @@
       "captured": "Acquisizione completata. Controlla le date delle osservazioni e i vincoli prima del download.",
       "failed": "Impossibile acquisire gli scenari. Controlla il tuo accesso e riprova. Nessun risultato da esportare.",
       "locked": "La scheda decisionale è disponibile con Pro."
+    },
+    "liveMedia": {
+      "idleStatus": "Pausa per inattività",
+      "idleBody": "Il video in diretta si è interrotto dopo {{duration}} senza attività del mouse, della tastiera o dello schermo tattile.",
+      "idleResume": "Riprendi",
+      "idleKeepPlaying": "Mantieni la riproduzione durante l'inattività",
+      "idleSettingsHint": "Cambia questa impostazione in qualsiasi momento in Impostazioni › Media.",
+      "idleKeepPlayingToast": "Il video in diretta continuerà a riprodursi durante l'inattività. Modifica in Impostazioni › Media."
     }
   },
   "popups": {

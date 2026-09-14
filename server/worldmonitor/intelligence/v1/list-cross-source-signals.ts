@@ -11,22 +11,10 @@ import { getCachedJson } from '../../../_shared/redis';
 
 const REDIS_KEY = 'intelligence:cross-source-signals:v1';
 
-interface CachedSignal {
-  id?: string;
-  type?: string;
-  theater?: string;
-  summary?: string;
-  severity?: string;
-  severityScore?: number;
-  detectedAt?: number;
-  contributingTypes?: string[];
-  signalCount?: number;
-}
-
 interface CachedPayload {
-  signals?: CachedSignal[];
-  evaluatedAt?: number;
-  compositeCount?: number;
+  signals?: unknown;
+  evaluatedAt?: unknown;
+  compositeCount?: unknown;
 }
 
 const VALID_SIGNAL_TYPES = new Set<CrossSourceSignalType>([
@@ -62,19 +50,19 @@ const VALID_SEVERITIES = new Set<CrossSourceSignalSeverity>([
   'CROSS_SOURCE_SIGNAL_SEVERITY_CRITICAL',
 ]);
 
-function toSignalType(raw: string | undefined): CrossSourceSignalType {
+function toSignalType(raw: unknown): CrossSourceSignalType {
   return VALID_SIGNAL_TYPES.has(raw as CrossSourceSignalType)
     ? (raw as CrossSourceSignalType)
     : 'CROSS_SOURCE_SIGNAL_TYPE_UNSPECIFIED';
 }
 
-function toSeverity(raw: string | undefined): CrossSourceSignalSeverity {
+function toSeverity(raw: unknown): CrossSourceSignalSeverity {
   return VALID_SEVERITIES.has(raw as CrossSourceSignalSeverity)
     ? (raw as CrossSourceSignalSeverity)
     : 'CROSS_SOURCE_SIGNAL_SEVERITY_UNSPECIFIED';
 }
 
-function normalizeSignal(s: CachedSignal, index: number): CrossSourceSignal {
+function normalizeSignal(s: Record<string, unknown>, index: number): CrossSourceSignal {
   return {
     id: String(s.id || `signal:${index}`),
     type: toSignalType(s.type),
@@ -82,9 +70,9 @@ function normalizeSignal(s: CachedSignal, index: number): CrossSourceSignal {
     summary: String(s.summary || ''),
     severity: toSeverity(s.severity),
     severityScore: typeof s.severityScore === 'number' && Number.isFinite(s.severityScore) ? s.severityScore : 0,
-    detectedAt: typeof s.detectedAt === 'number' && Number.isFinite(s.detectedAt) ? s.detectedAt : Date.now(),
+    detectedAt: typeof s.detectedAt === 'number' && Number.isFinite(s.detectedAt) ? s.detectedAt : 0,
     contributingTypes: Array.isArray(s.contributingTypes) ? s.contributingTypes.map(String) : [],
-    signalCount: typeof s.signalCount === 'number' ? s.signalCount : 0,
+    signalCount: typeof s.signalCount === 'number' && Number.isFinite(s.signalCount) ? s.signalCount : 0,
   };
 }
 
@@ -99,12 +87,16 @@ export const listCrossSourceSignals: IntelligenceServiceHandler['listCrossSource
 
   const payload = raw as CachedPayload;
   const signals = Array.isArray(payload.signals)
-    ? payload.signals.map(normalizeSignal)
+    ? payload.signals.flatMap((signal, index) => (
+      signal && typeof signal === 'object' && !Array.isArray(signal)
+        ? [normalizeSignal(signal as Record<string, unknown>, index)]
+        : []
+    ))
     : [];
 
   return {
     signals,
-    evaluatedAt: typeof payload.evaluatedAt === 'number' ? payload.evaluatedAt : 0,
-    compositeCount: typeof payload.compositeCount === 'number' ? payload.compositeCount : 0,
+    evaluatedAt: typeof payload.evaluatedAt === 'number' && Number.isFinite(payload.evaluatedAt) ? payload.evaluatedAt : 0,
+    compositeCount: typeof payload.compositeCount === 'number' && Number.isFinite(payload.compositeCount) ? payload.compositeCount : 0,
   };
 };

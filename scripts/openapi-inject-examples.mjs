@@ -1035,6 +1035,14 @@ function injectDisplacementYearContract(spec) {
 
 function injectSpecExamples(spec) {
   let changed = injectDisplacementYearContract(spec);
+  const runId = spec.components?.schemas?.GetSimulationOutcomeRequest?.properties?.runId;
+  const runIdParameter = spec.paths?.['/api/forecast/v1/get-simulation-outcome']?.get?.parameters
+    ?.find((item) => item?.in === 'query' && item.name === 'runId');
+  if (runId && runIdParameter) {
+    const schema = { type: 'string', maxLength: runId.maxLength, pattern: runId.pattern, example: runId.example ?? runId.examples?.[0] };
+    if (!eq(runIdParameter.schema, schema)) changed = true;
+    runIdParameter.schema = schema;
+  }
   let operations = 0;
   let requestBearingOperations = 0;
   let responseOperations = 0;
@@ -1351,6 +1359,12 @@ function patchYamlExamples(raw, spec, label) {
   if (displacementParameter?.schema) {
     const loc = findOperation(lines, '/api/displacement/v1/get-displacement-summary', 'get', label);
     replaceParamSchema(lines, loc.start, loc.end, 'year', displacementParameter.schema);
+  }
+  const runIdPath = '/api/forecast/v1/get-simulation-outcome';
+  const runIdParameter = spec.paths?.[runIdPath]?.get?.parameters?.find((item) => item?.in === 'query' && item.name === 'runId');
+  if (runIdParameter) {
+    const loc = findOperation(lines, runIdPath, 'get', label);
+    replaceParamSchema(lines, loc.start, loc.end, 'runId', runIdParameter.schema);
   }
   for (const [path, ops] of Object.entries(spec.paths ?? {})) {
     for (const [method, op] of Object.entries(ops ?? {})) {

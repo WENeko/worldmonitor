@@ -7515,6 +7515,14 @@ async function seedSocialVelocity() {
       await new Promise(r => setTimeout(r, 500));
       const posts = await fetchRedditHot(sub, fetchFailures);
       for (const p of posts) {
+        if (!p || typeof p.permalink !== 'string' || !p.permalink.startsWith('/r/')) continue;
+        let postUrl;
+        try {
+          postUrl = new URL(p.permalink, 'https://reddit.com');
+          if (postUrl.origin !== 'https://reddit.com'
+            || !/^\/r\/[A-Za-z0-9_]+\/comments\/[A-Za-z0-9]+(?:\/|$)/.test(postUrl.pathname)
+            || postUrl.href.length > 2048) continue;
+        } catch { continue; }
         // Deduplicate cross-subreddit reposts of the same article URL.
         const articleUrl = p.url || '';
         let articleHostname = '';
@@ -7529,7 +7537,7 @@ async function seedSocialVelocity() {
           id: String(p.id || ''),
           title: String(p.title || '').slice(0, 300),
           subreddit: sub,
-          url: `https://reddit.com${p.permalink || ''}`,
+          url: postUrl.href,
           score: p.score || 0,
           upvoteRatio: p.upvote_ratio || 0,
           numComments: p.num_comments || 0,
@@ -10985,6 +10993,24 @@ const polymarketCache = new Map(); // key: query string → { data, timestamp }
 const polymarketInflight = new Map(); // key → Promise (dedup concurrent requests)
 const POLYMARKET_CACHE_TTL_MS = 10 * 60 * 1000; // 10 min — reduce upstream pressure
 const POLYMARKET_NEG_TTL_MS = 5 * 60 * 1000; // 5 min negative cache on 429/error
+const POLYMARKET_MAX_BODY_BYTES = 2 * 1024 * 1024;
+const POLYMARKET_MAX_CACHE_ENTRIES = 64;
+
+function cachePolymarketResult(key, entry) {
+  polymarketCache.delete(key);
+  while (polymarketCache.size >= POLYMARKET_MAX_CACHE_ENTRIES) {
+    polymarketCache.delete(polymarketCache.keys().next().value);
+  }
+  polymarketCache.set(key, entry);
+}
+
+function backoffPolymarketResult(key) {
+  const cached = polymarketCache.get(key);
+  const now = Date.now();
+  cachePolymarketResult(key, cached?.data
+    ? { ...cached, retryAt: now + POLYMARKET_NEG_TTL_MS }
+    : { data: null, timestamp: now - POLYMARKET_CACHE_TTL_MS + POLYMARKET_NEG_TTL_MS });
+}
 
 // Circuit breaker — stops upstream requests after repeated failures to prevent OOM
 const polymarketCircuitBreaker = { failures: 0, openUntil: 0 };
@@ -11028,7 +11054,7 @@ function acquirePolymarketSlot() {
 function fetchPolymarketUpstream(cacheKey, endpoint, params, tag) {
   return acquirePolymarketSlot().catch(() => 'REJECTED').then((slotResult) => {
     if (slotResult === 'REJECTED') {
-      polymarketCache.set(cacheKey, { data: '[]', timestamp: Date.now() - POLYMARKET_CACHE_TTL_MS + POLYMARKET_NEG_TTL_MS });
+      backoffPolymarketResult(cacheKey);
       return null;
     }
     const gammaUrl = `https://gamma-api.polymarket.com/${endpoint}?${params}`;
@@ -11044,11 +11070,11 @@ function fetchPolymarketUpstream(cacheKey, endpoint, params, tag) {
           polymarketCircuitBreaker.failures = 0;
         } else {
           tripPolymarketCircuitBreaker();
-          polymarketCache.set(cacheKey, { data: '[]', timestamp: Date.now() - POLYMARKET_CACHE_TTL_MS + POLYMARKET_NEG_TTL_MS });
+          backoffPolymarketResult(cacheKey);
         }
       }
       const request = https.get(gammaUrl, {
-        headers: { 'Accept': 'application/json' },
+        headers: { 'Accept': 'application/json', 'User-Agent': CHROME_UA },
         timeout: 10000,
       }, (response) => {
         if (response.statusCode !== 200) {
@@ -11059,10 +11085,30 @@ function fetchPolymarketUpstream(cacheKey, endpoint, params, tag) {
           return;
         }
         let data = '';
-        response.on('data', chunk => data += chunk);
+        let bytes = 0;
+        response.on('data', chunk => {
+          if (finalized) return;
+          bytes += Buffer.byteLength(chunk);
+          if (bytes > POLYMARKET_MAX_BODY_BYTES) {
+            finalize(false);
+            response.destroy();
+            request.destroy();
+            resolve(null);
+            return;
+          }
+          data += chunk;
+        });
         response.on('end', () => {
+          if (finalized) return;
+          try {
+            if (!Array.isArray(JSON.parse(data))) throw new Error('Expected market list');
+          } catch {
+            finalize(false);
+            resolve(null);
+            return;
+          }
           finalize(true);
-          polymarketCache.set(cacheKey, { data, timestamp: Date.now() });
+          cachePolymarketResult(cacheKey, { data, timestamp: Date.now() });
           resolve(data);
         });
         response.on('error', () => { finalize(false); resolve(null); });
@@ -11094,16 +11140,17 @@ function handlePolymarketRequest(req, res) {
   // query-string ordering, tag vs tag_slug alias, or varying limit values.
   // Cache key excludes limit — always fetch upstream with limit=50, slice on serve.
   // This prevents cache fragmentation from different callers (limit=20 vs limit=30).
-  const endpoint = url.searchParams.get('endpoint') || 'markets';
+  const endpoint = url.searchParams.get('endpoint') === 'events' ? 'events' : 'markets';
   const requestedLimit = Math.max(1, Math.min(100, parseInt(url.searchParams.get('limit') || '50', 10) || 50));
   const upstreamLimit = 50; // canonical upstream limit for cache sharing
   const params = new URLSearchParams();
-  params.set('closed', url.searchParams.get('closed') || 'false');
-  params.set('order', url.searchParams.get('order') || 'volume');
-  params.set('ascending', url.searchParams.get('ascending') || 'false');
+  params.set('closed', url.searchParams.get('closed') === 'true' ? 'true' : 'false');
+  const order = url.searchParams.get('order');
+  params.set('order', ['volume', 'liquidity', 'startDate', 'endDate', 'spread'].includes(order) ? order : 'volume');
+  params.set('ascending', url.searchParams.get('ascending') === 'true' ? 'true' : 'false');
   params.set('limit', String(upstreamLimit));
-  const tag = url.searchParams.get('tag') || url.searchParams.get('tag_slug');
-  if (tag && endpoint === 'events') params.set('tag_slug', tag.replace(/[^a-z0-9-]/gi, '').slice(0, 100));
+  const tag = (url.searchParams.get('tag') || url.searchParams.get('tag_slug') || '').replace(/[^a-z0-9-]/gi, '').slice(0, 100);
+  if (tag && endpoint === 'events') params.set('tag_slug', tag);
 
   const cacheKey = endpoint + ':' + params.toString();
 
@@ -11118,6 +11165,7 @@ function handlePolymarketRequest(req, res) {
 
   const cached = polymarketCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < POLYMARKET_CACHE_TTL_MS) {
+    if (cached.data === null) return safeEnd(res, 502, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, JSON.stringify({ error: 'Polymarket upstream unavailable' }));
     return sendCompressed(req, res, 200, {
       'Content-Type': 'application/json',
       'Cache-Control': 'public, max-age=600',
@@ -11127,18 +11175,19 @@ function handlePolymarketRequest(req, res) {
     }, sliceToLimit(cached.data));
   }
 
-  // Circuit breaker open — serve stale cache or empty, skip upstream
-  if (Date.now() < polymarketCircuitBreaker.openUntil) {
-    if (cached) {
+  const circuitOpen = Date.now() < polymarketCircuitBreaker.openUntil;
+  if (circuitOpen || Date.now() < (cached?.retryAt || 0)) {
+    if (cached?.data) {
       return sendCompressed(req, res, 200, {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-store',
+        'CDN-Cache-Control': 'no-store',
         'X-Cache': 'STALE',
-        'X-Circuit': 'OPEN',
+        ...(circuitOpen ? { 'X-Circuit': 'OPEN' } : {}),
         'X-Polymarket-Source': 'railway-stale',
-      }, cached.data);
+      }, sliceToLimit(cached.data));
     }
-    return safeEnd(res, 200, { 'Content-Type': 'application/json', 'X-Circuit': 'OPEN' }, JSON.stringify([]));
+    return safeEnd(res, 503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Circuit': 'OPEN' }, JSON.stringify({ error: 'Polymarket upstream unavailable' }));
   }
 
   let inflight = polymarketInflight.get(cacheKey);
@@ -11158,7 +11207,7 @@ function handlePolymarketRequest(req, res) {
         'X-Cache': 'MISS',
         'X-Polymarket-Source': 'railway',
       }, sliceToLimit(data));
-    } else if (cached) {
+    } else if (cached?.data) {
       sendCompressed(req, res, 200, {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-store',
@@ -11167,7 +11216,7 @@ function handlePolymarketRequest(req, res) {
         'X-Polymarket-Source': 'railway-stale',
       }, sliceToLimit(cached.data));
     } else {
-      safeEnd(res, 200, { 'Content-Type': 'application/json' }, JSON.stringify([]));
+      safeEnd(res, 502, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, JSON.stringify({ error: 'Polymarket upstream unavailable' }));
     }
   });
 }
@@ -11208,7 +11257,7 @@ setInterval(() => {
     if (now - entry.timestamp > WORLDBANK_CACHE_TTL_MS * 2) worldbankCache.delete(key);
   }
   for (const [key, entry] of polymarketCache) {
-    if (now - entry.timestamp > POLYMARKET_CACHE_TTL_MS * 2) polymarketCache.delete(key);
+    if (now - entry.timestamp > POLYMARKET_CACHE_TTL_MS * 2 && now >= (entry.retryAt || 0)) polymarketCache.delete(key);
   }
   for (const [key, entry] of yahooChartCache) {
     if (now - entry.ts > YAHOO_CHART_CACHE_TTL_MS * 2) yahooChartCache.delete(key);
@@ -11534,11 +11583,20 @@ async function ytFetch(url) {
 
 const ytLiveCache = new Map();
 const YT_CACHE_TTL = 5 * 60 * 1000;
+const YT_CHANNEL_ID_RE = /^UC[A-Za-z0-9_-]{22}$/;
+const YT_HANDLE_RE = /^[\p{L}\p{N}](?:[\p{L}\p{N}\p{M}._·-]{0,28}[\p{L}\p{N}\p{M}])?$/u;
 
 function handleYouTubeLiveRequest(req, res) {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const channel = url.searchParams.get('channel');
   const videoIdParam = url.searchParams.get('videoId');
+  const handle = channel?.replace(/^@/, '').normalize('NFC') || '';
+  if ((channel && (channel.length > 128 || channel !== channel.trim()
+    || (!YT_CHANNEL_ID_RE.test(channel) && !YT_HANDLE_RE.test(handle))))
+    || (videoIdParam && (videoIdParam.length !== 11 || !/^[A-Za-z0-9_-]{11}$/.test(videoIdParam)))) {
+    return sendCompressed(req, res, 400, { 'Content-Type': 'application/json' },
+      JSON.stringify({ error: 'Invalid YouTube handle, channel ID or video ID' }));
+  }
 
   if (videoIdParam && /^[A-Za-z0-9_-]{11}$/.test(videoIdParam)) {
     const cacheKey = `vid:${videoIdParam}`;
@@ -11571,7 +11629,7 @@ function handleYouTubeLiveRequest(req, res) {
       JSON.stringify({ error: 'Missing channel parameter' }));
   }
 
-  const channelHandle = channel.startsWith('@') ? channel : `@${channel}`;
+  const channelHandle = YT_CHANNEL_ID_RE.test(channel) ? channel : `@${handle.toLowerCase()}`;
   const cacheKey = `ch:${channelHandle}`;
   const cached = ytLiveCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < YT_CACHE_TTL) {
@@ -11581,7 +11639,8 @@ function handleYouTubeLiveRequest(req, res) {
     }, cached.json);
   }
 
-  const liveUrl = `https://www.youtube.com/${channelHandle}/live`;
+  const channelPath = YT_CHANNEL_ID_RE.test(channel) ? `channel/${channel}` : `@${encodeURIComponent(handle)}`;
+  const liveUrl = `https://www.youtube.com/${channelPath}/live`;
   ytFetch(liveUrl)
     .then(r => {
       if (!r.ok) {

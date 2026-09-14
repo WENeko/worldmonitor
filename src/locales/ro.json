@@ -858,7 +858,6 @@
   "components": {
     "webcams": {
       "paused": "Camerele web au fost întrerupte",
-      "pausedIdle": "Camere web întrerupte — mișcați mouse-ul pentru a relua",
       "regions": {
         "all": "TOATE",
         "mideast": "ORIENT. MIJ.",
@@ -1494,7 +1493,10 @@
       "provenanceTitle": "Proveniență acoperire: câte articole ingerate și surse distincte din care a fost selectat acest rezumat",
       "compiledFrom": "Compilat din {{stories}} povești din {{sources}} surse",
       "briefFreshness": "Generat {{minutes}}m în urmă · cea mai nouă sursă {{hours}}h vechime",
-      "briefStoryDetails": "Story details ({{count}})"
+      "briefStoryDetails": "Detalii despre știre ({{count}})",
+      "streamIdleStopLabel": "Oprește video live când este inactiv",
+      "streamIdleStopDesc": "Oprește Live News și Live Webcams după această perioadă fără activitate și afișează o notificare în panou.",
+      "streamIdleStopNever": "Niciodată"
     },
     "settings": {
       "exportSettings": "Exportare setări",
@@ -2641,7 +2643,14 @@
       "signals_other": "{{count}} semnale",
       "analyzing": "Se analizează...",
       "viewOnMap": "Vizualizare pe hartă",
-      "signals_few": "{{count}} semnale"
+      "signals_few": "{{count}} semnale",
+      "waiting": "Se așteaptă următoarea actualizare a datelor. Acest panou se actualizează automat.",
+      "offline": "Se așteaptă o conexiune. Acest panou se actualizează automat când reveniți online.",
+      "updated": "Actualizat {{time}}",
+      "saved": "Ultima actualizare cunoscută {{time}} · Se caută actualizări",
+      "savedOffline": "Ultima actualizare cunoscută {{time}} · Fără conexiune",
+      "localSignals": "Pe baza semnalelor încărcate în tabloul de bord",
+      "emptySaved": "Nu a existat convergență în ultima actualizare cunoscută."
     },
     "thermalEscalation": {
       "title": "Escaladare termică",
@@ -2829,6 +2838,14 @@
       "captured": "Încărcare completă. Verificați datele observațiilor și constrângerile înainte de descărcare.",
       "failed": "Scenariile nu au putut fi încărcate. Verificați accesul și încercați din nou. Nu există rezultate de exportat.",
       "locked": "Sinteza pentru decizie este disponibilă cu Pro."
+    },
+    "liveMedia": {
+      "idleStatus": "Pausat din cauza inactivității",
+      "idleBody": "Video live oprit după {{duration}} fără activitate mouse, tastatură sau tactilă.",
+      "idleResume": "Reluare",
+      "idleKeepPlaying": "Continuă redarea când este inactiv",
+      "idleSettingsHint": "Modifică acest lucru oricând în Setări › Media.",
+      "idleKeepPlayingToast": "Video live va continua redarea când este inactiv. Modifică în Setări › Media."
     }
   },
   "popups": {

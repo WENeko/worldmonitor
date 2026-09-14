@@ -852,7 +852,6 @@
   "components": {
     "webcams": {
       "paused": "摄像头已暂停",
-      "pausedIdle": "摄像头已暂停 — 移动鼠标以恢复",
       "regions": {
         "all": "全部",
         "mideast": "中东",
@@ -1486,7 +1485,10 @@
       "compiledFrom": "编译自 {{stories}} 条故事和 {{sources}} 个来源",
       "provenanceTitle": "覆盖来源：此摘要选自多少条摄取的故事和不同的来源",
       "briefFreshness": "生成于 {{minutes}}m 前 · 最新来源 {{hours}}h 前",
-      "briefStoryDetails": "Story details ({{count}})"
+      "briefStoryDetails": "报道详情 ({{count}})",
+      "streamIdleStopLabel": "空闲时停止实时视频",
+      "streamIdleStopNever": "从不",
+      "streamIdleStopDesc": "在此时间内无活动后停止实时新闻和实时网络摄像头，并在面板中显示通知。"
     },
     "settings": {
       "exportSettings": "导出设置",
@@ -2613,7 +2615,14 @@
       "empty": "未检测到活跃收敛",
       "signals_other": "{{count}} 个信号",
       "analyzing": "分析中...",
-      "viewOnMap": "在地图上查看"
+      "viewOnMap": "在地图上查看",
+      "waiting": "正在等待下一次数据更新。此面板会自动更新。",
+      "offline": "正在等待连接。恢复联网后，此面板会自动更新。",
+      "updated": "更新于 {{time}}",
+      "saved": "最近一次已知更新 {{time}} · 正在检查更新",
+      "savedOffline": "最近一次已知更新 {{time}} · 离线",
+      "localSignals": "基于仪表板中已加载的信号",
+      "emptySaved": "最近一次已知更新中未发现汇聚。"
     },
     "thermalEscalation": {
       "title": "热异常升级",
@@ -2791,6 +2800,14 @@
       "captured": "已获取。下载前请核查观测日期和限制条件。",
       "failed": "无法获取情景。请检查访问权限并重试。没有可导出的结果。",
       "locked": "决策简报面向 Pro 用户提供。"
+    },
+    "liveMedia": {
+      "idleStatus": "因不活动已暂停",
+      "idleBody": "在没有鼠标、键盘或触摸活动 {{duration}} 后，实时视频已停止。",
+      "idleResume": "继续",
+      "idleKeepPlaying": "空闲时继续播放",
+      "idleSettingsHint": "可随时在设置 › 媒体中更改。",
+      "idleKeepPlayingToast": "实时视频在空闲时将继续播放。在设置 › 媒体中更改。"
     }
   },
   "popups": {

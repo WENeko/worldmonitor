@@ -12,6 +12,7 @@ import type {
 
 import { sortBySeverityAndRecency } from './_shared';
 import { getCachedJson } from '../../../_shared/redis';
+import { resolveCountryCode } from '../../../../shared/country-code-resolve';
 
 const SEED_CACHE_KEY = 'unrest:events:v1';
 
@@ -21,10 +22,8 @@ function filterSeedEvents(
 ): UnrestEvent[] {
   let filtered = events;
   if (req.country) {
-    const country = req.country.toLowerCase();
-    filtered = filtered.filter(
-      (e) => e.country.toLowerCase() === country || e.country.toLowerCase().includes(country),
-    );
+    const country = resolveCountryCode(req.country);
+    filtered = country ? filtered.filter((e) => resolveCountryCode(e.country) === country) : [];
   }
   if (req.start > 0) {
     filtered = filtered.filter((e) => e.occurredAt >= req.start);

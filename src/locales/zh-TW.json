@@ -852,7 +852,6 @@
   "components": {
     "webcams": {
       "paused": "攝影機已暫停",
-      "pausedIdle": "攝影機已暫停 — 移動滑鼠以恢復",
       "regions": {
         "all": "全部",
         "mideast": "中東",
@@ -1486,7 +1485,10 @@
       "compiledFrom": "編譯自 {{stories}} 條故事和 {{sources}} 個來源",
       "provenanceTitle": "覆蓋來源：此摘要選自多少條攝取的故事和不同的來源",
       "briefFreshness": "生成於 {{minutes}}m 前 · 最新來源 {{hours}}h 前",
-      "briefStoryDetails": "Story details ({{count}})"
+      "briefStoryDetails": "報道詳情 ({{count}})",
+      "streamIdleStopLabel": "空閒時停止即時影片",
+      "streamIdleStopNever": "從不",
+      "streamIdleStopDesc": "在此時間內無活動後停止即時新聞和即時網路攝影機，並在面板中顯示通知。"
     },
     "settings": {
       "exportSettings": "匯出設定",
@@ -2613,7 +2615,14 @@
       "empty": "未檢測到活躍收斂",
       "signals_other": "{{count}} 個訊號",
       "analyzing": "分析中...",
-      "viewOnMap": "在地圖上檢視"
+      "viewOnMap": "在地圖上檢視",
+      "waiting": "正在等待下一次資料更新。此面板會自動更新。",
+      "offline": "正在等待連線。恢復聯網後，此面板會自動更新。",
+      "updated": "更新於 {{time}}",
+      "saved": "最近一次已知更新 {{time}} · 正在檢查更新",
+      "savedOffline": "最近一次已知更新 {{time}} · 離線",
+      "localSignals": "基於儀表板中已載入的訊號",
+      "emptySaved": "最近一次已知更新中未發現匯聚。"
     },
     "thermalEscalation": {
       "title": "熱異常升級",
@@ -2791,6 +2800,14 @@
       "captured": "已獲取。下載前請核查觀測日期和限制條件。",
       "failed": "無法獲取情景。請檢查存取權限並重試。沒有可匯出的結果。",
       "locked": "決策簡報面向 Pro 使用者提供。"
+    },
+    "liveMedia": {
+      "idleStatus": "因不活動已暫停",
+      "idleBody": "在沒有滑鼠、鍵盤或觸控活動 {{duration}} 後，即時影片已停止。",
+      "idleResume": "繼續",
+      "idleKeepPlaying": "空閒時繼續播放",
+      "idleSettingsHint": "可隨時在設定 › 媒體中更改。",
+      "idleKeepPlayingToast": "即時影片在空閒時將繼續播放。在設定 › 媒體中更改。"
     }
   },
   "popups": {

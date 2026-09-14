@@ -878,7 +878,6 @@
         "space": "KOSMOS"
       },
       "paused": "Kamery wstrzymane",
-      "pausedIdle": "Kamery wstrzymane — przesuń mysz, aby wznowić",
       "play": "Odtwórz",
       "previewStatus": "Podgląd na żywo"
     },
@@ -1755,7 +1754,10 @@
       "provenanceTitle": "Pochodzenie zasięgu: ile pozyskanych artykułów i odrębnych źródeł wybrano dla tego briefu",
       "compiledFrom": "Zebrane z {{stories}} artykułów z {{sources}} źródeł",
       "briefFreshness": "Wygenerowano {{minutes}}m temu · najnowsze źródło sprzed {{hours}}h",
-      "briefStoryDetails": "Story details ({{count}})"
+      "briefStoryDetails": "Szczegóły wiadomości ({{count}})",
+      "streamIdleStopLabel": "Zatrzymaj transmisję live gdy nieaktywna",
+      "streamIdleStopDesc": "Zatrzymuje Live News i Live Webcams po tym czasie bez aktywności i wyświetla powiadomienie w panelu.",
+      "streamIdleStopNever": "Nigdy"
     },
     "etfFlows": {
       "unavailable": "Dane ETF tymczasowo niedostępne",
@@ -2655,7 +2657,14 @@
       "analyzing": "Analiza...",
       "viewOnMap": "Wyświetl na mapie",
       "signals_few": "{{count}} sygnały",
-      "signals_many": "{{count}} sygnałów"
+      "signals_many": "{{count}} sygnałów",
+      "waiting": "Oczekiwanie na kolejną aktualizację danych. Ten panel aktualizuje się automatycznie.",
+      "offline": "Oczekiwanie na połączenie. Ten panel zaktualizuje się automatycznie po przywróceniu połączenia.",
+      "updated": "Zaktualizowano {{time}}",
+      "saved": "Ostatnia znana aktualizacja {{time}} · Sprawdzanie aktualizacji",
+      "savedOffline": "Ostatnia znana aktualizacja {{time}} · Brak połączenia",
+      "localSignals": "Na podstawie sygnałów załadowanych w panelu",
+      "emptySaved": "Brak konwergencji w ostatniej znanej aktualizacji."
     },
     "thermalEscalation": {
       "title": "Eskalacja termiczna",
@@ -2848,6 +2857,14 @@
       "captured": "Pobrano. Przed pobraniem pliku sprawdź daty obserwacji i ograniczenia.",
       "failed": "Nie udało się pobrać scenariuszy. Sprawdź dostęp i spróbuj ponownie. Brak wyniku do eksportu.",
       "locked": "Raport decyzyjny jest dostępny w Pro."
+    },
+    "liveMedia": {
+      "idleStatus": "Wstrzymana z powodu braku aktywności",
+      "idleBody": "Transmisja live zatrzymana po {{duration}} bez aktywności myszy, klawiatury lub ekranu dotykowego.",
+      "idleResume": "Wznów",
+      "idleKeepPlaying": "Kontynuuj odtwarzanie przy braku aktywności",
+      "idleSettingsHint": "Możesz to zmienić w dowolnym momencie w Ustawienia › Media.",
+      "idleKeepPlayingToast": "Transmisja live będzie kontynuowana przy braku aktywności. Zmień w Ustawienia › Media."
     }
   },
   "popups": {

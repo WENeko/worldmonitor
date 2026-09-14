@@ -122,25 +122,6 @@ export async function listPipelines(
     wantOil ? getCachedJson(PIPELINES_OIL_KEY, true) as Promise<RawRegistry | null> : Promise.resolve(null),
   ]);
 
-  // upstreamUnavailable = "we tried to read a registry and Redis returned
-  // nothing". An empty projection after a healthy fetch (e.g. a filter that
-  // legitimately matches no rows) is NOT an upstream failure — it's a valid
-  // zero. Matches the contract in list_pipelines.proto and the sibling
-  // list-fuel-shortages / list-storage-facilities / list-energy-disruptions
-  // handlers. Previously this handler lumped "filtered to zero" in with
-  // "upstream down", which would push callers to error-state rendering
-  // on valid empty queries.
-  const anyRequested = wantGas || wantOil;
-  const anyReturned = (wantGas && gasRaw) || (wantOil && oilRaw);
-  if (anyRequested && !anyReturned) {
-    return {
-      pipelines: [],
-      fetchedAt: new Date().toISOString(),
-      classifierVersion: '',
-      upstreamUnavailable: true,
-    };
-  }
-
   const pipelines = [...collect(gasRaw), ...collect(oilRaw)];
 
   // Pick the newest classifier version present across the registries. Gas
@@ -159,6 +140,6 @@ export async function listPipelines(
     pipelines,
     fetchedAt,
     classifierVersion,
-    upstreamUnavailable: false,
+    upstreamUnavailable: (wantGas && !gasRaw) || (wantOil && !oilRaw),
   };
 }

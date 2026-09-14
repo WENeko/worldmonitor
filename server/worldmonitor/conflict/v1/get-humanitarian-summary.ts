@@ -36,7 +36,7 @@ export async function getHumanitarianSummary(
     // self-heal any mismatch by hitting HAPI directly; that fallback is gone now, so
     // a mismatched key would otherwise permanently miss instead of just being slow.
     const countryCode = req.countryCode.trim().toUpperCase();
-    const cached = (await getCachedJson(`${REDIS_CACHE_KEY}:${countryCode}`)) as
+    const cached = (await getCachedJson(`${REDIS_CACHE_KEY}:${countryCode}`, true)) as
       | GetHumanitarianSummaryResponse
       | null;
     return cached ?? { summary: undefined };

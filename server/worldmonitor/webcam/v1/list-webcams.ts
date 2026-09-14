@@ -98,7 +98,7 @@ export async function listWebcams(_ctx: ServerContext, req: ListWebcamsRequest):
   const qN = Math.ceil(Math.max(-90, Math.min(90, values.boundN)));
 
   // Read active version
-  const versionResult = await getCachedJson('webcam:cameras:active');
+  const versionResult = await getCachedJson('webcam:cameras:active', true);
   const version = versionResult != null ? String(versionResult) : null;
   if (!version) {
     return { webcams: [], clusters: [], totalInView: 0 };

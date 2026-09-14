@@ -3589,6 +3589,52 @@ body.panel-resize-active iframe {
   outline-offset: 2px;
 }
 
+.live-media-shell--idle {
+  cursor: default;
+}
+
+.live-media-shell--idle .live-media-shell-dot {
+  background: var(--text-dim);
+}
+
+.live-media-shell--idle .live-media-shell-dot::before {
+  animation: none;
+}
+
+.live-media-shell-body,
+.live-media-shell-hint {
+  max-width: 34em;
+  margin: 0;
+  color: var(--text-dim);
+  line-height: 1.4;
+  text-align: center;
+}
+
+.live-media-shell-body {
+  font-size: calc(12px * var(--wm-panel-effective-scale, 1));
+}
+
+.live-media-shell-hint {
+  font-size: calc(10px * var(--wm-panel-effective-scale, 1));
+}
+
+.live-media-shell-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.live-media-shell .offline-retry.live-media-shell-secondary {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.live-media-shell .offline-retry.live-media-shell-secondary:hover {
+  border-color: var(--text-dim);
+}
+
 @keyframes live-pulse-ring {
   0%,
   100% {
@@ -4067,6 +4113,10 @@ body.live-news-fullscreen-active .panels-grid > *:not(.live-news-fullscreen) {
   min-height: 200px;
   color: var(--text-dim);
   font-size: calc(12px * var(--wm-panel-effective-scale, 1));
+}
+
+.webcam-idle-notice {
+  min-height: 200px;
 }
 
 @media (max-width: 768px) {

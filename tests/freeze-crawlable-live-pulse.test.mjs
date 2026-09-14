@@ -1400,7 +1400,11 @@ describe('freeze per-country developments capture', () => {
   });
 
   it('uses the final slot for an independent recovered publisher', async () => {
-    const existing = Array.from({ length: 4 }, (_, i) => digestItem({ source: 'Guardian World', link: `https://theguardian.com/sudan-${i}` }));
+    const existing = Array.from({ length: 4 }, (_, i) => digestItem({
+      source: 'Guardian World',
+      link: `https://theguardian.com/sudan-${i}`,
+      publishedAt: 1_700_000_000_000,
+    }));
     const duplicatePublisher = digestItem({ source: 'Guardian Africa', link: 'https://theguardian.com/sudan-more' });
     const independent = digestItem({ source: 'BBC News', link: 'https://bbc.com/sudan-report', publishedAt: Date.now() - 2 * 3600_000 });
     stubFetch({ digestItems: existing, countryHeadlines: { SD: { items: [duplicatePublisher, independent] } } });

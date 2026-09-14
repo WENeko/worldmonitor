@@ -924,7 +924,6 @@
   "components": {
     "webcams": {
       "paused": "Webcams paused",
-      "pausedIdle": "Webcams paused — move mouse to resume",
       "play": "Play",
       "previewStatus": "Live preview",
       "regions": {
@@ -1602,6 +1601,9 @@
       "analysisFrameworksSaveToLibrary": "Save to Library",
       "streamAlwaysOnLabel": "Auto-play live streams on dashboard",
       "streamAlwaysOnDesc": "Starts Live News and Live Webcams automatically when visible. Leave off to load video only after you click Play.",
+      "streamIdleStopLabel": "Stop live video when idle",
+      "streamIdleStopDesc": "Stops Live News and Live Webcams after this long without activity and shows a notice in the panel.",
+      "streamIdleStopNever": "Never",
       "frameworkNote": "Applies to client-generated analysis only",
       "loadingServerInsights": "Loading server insights...",
       "usingCachedBrief": "Using cached brief...",
@@ -2251,6 +2253,14 @@
         "context": "Context established"
       }
     },
+    "liveMedia": {
+      "idleStatus": "Paused for inactivity",
+      "idleBody": "Live video stopped after {{duration}} without mouse, keyboard or touch activity.",
+      "idleResume": "Resume",
+      "idleKeepPlaying": "Keep playing when idle",
+      "idleSettingsHint": "Change this anytime in Settings › Media.",
+      "idleKeepPlayingToast": "Live video will keep playing when idle. Change in Settings › Media."
+    },
     "liveNews": {
       "notLive": "{{name}} is not currently live",
       "cannotEmbed": "{{name}} can't be played here — it may be restricted in your region (error {{code}})",
@@ -2711,6 +2721,13 @@
     },
     "correlation": {
       "loading": "Waiting for data...",
+      "waiting": "Waiting for the next data update. This panel updates automatically.",
+      "offline": "Waiting for a connection. This panel updates automatically when you are back online.",
+      "updated": "Updated {{time}}",
+      "saved": "Last known update {{time}} · Checking for updates",
+      "savedOffline": "Last known update {{time}} · Offline",
+      "localSignals": "Based on loaded dashboard signals",
+      "emptySaved": "No convergence in the last known update.",
       "empty": "No active convergence detected",
       "signals_one": "{{count}} signal",
       "signals_other": "{{count}} signals",

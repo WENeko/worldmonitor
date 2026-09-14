@@ -855,7 +855,6 @@
   "components": {
     "webcams": {
       "paused": "Web kameralar duraklatıldı",
-      "pausedIdle": "Web kameralar duraklatıldı — devam etmek için fareyi hareket ettirin",
       "regions": {
         "all": "TUMU",
         "mideast": "ORTA DOGU",
@@ -1490,7 +1489,10 @@
       "compiledFrom": "{{stories}} hikaye ve {{sources}} kaynaktan derlenmiştir",
       "provenanceTitle": "Kapsam kaynağı: bu özet için kaç alınan hikaye ve farklı kaynaktan seçildiği",
       "briefFreshness": "{{minutes}}m önce oluşturuldu · en yeni kaynak {{hours}}s eski",
-      "briefStoryDetails": "Story details ({{count}})"
+      "briefStoryDetails": "Haber ayrıntıları ({{count}})",
+      "streamIdleStopLabel": "Hareketsizlik sırasında canlı videoyu durdur",
+      "streamIdleStopDesc": "Canlı Haber ve Canlı Web Kameralarını bu kadar süre etkinlik olmadan durdurur ve panelde bir bildirim gösterir.",
+      "streamIdleStopNever": "Asla"
     },
     "settings": {
       "exportSettings": "Ayarları Dışa Aktar",
@@ -2627,7 +2629,14 @@
       "signals_one": "{{count}} sinyal",
       "signals_other": "{{count}} sinyal",
       "analyzing": "Analiz ediliyor...",
-      "viewOnMap": "Haritada görüntüle"
+      "viewOnMap": "Haritada görüntüle",
+      "waiting": "Bir sonraki veri güncellemesi bekleniyor. Bu panel otomatik olarak güncellenir.",
+      "offline": "Bağlantı bekleniyor. Yeniden çevrimiçi olduğunuzda bu panel otomatik olarak güncellenir.",
+      "updated": "Güncellendi {{time}}",
+      "saved": "Bilinen son güncelleme {{time}} · Güncellemeler kontrol ediliyor",
+      "savedOffline": "Bilinen son güncelleme {{time}} · Çevrimdışı",
+      "localSignals": "Panoya yüklenen sinyallere dayanır",
+      "emptySaved": "Bilinen son güncellemede yakınsama yoktu."
     },
     "thermalEscalation": {
       "title": "Termal Yükseltme",
@@ -2810,6 +2819,14 @@
       "captured": "Alındı. İndirmeden önce gözlem tarihlerini ve kısıtları inceleyin.",
       "failed": "Senaryolar alınamadı. Erişiminizi kontrol edip yeniden deneyin. Dışa aktarılacak sonuç yok.",
       "locked": "Karar özeti Pro ile kullanılabilir."
+    },
+    "liveMedia": {
+      "idleStatus": "Hareketsizlik nedeniyle duraklatıldı",
+      "idleBody": "Canlı video {{duration}} süre sonra fare, klavye veya dokunmatik etkinlik olmadan durduruldu.",
+      "idleResume": "Devam Et",
+      "idleKeepPlaying": "Hareketsizlik sırasında oynatmaya devam et",
+      "idleSettingsHint": "Bunu istediğiniz zaman Ayarlar › Medya bölümünde değiştirebilirsiniz.",
+      "idleKeepPlayingToast": "Canlı video hareketsizlik sırasında oynatmaya devam edecektir. Ayarlar › Medya bölümünden değiştirin."
     }
   },
   "popups": {

@@ -2056,7 +2056,8 @@ export function createDomainGateway(
       // These local provider lookups use the sidecar cache without Upstash.
       // Keep these exceptions exact-path; cloud requests retain the provider cap.
       const isSidecarProviderLookup = process.env.LOCAL_API_MODE === 'tauri-sidecar'
-        && (pathname === '/api/military/v1/get-wingbits-live-flight'
+        && (pathname === '/api/aviation/v1/track-aircraft'
+          || pathname === '/api/military/v1/get-wingbits-live-flight'
           || pathname === '/api/imagery/v1/search-imagery'
           || pathname === '/api/webcam/v1/get-webcam-image');
       const endpointRlResponse = isSidecarProviderLookup ? null : rateLimitPrincipalUserId

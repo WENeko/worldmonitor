@@ -333,6 +333,7 @@ export default defineSchema({
     variant: v.optional(v.string()),
   })
     .index("by_token", ["token"])
+    .index("by_expiresAt", ["expiresAt"])
     .index("by_user", ["userId"]),
 
   registrations: defineTable({

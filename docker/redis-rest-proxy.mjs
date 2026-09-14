@@ -74,6 +74,8 @@ const ALLOWED_COMMANDS = new Set([
   'HGET', 'HSET', 'HSETNX', 'HINCRBY', 'HDEL', 'HGETALL', 'HMGET', 'HMSET', 'HKEYS', 'HVALS', 'HEXISTS', 'HLEN',
   'LPUSH', 'RPUSH', 'LPOP', 'RPOP', 'LRANGE', 'LLEN', 'LTRIM', 'LREM',
   'SADD', 'SREM', 'SMEMBERS', 'SISMEMBER', 'SCARD',
+  // SSCAN is key-scoped set iteration; SMEMBERS already dumps the same set.
+  'SSCAN',
   // ZREMRANGEBY* are the retention trims (#7087 accumulator + forecast-evidence
   // prune, resilience 30-day history trim). Without them a self-hosted install
   // answers the prune with a per-command error inside an HTTP 200 pipeline, so
@@ -538,8 +540,14 @@ const CABLE_HEALTH_REPAIR_SCRIPT = [
   'end',
   'return 1',
 ].join('\n');
+// PINNED COPY of server/worldmonitor/shipping/v2/webhook-owner-index.ts
+// REMOVE_EXPIRED_MEMBER. Exact-text pin: whitespace changes must land in both.
+const WEBHOOK_OWNER_INDEX_REMOVE_EXPIRED_SCRIPT = [
+  "if redis.call('EXISTS', KEYS[2]) == 0 then return redis.call('SREM', KEYS[1], ARGV[1]) else return 0 end",
+].join('\n');
 const ALLOWED_EVAL_SCRIPTS = new Set([
   CABLE_HEALTH_REPAIR_SCRIPT,
+  WEBHOOK_OWNER_INDEX_REMOVE_EXPIRED_SCRIPT,
   SOURCE_RETRY_CLAIM_SCRIPT,
   DIGEST_LASTGOOD_PUBLISH_SCRIPT,
   STORY_ALIAS_PUBLISH_SCRIPT,

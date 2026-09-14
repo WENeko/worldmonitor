@@ -852,7 +852,6 @@
   "components": {
     "webcams": {
       "paused": "Webcam đã tạm dừng",
-      "pausedIdle": "Webcam đã tạm dừng — di chuyển chuột để tiếp tục",
       "regions": {
         "all": "TẤT CẢ",
         "mideast": "TRUNG ĐÔNG",
@@ -1486,7 +1485,10 @@
       "provenanceTitle": "Nguồn gốc bài viết: số lượng bài viết được nhập và các nguồn riêng biệt mà bài viết này được chọn từ đó",
       "compiledFrom": "Được biên soạn từ {{stories}} câu chuyện trên {{sources}} nguồn",
       "briefFreshness": "Được tạo {{minutes}}m trước · nguồn mới nhất {{hours}}h tuổi",
-      "briefStoryDetails": "Story details ({{count}})"
+      "briefStoryDetails": "Chi tiết tin tức ({{count}})",
+      "streamIdleStopLabel": "Dừng video trực tiếp khi không hoạt động",
+      "streamIdleStopDesc": "Dừng Live News và Live Webcams sau khoảng thời gian này nếu không có hoạt động và hiển thị thông báo trong panel.",
+      "streamIdleStopNever": "Không bao giờ"
     },
     "settings": {
       "exportSettings": "Xuất cài đặt",
@@ -2613,7 +2615,14 @@
       "empty": "Không phát hiện sự hội tụ hoạt động",
       "signals_other": "{{count}} tín hiệu",
       "analyzing": "Đang phân tích...",
-      "viewOnMap": "Xem trên bản đồ"
+      "viewOnMap": "Xem trên bản đồ",
+      "waiting": "Đang chờ lần cập nhật dữ liệu tiếp theo. Bảng này tự động cập nhật.",
+      "offline": "Đang chờ kết nối. Bảng này tự động cập nhật khi bạn trực tuyến trở lại.",
+      "updated": "Đã cập nhật {{time}}",
+      "saved": "Lần cập nhật gần nhất đã biết {{time}} · Đang kiểm tra cập nhật",
+      "savedOffline": "Lần cập nhật gần nhất đã biết {{time}} · Ngoại tuyến",
+      "localSignals": "Dựa trên các tín hiệu đã tải trong bảng điều khiển",
+      "emptySaved": "Không có sự hội tụ trong lần cập nhật gần nhất đã biết."
     },
     "thermalEscalation": {
       "title": "Tăng cường nhiệt độ",
@@ -2791,6 +2800,14 @@
       "captured": "Đã lấy. Kiểm tra ngày quan sát và các hạn chế trước khi tải xuống.",
       "failed": "Không thể lấy các kịch bản. Kiểm tra quyền truy cập và thử lại. Không có kết quả để xuất.",
       "locked": "Bản tóm tắt quyết định có trong Pro."
+    },
+    "liveMedia": {
+      "idleStatus": "Tạm dừng do không hoạt động",
+      "idleBody": "Video trực tiếp đã dừng sau {{duration}} không có hoạt động chuột, bàn phím hoặc chạm.",
+      "idleResume": "Tiếp tục",
+      "idleKeepPlaying": "Tiếp tục phát khi không hoạt động",
+      "idleSettingsHint": "Thay đổi bất kỳ lúc nào trong Cài đặt › Media.",
+      "idleKeepPlayingToast": "Video trực tiếp sẽ tiếp tục phát khi không hoạt động. Thay đổi trong Cài đặt › Media."
     }
   },
   "popups": {

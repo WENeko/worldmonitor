@@ -62,6 +62,12 @@ test('canonical equivalents share bounded hashed cache identity', async () => {
   assert.match(keys[0]!, /^aviation:gf:[a-f0-9]{64}:v2$/);
   assert.equal(redis.expires.get(keys[0]!), 600);
 });
+test('fractional passenger counts share the integer relay query and cache entry', async () => {
+  await read({ passengers: 1.9 });
+  await read({ passengers: 1 });
+  assert.equal(feeds().length, 1);
+  assert.equal(feeds()[0]!.searchParams.get('passengers'), '1');
+});
 test('ordinary gateway rejects bad input and store outages without upstream work', async () => {
   assert.equal((await gateway(request({ origin: 'TOOLONG' }))).status, 400);
   assert.equal(feeds().length, 0);

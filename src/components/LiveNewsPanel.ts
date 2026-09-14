@@ -4,13 +4,15 @@ import { isDesktopRuntime, getRemoteApiBaseUrl, getApiBaseUrl, getLocalApiPort }
 import { t } from '../services/i18n';
 import { createFocusTrap } from '@/utils/focus-trap';
 import { loadFromStorage, saveToStorage } from '@/utils';
-import { IDLE_PAUSE_MS, STORAGE_KEYS, SITE_VARIANT } from '@/config';
+import { STORAGE_KEYS, SITE_VARIANT } from '@/config';
 import { escapeHtml, sanitizeUrl } from '@/utils/sanitize';
 
 import { getStreamQuality } from '@/services/ai-flow-settings';
 import { getActiveLiveMedia, playAllLiveMedia, registerLiveMediaStarter, releaseLiveMediaPlayback, requestLiveMediaPlayback, stopLiveMediaPlayback, unregisterLiveMediaStarter, type LiveMediaStopReason } from '@/services/live-media-controller';
-import { getLiveStreamsAlwaysOn, subscribeLiveStreamsSettingsChange } from '@/services/live-stream-settings';
+import { getLiveStreamsAlwaysOn, subscribeLiveStreamsAlwaysOnChange } from '@/services/live-stream-settings';
+import { subscribeLiveMediaIdle } from '@/services/live-media-idle';
 import { track } from '@/services/analytics';
+import { createLiveMediaIdleNotice, trackLiveMediaIdleStop } from './live-media-idle-notice';
 import { setTrustedHtml, trustedHtml } from '@/utils/dom-utils';
 
 
@@ -301,8 +303,6 @@ const PROXIED_HLS_MAP: Readonly<Record<string, ProxiedHlsEntry>> = {
   'cnbc': { url: 'https://cdn-ca2-na.lncnetworks.host/hls/cnbc_live/index.m3u8', referer: 'https://livenewschat.eu/' },
 };
 
-const IDLE_ACTIVITY_EVENTS = ['mousedown', 'keydown', 'scroll', 'touchstart', 'mousemove'] as const;
-
 if (import.meta.env.DEV) {
   const allChannels = [...FULL_LIVE_CHANNELS, ...TECH_LIVE_CHANNELS, ...OPTIONAL_LIVE_CHANNELS];
   for (const id of Object.keys(DIRECT_HLS_MAP)) {
@@ -364,18 +364,18 @@ export class LiveNewsPanel extends Panel {
   private channelSwitcher: HTMLElement | null = null;
   private isMuted = true;
   private isPlaying = false;
-  private wasPlayingBeforeIdle = false;
+  private idleStoppedAfterMs: number | null = null;
   private muteBtn: HTMLButtonElement | null = null;
   private fullscreenBtn: HTMLButtonElement | null = null;
   private isFullscreen = false;
   private liveBtn: HTMLButtonElement | null = null;
-  private idleTimeout: ReturnType<typeof setTimeout> | null = null;
-  private readonly ECO_IDLE_PAUSE_MS = IDLE_PAUSE_MS;
-  private boundVisibilityHandler!: () => void;
-  private boundIdleResetHandler!: () => void;
-  private idleDetectionEnabled = false;
+  private readonly boundVisibilityHandler = () => {
+    if (document.hidden) stopLiveMediaPlayback('live-news', 'hidden');
+    else this.startAlwaysOnPlaybackIfVisible();
+  };
   private alwaysOn = getLiveStreamsAlwaysOn();
   private unsubscribeStreamSettings: (() => void) | null = null;
+  private unsubscribeIdle: (() => void) | null = null;
 
   // YouTube Player API state
   private player: YouTubePlayer | null = null;
@@ -435,14 +435,13 @@ export class LiveNewsPanel extends Panel {
     this.setupBridgeMessageListener();
     this.renderPlaceholder();
     this.setupLazyInit();
-    this.setupIdleDetection();
-    this.unsubscribeStreamSettings = subscribeLiveStreamsSettingsChange((alwaysOn) => {
-      const wasAlwaysOn = this.alwaysOn;
+    document.addEventListener('visibilitychange', this.boundVisibilityHandler);
+    this.unsubscribeIdle = subscribeLiveMediaIdle((idleAfterMs) => this.stopForIdle(idleAfterMs));
+    this.unsubscribeStreamSettings = subscribeLiveStreamsAlwaysOnChange((alwaysOn) => {
       this.alwaysOn = alwaysOn;
-      this.applyIdleMode();
-      if (wasAlwaysOn && !alwaysOn) {
+      if (!alwaysOn) {
         // Cancel any pending lazy-init so leaving always-on cannot auto-start playback without intent.
-        // Anything already playing keeps running — feeds coexist; eco-idle (re-armed below) will pause it.
+        // Anything already playing keeps running — feeds coexist; the idle stop still applies.
         if (this.lazyObserver) { this.lazyObserver.disconnect(); this.lazyObserver = null; }
         if (this.idleCallbackId !== null) {
           if ('cancelIdleCallback' in window) (window as any).cancelIdleCallback(this.idleCallbackId);
@@ -475,6 +474,14 @@ export class LiveNewsPanel extends Panel {
     this.deferredInit = false;
     this.playerContainer = null;
     this.playerElement = null;
+    if (this.idleStoppedAfterMs !== null) {
+      this.setContentNodes(createLiveMediaIdleNotice({
+        panel: 'live-news',
+        heading: this.getChannelDisplayName(this.activeChannel),
+        idleAfterMs: this.idleStoppedAfterMs,
+      }));
+      return;
+    }
     setTrustedHtml(this.content, trustedHtml('', "legacy direct innerHTML migration"));
     const container = document.createElement('div');
     container.className = 'live-news-placeholder live-media-shell';
@@ -557,7 +564,7 @@ export class LiveNewsPanel extends Panel {
       !!this.desktopEmbedIframe ||
       !!this.nativeVideoElement ||
       this.ownsLiveNewsMedia() ||
-      (this.alwaysOn && !document.hidden && this.isPanelVisible());
+      (this.idleStoppedAfterMs === null && this.alwaysOn && !document.hidden && this.isPanelVisible());
   }
 
   private ownsLiveMediaForChannel(channelId: string): boolean {
@@ -581,23 +588,23 @@ export class LiveNewsPanel extends Panel {
 
   private startAlwaysOnPlaybackIfVisible(): void {
     if (!this.alwaysOn || document.hidden || !this.element.isConnected || !this.isPanelVisible()) return;
-    if (this.ownsActiveLiveMedia()) return;
+    // An idle stop ends only through Resume or Play, so autoplay must not restart it on tab return.
+    if (this.idleStoppedAfterMs !== null || this.ownsActiveLiveMedia()) return;
     this.requestPlaybackForActiveChannel();
   }
 
   private startPlaybackForActiveChannel(): void {
     this.liveMediaSessionToken += 1;
     this.isPlaying = true;
-    this.wasPlayingBeforeIdle = true;
+    this.idleStoppedAfterMs = null;
     this.updateLiveIndicator();
     this.renderPlayer();
   }
 
   private stopPlaybackFromController(reason: LiveMediaStopReason): void {
     this.liveMediaSessionToken += 1;
-    const shouldResumeAfterIdle = reason === 'idle' && this.wasPlayingBeforeIdle;
     this.isPlaying = false;
-    this.wasPlayingBeforeIdle = shouldResumeAfterIdle;
+    if (reason !== 'idle') this.idleStoppedAfterMs = null;
     this.updateLiveIndicator();
     this.destroyPlayer();
     // Skip DOM work on a detached panel; destroy() already runs destroyPlayer().
@@ -691,63 +698,10 @@ export class LiveNewsPanel extends Panel {
   }
 
 
-  private applyIdleMode(): void {
-    if (this.alwaysOn) {
-      if (this.idleTimeout) {
-        clearTimeout(this.idleTimeout);
-        this.idleTimeout = null;
-      }
-      if (this.idleDetectionEnabled) {
-        IDLE_ACTIVITY_EVENTS.forEach((event) => {
-          document.removeEventListener(event, this.boundIdleResetHandler);
-        });
-        this.idleDetectionEnabled = false;
-      }
-      this.startAlwaysOnPlaybackIfVisible();
-      return;
-    }
-
-    if (!this.idleDetectionEnabled) {
-      IDLE_ACTIVITY_EVENTS.forEach((event) => {
-        document.addEventListener(event, this.boundIdleResetHandler, { passive: true });
-      });
-      this.idleDetectionEnabled = true;
-    }
-
-    this.boundIdleResetHandler();
-  }
-
-  private setupIdleDetection(): void {
-    // Suspend idle timer when hidden, resume when visible
-    this.boundVisibilityHandler = () => {
-      if (document.hidden) {
-        if (this.idleTimeout) clearTimeout(this.idleTimeout);
-        stopLiveMediaPlayback('live-news', 'hidden');
-      } else {
-        this.applyIdleMode();
-      }
-    };
-    document.addEventListener('visibilitychange', this.boundVisibilityHandler);
-
-    // Track user activity to detect idle (pauses after 5 min inactivity)
-    this.boundIdleResetHandler = () => {
-      if (this.alwaysOn) return;
-      if (this.idleTimeout) clearTimeout(this.idleTimeout);
-      this.resumeFromIdle();
-      this.idleTimeout = setTimeout(() => this.pauseForIdle(), this.ECO_IDLE_PAUSE_MS);
-    };
-
-    this.applyIdleMode();
-  }
-
-  private pauseForIdle(): void {
-    // Arm idle-resume only when actually playing; otherwise a stale flag could
-    // resurrect media the user never started (or paused) when the stop fires.
-    this.wasPlayingBeforeIdle = this.isPlaying;
-    if (this.isPlaying) {
-      this.isPlaying = false;
-      this.updateLiveIndicator();
-    }
+  private stopForIdle(idleAfterMs: number): void {
+    if (this.isFullscreen || !this.isPlaying || !getActiveLiveMedia('live-news')) return;
+    this.idleStoppedAfterMs = idleAfterMs;
+    trackLiveMediaIdleStop('live-news', idleAfterMs);
     stopLiveMediaPlayback('live-news', 'idle');
   }
 
@@ -813,13 +767,6 @@ export class LiveNewsPanel extends Panel {
       } else {
         this.playerElement = null;
       }
-    }
-  }
-
-  private resumeFromIdle(): void {
-    if (this.ownsActiveLiveMedia()) return;
-    if (this.wasPlayingBeforeIdle && !this.isPlaying) {
-      this.requestPlaybackForActiveChannel();
     }
   }
 
@@ -1858,10 +1805,10 @@ export class LiveNewsPanel extends Panel {
 
   public stopLiveMediaForClose(): void {
     this.liveMediaSessionToken += 1;
-    this.wasPlayingBeforeIdle = false;
-    if (this.idleTimeout) { clearTimeout(this.idleTimeout); this.idleTimeout = null; }
+    const wasIdleStopped = this.idleStoppedAfterMs !== null;
+    this.idleStoppedAfterMs = null;
     stopLiveMediaPlayback('live-news', 'destroyed');
-    if (this.player || this.desktopEmbedIframe || this.nativeVideoElement) {
+    if (wasIdleStopped || this.player || this.desktopEmbedIframe || this.nativeVideoElement) {
       this.isPlaying = false;
       this.updateLiveIndicator();
       this.destroyPlayer();
@@ -1885,6 +1832,8 @@ export class LiveNewsPanel extends Panel {
     this.destroyPlayer();
     this.unsubscribeStreamSettings?.();
     this.unsubscribeStreamSettings = null;
+    this.unsubscribeIdle?.();
+    this.unsubscribeIdle = null;
 
     if (this.lazyObserver) { this.lazyObserver.disconnect(); this.lazyObserver = null; }
     if (this.idleCallbackId !== null) {
@@ -1893,21 +1842,10 @@ export class LiveNewsPanel extends Panel {
       this.idleCallbackId = null;
     }
 
-    if (this.idleTimeout) {
-      clearTimeout(this.idleTimeout);
-      this.idleTimeout = null;
-    }
-
     document.removeEventListener('visibilitychange', this.boundVisibilityHandler);
     document.removeEventListener('keydown', this.boundFullscreenEscHandler);
     window.removeEventListener('message', this.boundMessageHandler);
     if (this.isFullscreen) this.setFullscreen(false);
-    if (this.idleDetectionEnabled) {
-      IDLE_ACTIVITY_EVENTS.forEach(event => {
-        document.removeEventListener(event, this.boundIdleResetHandler);
-      });
-      this.idleDetectionEnabled = false;
-    }
 
     this.playerContainer = null;
 

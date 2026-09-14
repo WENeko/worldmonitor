@@ -130,6 +130,8 @@ const EVENTS = {
   'news-sort-toggle': true,
   'news-summarize': true,
   'live-news-fullscreen': true,
+  'live-media-idle-stopped': true,
+  'live-media-idle-notice-action': true,
   // Webcams
   'webcam-selected': true,
   'webcam-region-filter': true,

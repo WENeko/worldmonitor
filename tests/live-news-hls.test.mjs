@@ -239,7 +239,7 @@ describe('player decision tree', () => {
     );
     const destroyMethod = liveNewsSrc.slice(
       liveNewsSrc.indexOf('private destroyPlayer'),
-      liveNewsSrc.indexOf('private resumeFromIdle'),
+      liveNewsSrc.indexOf('private createLiveButton'),
     );
     assert.match(bridgeMethod, /const session\s*=\s*this\.desktopEmbedSession/,
       'desktop bridge handler must capture the iframe session before processing messages');

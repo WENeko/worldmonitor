@@ -193,6 +193,7 @@ describe('durable last-good wiring (#7084)', () => {
     transactionCalls: [] as unknown[][][],
     // Lets a test drive listFeedDigest's cache-hit vs fresh-build branch.
     fetchMeta: null as null | { data: unknown; source: string; leader: boolean },
+    fetchKeys: [] as string[],
     // Requests markNoCacheResponse was called for. The bundle carries its own
     // copy of _shared/response-headers, so its WeakMap is a different instance
     // from anything this file could import directly -- stub it instead.
@@ -217,7 +218,7 @@ describe('durable last-good wiring (#7084)', () => {
       'export async function readCachedJson(k) { s.readCalls.push(k); return s.reads.get(k) ?? { status: "miss" }; }',
       'export async function setCachedJson(k, v, t) { s.writes.push({ key: k, value: v, ttl: t }); return s.writeResult; }',
       'export async function cachedFetchJson() { return null; }',
-      'export async function cachedFetchJsonWithMeta(_k, _t, _f, _n, o) { const r = s.fetchMeta ?? { data: null, source: "skipped", leader: false }; if (r.data && r.source === "fresh" && r.leader) await o?.onPositiveResult?.(r.data); return r; }',
+      'export async function cachedFetchJsonWithMeta(k, _t, _f, _n, o) { s.fetchKeys.push(k); const r = s.fetchMeta ?? { data: null, source: "skipped", leader: false }; if (r.data && r.source === "fresh" && r.leader) await o?.onPositiveResult?.(r.data); return r; }',
       'export async function getCachedJson() { return null; }',
       'export async function getCachedJsonBatch() { return new Map(); }',
       'export function isRedisConfigured() { return s.redisConfigured !== false; }',
@@ -227,7 +228,7 @@ describe('durable last-good wiring (#7084)', () => {
     ].join('\n');
     const result = await build({
       stdin: {
-        contents: "export * from './server/worldmonitor/news/v1/list-feed-digest.ts';",
+        contents: "export * from './server/worldmonitor/news/v1/list-feed-digest.ts'; export { createNewsServiceRoutes } from './src/generated/server/worldmonitor/news/v1/service_server.ts';",
         loader: 'ts',
         resolveDir: root,
         sourcefile: 'digest-lastgood-test-entry.ts',
@@ -280,6 +281,7 @@ describe('durable last-good wiring (#7084)', () => {
     stub.transaction = async (commands) => commands.map(() => ({ result: 'OK' }));
     stub.transactionCalls.length = 0;
     stub.fetchMeta = null;
+    stub.fetchKeys.length = 0;
     stub.redisConfigured = true;
     stub.noCache.length = 0;
     mod.__testing__.fallbackDigestCache.clear();
@@ -303,6 +305,47 @@ describe('durable last-good wiring (#7084)', () => {
     feedStatuses: {},
     generatedAt,
     ...(coverage === undefined ? {} : { coverage }),
+  });
+
+  it('rejects malformed language scopes before any cache or feed work', async () => {
+    for (const lang of ['english', 'en-US', 'EN', 'en\n', ' en', 'a', 'a'.repeat(10_000), '../en', 'en:other', 1, null, {}, false]) {
+      reset();
+      stub.fetchMeta = { data: body(['https://a/1'], COVERAGE), source: 'cache', leader: false };
+      await assert.rejects(mod.listFeedDigest(ctx(), { variant: 'full', lang }), {
+        name: 'ValidationError',
+        violations: [{ field: 'lang', description: 'must be a lowercase two-letter language code' }],
+      });
+      assert.deepEqual(stub.fetchKeys, []);
+      assert.deepEqual(stub.readCalls, []);
+      assert.deepEqual(stub.pipelineCalls, []);
+      assert.deepEqual(stub.transactionCalls, []);
+      assert.deepEqual(stub.writes, []);
+      assert.equal(mod.__testing__.fallbackDigestCache.size, 0);
+    }
+  });
+
+  it('returns the declared HTTP validation envelope for malformed language', async () => {
+    reset();
+    const routes = mod.createNewsServiceRoutes({ listFeedDigest: mod.listFeedDigest });
+    const route = routes.find((r: { path: string; method: string }) => r.path === '/api/news/v1/list-feed-digest' && r.method === 'GET');
+    assert.ok(route);
+    const response = await route.handler(new Request('https://x.test/api/news/v1/list-feed-digest?lang=english'), {});
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { violations: [{ field: 'lang', description: 'must be a lowercase two-letter language code' }] });
+    assert.deepEqual(stub.fetchKeys, []);
+    assert.deepEqual(stub.pipelineCalls, []);
+    assert.deepEqual(stub.writes, []);
+  });
+
+  it('preserves default English and two-letter language cache scopes', async () => {
+    for (const lang of [undefined, '', 'en', 'ar', 'fr', 'zh', 'ja', 'sw', 'xx']) {
+      reset();
+      const data = body(['https://a/1'], COVERAGE);
+      stub.fetchMeta = { data, source: 'cache', leader: false };
+      const result = await mod.listFeedDigest(ctx(), { variant: 'unsupported', lang });
+      assert.deepEqual(stub.fetchKeys, [`news:digest:v1:full:${lang || 'en'}`]);
+      assert.deepEqual(result.categories, data.categories);
+    }
   });
 
   it('a genuine MISS publishes through one atomic guarded write', async () => {

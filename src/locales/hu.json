@@ -924,7 +924,6 @@
   "components": {
     "webcams": {
       "paused": "Webkamerák szüneteltetve",
-      "pausedIdle": "Webkamerák szüneteltetve — mozgassa az egeret a folytatáshoz",
       "regions": {
         "all": "ÖSSZES",
         "mideast": "KÖZEL-KELET",
@@ -1631,7 +1630,10 @@
       "provenanceTitle": "Lefedettség eredete: hány feldolgozott történetből és különálló forrásból választotta ki ezt az összefoglalót",
       "compiledFrom": "{{stories}} történetből és {{sources}} forrásból összeállítva",
       "briefFreshness": "Generálva {{minutes}}m idővel ezelőtt · legfrissebb forrás {{hours}}ó régi",
-      "briefStoryDetails": "Story details ({{count}})"
+      "briefStoryDetails": "A hír részletei ({{count}})",
+      "streamIdleStopLabel": "Élő videó leállítása üresjárat során",
+      "streamIdleStopDesc": "Az Élő Hírek és Élő Webkamerák leállnak ennyi idő után inaktivitás esetén, és egy értesítés jelenik meg a panelen.",
+      "streamIdleStopNever": "Soha"
     },
     "settings": {
       "exportSettings": "Beállítások exportálása",
@@ -2696,7 +2698,14 @@
       "signals_one": "{{count}} jel",
       "signals_other": "{{count}} jel",
       "analyzing": "Elemzés...",
-      "viewOnMap": "Megtekintés a térképen"
+      "viewOnMap": "Megtekintés a térképen",
+      "waiting": "Várakozás a következő adatfrissítésre. Ez a panel automatikusan frissül.",
+      "offline": "Várakozás a kapcsolatra. Ez a panel automatikusan frissül, amikor újra csatlakozik az internethez.",
+      "updated": "Frissítve {{time}}",
+      "saved": "Utolsó ismert frissítés {{time}} · Frissítések keresése",
+      "savedOffline": "Utolsó ismert frissítés {{time}} · Nincs kapcsolat",
+      "localSignals": "A betöltött irányítópult-jelzések alapján",
+      "emptySaved": "Az utolsó ismert frissítésben nem volt konvergencia."
     },
     "thermalEscalation": {
       "title": "Hőmérsékleti Eszkaláció",
@@ -2879,6 +2888,14 @@
       "captured": "Betöltve. Letöltés előtt ellenőrizze a megfigyelési dátumokat és a korlátokat.",
       "failed": "Nem sikerült betölteni a forgatókönyveket. Ellenőrizze hozzáférését, és próbálja újra. Nincs exportálható eredmény.",
       "locked": "A döntési összefoglaló Pro csomaggal érhető el."
+    },
+    "liveMedia": {
+      "idleStatus": "Szüneteltetve az inaktivitás miatt",
+      "idleBody": "Az élő videó leállítva {{duration}} után egér-, billentyűzet- vagy érintésaktivitás hiányában.",
+      "idleResume": "Folytatás",
+      "idleKeepPlaying": "Élő videó lejátszása üresjárat során",
+      "idleSettingsHint": "Ezt bármikor módosíthatja a Beállítások › Média menüben.",
+      "idleKeepPlayingToast": "Az élő videó üresjárat során is lejátszódik. Módosítása a Beállítások › Média menüben."
     }
   },
   "popups": {

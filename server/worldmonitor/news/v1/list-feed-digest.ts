@@ -8,6 +8,7 @@ import type {
   StoryMeta as ProtoStoryMeta,
   StoryPhase as ProtoStoryPhase,
 } from '../../../../src/generated/server/worldmonitor/news/v1/service_server';
+import { ValidationError } from '../../../../src/generated/server/worldmonitor/news/v1/service_server';
 import {
   cachedFetchJsonWithMeta,
   getCachedJson,
@@ -1885,7 +1886,10 @@ export async function listFeedDigest(
   req: ListFeedDigestRequest,
 ): Promise<ListFeedDigestResponse> {
   const variant = VALID_VARIANTS.has(req.variant) ? req.variant : 'full';
-  const lang = req.lang || 'en';
+  const lang = req.lang === undefined || req.lang === '' ? 'en' : req.lang;
+  if (typeof lang !== 'string' || lang.length !== 2 || !/^[a-z]{2}$/.test(lang)) {
+    throw new ValidationError([{ field: 'lang', description: 'must be a lowercase two-letter language code' }]);
+  }
 
   const digestCacheKey = `news:digest:v1:${variant}:${lang}`;
   const fallbackKey = `${variant}:${lang}`;

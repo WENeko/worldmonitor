@@ -1,4 +1,6 @@
 import type { AppContext, AppModule } from '@/app/app-context';
+import { CORRELATION_DOMAINS } from '@/types/correlation';
+import type { CorrelationPanel } from '@/components/CorrelationPanel';
 import { normalizeExclusiveChoropleths } from '@/components/resilience-choropleth-utils';
 import { replayPendingCalls, clearAllPendingCalls } from '@/app/pending-panel-data';
 import { hasPanelSettingEntry, newsPanelKeyForCategory, newsPanelKeyLookupsFor } from '@/app/news-panel-keys';
@@ -2645,6 +2647,11 @@ export class PanelLayoutManager implements AppModule {
   }
 
   private afterPanelMounted(key: string, panel: Panel): void {
+    const domain = CORRELATION_DOMAINS.find(domain => key === `${domain}-correlation`);
+    const engine = this.ctx.correlationEngine;
+    if (domain && engine) {
+      (panel as CorrelationPanel).setAssessmentHandler(cards => engine.assessCards(domain, cards));
+    }
     const config = this.ctx.panelSettings[key];
     if (config) panel.toggle(config.enabled);
     this.observePanelForHydration(panel);

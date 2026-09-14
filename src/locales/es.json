@@ -875,7 +875,6 @@
         "space": "ESPACIO"
       },
       "paused": "Cámaras en pausa",
-      "pausedIdle": "Cámaras en pausa — mueva el ratón para reanudar",
       "play": "Reproducir",
       "previewStatus": "Vista previa en vivo"
     },
@@ -1842,7 +1841,10 @@
       "provenanceTitle": "Procedencia de cobertura: cuántas historias ingeridas y fuentes distintas se seleccionaron para este resumen",
       "compiledFrom": "Compilado de {{stories}} historias en {{sources}} fuentes",
       "briefFreshness": "Generado hace {{minutes}}m · fuente más reciente con {{hours}}h de antigüedad",
-      "briefStoryDetails": "Story details ({{count}})"
+      "briefStoryDetails": "Detalles de la noticia ({{count}})",
+      "streamIdleStopLabel": "Detener vídeo en directo cuando está inactivo",
+      "streamIdleStopDesc": "Detiene Noticias en Directo y Cámaras Web en Directo después de este tiempo sin actividad y muestra una notificación en el panel.",
+      "streamIdleStopNever": "Nunca"
     },
     "etfFlows": {
       "unavailable": "Datos ETF temporalmente no disponibles",
@@ -2641,7 +2643,14 @@
       "signals_other": "{{count}} señales",
       "analyzing": "Analizando...",
       "viewOnMap": "Ver en mapa",
-      "signals_many": "{{count}} señales"
+      "signals_many": "{{count}} señales",
+      "waiting": "Esperando la próxima actualización de datos. Este panel se actualiza automáticamente.",
+      "offline": "Esperando una conexión. Este panel se actualiza automáticamente cuando vuelvas a estar en línea.",
+      "updated": "Actualizado {{time}}",
+      "saved": "Última actualización conocida {{time}} · Buscando actualizaciones",
+      "savedOffline": "Última actualización conocida {{time}} · Sin conexión",
+      "localSignals": "Basado en las señales cargadas en el panel",
+      "emptySaved": "No hubo convergencia en la última actualización conocida."
     },
     "thermalEscalation": {
       "title": "Escalada Térmica",
@@ -2829,6 +2838,14 @@
       "captured": "Captura completa. Revise las fechas de observación y las restricciones antes de descargar.",
       "failed": "No se pudieron capturar los escenarios. Compruebe su acceso e inténtelo de nuevo. No hay resultados para exportar.",
       "locked": "El informe de decisión está disponible con Pro."
+    },
+    "liveMedia": {
+      "idleStatus": "En pausa por inactividad",
+      "idleBody": "Vídeo en directo detenido después de {{duration}} sin actividad de ratón, teclado o pantalla táctil.",
+      "idleResume": "Reanudar",
+      "idleKeepPlaying": "Seguir reproduciendo cuando está inactivo",
+      "idleSettingsHint": "Cambia esto en cualquier momento en Configuración › Multimedia.",
+      "idleKeepPlayingToast": "El vídeo en directo seguirá reproduciéndose cuando esté inactivo. Cambia en Configuración › Multimedia."
     }
   },
   "popups": {
