@@ -199,7 +199,23 @@ if curl -fsS -o /dev/null --max-time 5 "$LITELLM_URL/health/liveliness" 2>/dev/n
     ok "LiteLLM gateway alive; GET /ui -> ${UI_META} (login: UI_USERNAME + UI_PASSWORD from .env)"
   fi
 else
-  warn "LiteLLM is not answering on ${LITELLM_URL}/health/liveliness; skipped the /ui check"
+  # Running but silent is its own failure mode: without PYTHONUNBUFFERED the
+  # proxy's stdout is block-buffered with no TTY, so a container starved of CPU
+  # during startup writes nothing and looks idle in `docker logs` while
+  # `docker stats` shows it pinned at its quota. Report the pair instead of a
+  # bare "not answering", which reads like a crash.
+  LL_STATE="$(docker inspect -f '{{.State.Status}}' litellm 2>/dev/null || true)"
+  LL_CPU="$(docker inspect -f '{{.HostConfig.NanoCpus}}' litellm 2>/dev/null || true)"
+  LL_BYTES="$(docker logs litellm 2>&1 | wc -c)"
+  if [ "$LL_STATE" = "running" ] && [ "${LL_BYTES:-0}" = "0" ]; then
+    if [ -n "$LL_CPU" ] && [ "$LL_CPU" != "0" ]; then
+      warn "LiteLLM is running, answers nothing and has written ZERO bytes of log; it is limited to $((LL_CPU / 10000000))% of one CPU (HostConfig.NanoCpus=${LL_CPU}). A proxy whose startup is CPU-starved never binds :4000 -- check 'docker stats litellm' for a pinned quota and raise deploy.resources.limits.cpus in docker-compose.yml."
+    else
+      warn "LiteLLM is running, answers nothing and has written ZERO bytes of log: it is stuck in startup, not crashed. Watch it with 'docker logs -f litellm' and confirm PYTHONUNBUFFERED=1 is set (docker-compose.yml) so the next attempt is not silent."
+    fi
+  else
+    warn "LiteLLM is not answering on ${LITELLM_URL}/health/liveliness (container state: ${LL_STATE:-not found}, ${LL_BYTES:-?} log bytes); skipped the /ui check"
+  fi
 fi
 
 # ---------------------------------------------------------------------------

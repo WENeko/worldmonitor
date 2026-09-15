@@ -268,18 +268,52 @@ services:
       # fallback instead of breaking the comparison.
       UI_USERNAME: ${UI_USERNAME:-}
       UI_PASSWORD: ${UI_PASSWORD:-}
+      # litellm logs to stderr through litellm_proxy_extras (line-buffered) but
+      # its own logger writes to stdout, which Python block-buffers when the
+      # container has no TTY. Without this, a proxy stuck in startup writes
+      # NOTHING: `docker logs` stays empty and the container looks idle instead
+      # of busy. Field evidence: 15 restarts over 45 minutes, a 0-byte
+      # json-file log, and `docker stats` showing a pinned 20.00% CPU.
+      PYTHONUNBUFFERED: "1"
+      # Budgets for the Prisma CLI. Every migration step is a separate node
+      # process; the defaults (60s per command, 600s for the one-time toolchain
+      # bootstrap) are invisible in the compose file, so a startup that is
+      # merely slow is indistinguishable from one that is stuck. Raise the
+      # command budget on a slow or heavily limited host.
+      LITELLM_PRISMA_BOOTSTRAP_TIMEOUT: ${LITELLM_PRISMA_BOOTSTRAP_TIMEOUT:-600}
+      LITELLM_PRISMA_COMMAND_TIMEOUT: ${LITELLM_PRISMA_COMMAND_TIMEOUT:-180}
 
+    # On a FRESH database this startup is not quick: litellm runs
+    # `prisma migrate deploy` (28 s measured here) and then, because deploy's
+    # stdout says "All migrations have been successfully applied" rather than
+    # "No pending migrations to apply", a post-migration sanity check that
+    # applies a full schema diff. That check is skipped on every later boot, but
+    # it means the first one can take minutes before :4000 opens -- and a poll
+    # loop that gives up after 90 s reports a perfectly healthy startup as
+    # broken. Upstream exposes --use_v2_migration_resolver to skip the
+    # diff-and-force step entirely; verify it is accepted by this image before
+    # adding it, since an unknown flag makes the proxy fail to start:
+    #   docker run --rm ghcr.io/berriai/litellm:main-stable --help | grep -i migration
     command:
       ["--config", "/app/config.yaml", "--host", "127.0.0.1", "--port", "4000"]
 
+    # Sized for a proxy that migrates Postgres and shells out to node. The
+    # previous 0.2 CPU was set while litellm had no database at all: startup
+    # was a few imports and the cap never bit. With litellm-db it does. At
+    # 0.2 CPU the container showed a pinned 20.00% in `docker stats`, spent 45
+    # minutes across 15 restarts inside Python startup, never spawned a child
+    # process and never bound port 4000 -- while the same image, command and
+    # environment run without a CPU limit reached `prisma migrate deploy
+    # completed` in 28s. CPU limits are ceilings, not reservations: raising
+    # this one takes nothing away from the other services.
     deploy:
       resources:
         limits:
-          cpus: "0.2"
-          memory: 1g
+          cpus: "1.0"
+          memory: 2g
         reservations:
-          cpus: "0.1"
-          memory: 256m
+          cpus: "0.2"
+          memory: 512m
 
     logging:
       driver: json-file
