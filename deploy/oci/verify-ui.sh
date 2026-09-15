@@ -30,9 +30,21 @@
 #   4. GET /runs/<probe>     -> 200 text/html (deep link / browser refresh)
 #   5. /openapi.json         -> application/json (the SPA mount at "/" did not
 #                               swallow the REST API)
-# LiteLLM's own UI on :4000/ui is reported informationally: the image tag is
-# "main-stable" and its DB-backed tabs require DATABASE_URL, so a non-200 there
-# is not a stack failure.
+#   6. when `tailscale serve` fronts :8899, the very URL a browser uses
+#      (https://<node>.<tailnet>.ts.net) -> the SPA shell. A reverse proxy is
+#      the one path the loopback checks cannot see, and it fails in a way that
+#      looks healthy everywhere else: tailscale serve forwards the browser's
+#      Host header verbatim, so without API_ALLOWED_HOSTS every request answers
+#      403 "Untrusted local API host". That case is named here instead of
+#      surfacing as a blank page in the browser.
+# LiteLLM's own UI on :4000/ui is reported informationally (the image tag is
+# "main-stable"), but its BODY is inspected. Without DATABASE_URL, LiteLLM
+# answers /ui with admin_ui_utils.show_missing_vars_in_env() — an "Environment
+# Setup Instructions / Missing Environment Variables" page — instead of the
+# app, and DISABLE_ADMIN_UI=true answers "Admin UI is Disabled". Both are HTTP
+# 200 text/html and both make logging in impossible, so status + content-type
+# alone would call a broken UI healthy. A non-200 there is still reported as
+# informational rather than fatal.
 #
 # Env overrides: VIBE_CONTAINER (default vibe-trading), WAIT_S (default 120),
 # VIBE_UI_URL (default http://127.0.0.1:8899).
@@ -174,19 +186,77 @@ esac
 # 5. LiteLLM admin UI (informational)
 # ---------------------------------------------------------------------------
 if curl -fsS -o /dev/null --max-time 5 "$LITELLM_URL/health/liveliness" 2>/dev/null; then
-  UI_META="$(curl -sS -o /dev/null -L --max-time 10 -w '%{http_code} %{content_type}' "$LITELLM_URL/ui" || true)"
-  ok "LiteLLM gateway alive; GET /ui -> ${UI_META} (login: admin + LITELLM_MASTER_KEY)"
+  UI_BODY="$TMP_DIR/litellm-ui.html"
+  UI_META="$(curl -sS -o "$UI_BODY" -L --max-time 10 -w '%{http_code} %{content_type}' "$LITELLM_URL/ui" || true)"
+  UI_CODE="${UI_META%% *}"
+  if grep -qi 'Environment Setup Instructions\|Missing Environment Variables' "$UI_BODY" 2>/dev/null; then
+    warn "LiteLLM /ui is serving its 'Missing Environment Variables' page (${UI_META}), not the UI: the login endpoint is database-backed. Start litellm-db and check DATABASE_URL + LITELLM_SALT_KEY in docker-compose.yml."
+  elif grep -qi 'Admin UI is Disabled' "$UI_BODY" 2>/dev/null; then
+    warn "LiteLLM /ui reports 'Admin UI is Disabled' (${UI_META}): remove DISABLE_ADMIN_UI from the environment."
+  elif [ "$UI_CODE" != "200" ]; then
+    warn "GET ${LITELLM_URL}/ui -> ${UI_META} (informational; the image tag is main-stable)"
+  else
+    ok "LiteLLM gateway alive; GET /ui -> ${UI_META} (login: UI_USERNAME + UI_PASSWORD from .env)"
+  fi
 else
   warn "LiteLLM is not answering on ${LITELLM_URL}/health/liveliness; skipped the /ui check"
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Summary
+# 6. Tailnet access (checked only when `tailscale serve` fronts this port)
+# ---------------------------------------------------------------------------
+# A reverse proxy is the one access path the loopback checks above cannot see,
+# and it is the path a browser actually takes. `tailscale serve` forwards the
+# client's Host header VERBATIM, so the API sees a loopback PEER with a
+# NON-loopback Host and answers 403 "Untrusted local API host" unless that name
+# is listed in API_ALLOWED_HOSTS. Everything else looks healthy in that state —
+# container up, certificate valid, every loopback check green — so when a serve
+# mapping targets this port, fetch the HTTPS URL and name the failure.
+serve_url_for() { # $1 = loopback port; stdin = `tailscale serve status`
+  awk -v port="$1" '
+    /https:\/\// { url = $1 }
+    $0 ~ ("127\\.0\\.0\\.1:" port "([^0-9]|$)") { if (url != "") { print url; exit } }
+  '
+}
+TS_SERVE=""
+if command -v tailscale >/dev/null 2>&1; then
+  TS_SERVE="$(tailscale serve status 2>/dev/null || true)"
+fi
+VIBE_LOCAL_PORT="$(sed -n 's|^.*:\([0-9][0-9]*\)/*$|\1|p' <<<"$BASE" | head -n1)"
+TS_VIBE_URL=""
+if [ -n "$TS_SERVE" ] && [ -n "$VIBE_LOCAL_PORT" ]; then
+  TS_VIBE_URL="$(printf '%s\n' "$TS_SERVE" | serve_url_for "$VIBE_LOCAL_PORT")"
+fi
+TS_VIBE_URL="${TS_VIBE_URL%/}"
+
+if [ -z "$TS_VIBE_URL" ]; then
+  warn "tailscale serve is not fronting 127.0.0.1:${VIBE_LOCAL_PORT:-8899}; skipped the tailnet check (see deploy/oci/tailscale/)"
+else
+  TS_BODY="$TMP_DIR/tailnet.html"
+  TS_CODE="$(curl -sS --noproxy '*' -o "$TS_BODY" -w '%{http_code}' --max-time 20 -H 'Accept: text/html' "${TS_VIBE_URL}/" || true)"
+  if grep -q 'Untrusted local API host' "$TS_BODY" 2>/dev/null; then
+    fail "GET ${TS_VIBE_URL}/ -> 403 'Untrusted local API host': tailscale serve forwards the browser's Host verbatim, and the loopback DNS-rebinding guard rejects any Host it does not know. Fix: API_ALLOWED_HOSTS=<proxy hostname> in .env, then docker compose up -d vibe-trading — bash tailscale/setup-tailscale.sh derives the value and writes it."
+  fi
+  if grep -q 'API_AUTH_KEY is required for non-local API access' "$TS_BODY" 2>/dev/null; then
+    fail "GET ${TS_VIBE_URL}/ -> 403 'API_AUTH_KEY is required for non-local API access': the API saw a NON-loopback peer, so this request did not take tailscale serve's 127.0.0.1 hop."
+  fi
+  [ "$TS_CODE" = "200" ] \
+    || fail "GET ${TS_VIBE_URL}/ -> ${TS_CODE:-no response} (tailnet path; diagnose with: bash tailscale/setup-tailscale.sh --check)"
+  grep -q '<title>Vibe-Trading' "$TS_BODY" \
+    || fail "GET ${TS_VIBE_URL}/ -> 200 but not the Vibe-Trading SPA shell"
+  ok "tailnet: GET ${TS_VIBE_URL}/ -> 200 (SPA shell through tailscale serve)"
+fi
+
+# ---------------------------------------------------------------------------
+# 7. Summary
 # ---------------------------------------------------------------------------
 printf '%b\n' "${GREEN}Web UI verified.${NC}"
 printf '%s\n' "  ssh -N -L 8899:127.0.0.1:8899 -L 4000:127.0.0.1:4000 ubuntu@<oci-host>"
 printf '%s\n' "  Vibe-Trading Web UI: http://127.0.0.1:8899"
-printf '%s\n' "  LiteLLM Admin UI:    http://127.0.0.1:4000/ui"
+printf '%s\n' "  LiteLLM Admin UI:    http://127.0.0.1:4000/ui  (login: UI_USERNAME + UI_PASSWORD from .env)"
 printf '%s\n' "  Use 127.0.0.1 (or localhost) through the tunnel, never the public IP:"
 printf '%s\n' "  a non-loopback Host header is rejected with 403 'Untrusted local API host'."
+if [ -n "$TS_VIBE_URL" ]; then
+  printf '%s\n' "  Tailnet (no tunnel needed): ${TS_VIBE_URL}/"
+fi
 exit 0

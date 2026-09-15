@@ -78,12 +78,22 @@ services:
       # Set VIBE_TRADING_API_AUTH_KEY in .env before making :8899
       # reachable beyond localhost. Empty keeps dev mode.
       API_AUTH_KEY: ${VIBE_TRADING_API_AUTH_KEY:-}
-      # Web UI: http://127.0.0.1:8899 through an SSH tunnel (see env.template
-      # "Operator UI access"). The SPA is built by stage 1 of
-      # vibe-trading.Dockerfile and installed into the image — `pip install`
-      # alone ships no frontend, so an image built from an older revision of
-      # this file answers API-only. No key is needed through a tunnel while
-      # API_AUTH_KEY is empty; non-loopback calls are refused either way.
+      # Host allow-list for the loopback DNS-rebinding guard. Any reverse
+      # proxy that terminates TLS on this host and forwards to
+      # 127.0.0.1:8899 (tailscale serve does, preserving the browser's Host
+      # header verbatim) makes the API see a LOOPBACK peer with a NON-loopback
+      # Host — which the guard rejects with 403 "Untrusted local API host"
+      # unless the proxy's name is listed here. tailscale/setup-tailscale.sh
+      # derives and writes this value; see "Operator UI access" in
+      # env.template. Leave empty when nothing proxies to this port.
+      API_ALLOWED_HOSTS: ${API_ALLOWED_HOSTS:-}
+      # Web UI: https://<node>.<tailnet>.ts.net via `tailscale serve`
+      # (tailscale/setup-tailscale.sh), or http://127.0.0.1:8899 through an SSH
+      # tunnel (tunnel/). The SPA is built by stage 1 of vibe-trading.Dockerfile
+      # and installed into the image — `pip install` alone ships no frontend, so
+      # an image built from an older revision of this file answers API-only. No
+      # key is needed on either path while API_AUTH_KEY is empty: both arrive
+      # from a loopback peer, and non-loopback calls are refused.
 
     deploy:
       resources:
@@ -166,6 +176,51 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Postgres for the LiteLLM Admin UI and its CRUD features (virtual keys,
+  # teams, spend history). Not optional: without a database LiteLLM answers
+  # /ui with its own "Environment Setup Instructions" page and cannot log
+  # anyone in — see the litellm service below.
+  #
+  # Published on loopback only. litellm runs with network_mode: host, so it
+  # reaches 127.0.0.1:5432, while nothing is exposed on the OCI public
+  # interface. Never publish 5432 on 0.0.0.0.
+  litellm-db:
+    image: postgres:16-alpine
+    container_name: litellm-db
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${LITELLM_DB_PASSWORD:-litellm-local-change-me}
+      POSTGRES_DB: litellm
+
+    volumes:
+      - litellm_db_data:/var/lib/postgresql/data
+
+    ports:
+      - "127.0.0.1:5432:5432"
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.3"
+          memory: 512m
+        reservations:
+          cpus: "0.1"
+          memory: 128m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
   litellm:
     image: ghcr.io/berriai/litellm:main-stable
     container_name: litellm
@@ -177,20 +232,42 @@ services:
     volumes:
       - ./litellm_config.yaml:/app/config.yaml:ro
 
+    # The UI cannot log anyone in without the database above, so wait for it.
+    depends_on:
+      litellm-db:
+        condition: service_healthy
+
     environment:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      # litellm_config.yaml reads os.environ/GROQ_API_KEY_2 for the fallback
+      # deployment of each model group. It reaches the container only if it is
+      # passed here: exporting it in .env alone leaves that fallback keyless.
+      GROQ_API_KEY_2: ${GROQ_API_KEY_2:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-local-change-me}
       # Admin UI on the same loopback port: http://127.0.0.1:4000/ui through an
-      # SSH tunnel (see env.template "Operator UI access"). Login is username
-      # "admin" with LITELLM_MASTER_KEY as the password. UI_USERNAME /
-      # UI_PASSWORD are deliberately NOT passed here: an empty value must never
-      # reach a login comparison, and dedicated UI credentials are optional.
-      # The DB-backed tabs (virtual keys, teams, spend history) need a
-      # DATABASE_URL (Postgres); without one the UI still lists the model
-      # groups and runs test calls.
+      # SSH tunnel (see env.template "Operator UI access").
+      #
+      # The UI is database-backed: with no DATABASE_URL, LiteLLM serves
+      # admin_ui_utils.show_missing_vars_in_env() — an "Environment Setup
+      # Instructions / Missing Environment Variables" page — instead of the
+      # app, on HTTP 200 text/html. A status-code check cannot tell the two
+      # apart, which is why verify-ui.sh inspects the body.
+      DATABASE_URL: postgresql://litellm:${LITELLM_DB_PASSWORD:-litellm-local-change-me}@127.0.0.1:5432/litellm
+      # Encrypts provider credentials stored in the DB. LiteLLM documents it as
+      # immutable: change it after the DB holds data and stored models become
+      # unreadable. Set it once, before creating anything in the UI.
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:-sk-local-salt-change-me}
+      # Login. UI_USERNAME + UI_PASSWORD are the documented credentials; the
+      # fallback (username "admin" + LITELLM_MASTER_KEY) is what returns
+      # "Invalid credentials used to access UI. Check 'UI_USERNAME',
+      # 'UI_PASSWORD' in .env file" in the field reports (issues #9243, #9418,
+      # #9264). Empty values are falsy in LiteLLM, so a blank pair keeps the
+      # fallback instead of breaking the comparison.
+      UI_USERNAME: ${UI_USERNAME:-}
+      UI_PASSWORD: ${UI_PASSWORD:-}
 
     command:
       ["--config", "/app/config.yaml", "--host", "127.0.0.1", "--port", "4000"]
@@ -306,6 +383,10 @@ services:
 volumes:
   vibe_data:
     name: vibe_data
+  # LiteLLM UI users, virtual keys, teams and spend history. Deleting it logs
+  # the UI out of its own state and LITELLM_SALT_KEY makes old rows unreadable.
+  litellm_db_data:
+    name: litellm_db_data
   seeds_lite_data:
     name: seeds_lite_data
   feed_intel_data:
