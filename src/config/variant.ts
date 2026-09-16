@@ -48,7 +48,19 @@ export const SITE_VARIANT: string = (() => {
   if (h.startsWith('commodity.')) return 'commodity';
   if (h.startsWith('energy.')) return 'energy';
 
-  if (h === 'localhost' || h === '127.0.0.1') {
+  // [fork-patch] Any host other than the upstream worldmonitor.app deployment
+  // (self-hosted, Vercel preview, custom domain) uses local variant selection:
+  // an explicit ?variant= URL param wins, then localStorage, then the build
+  // default — exactly like localhost / the desktop app.
+  const onUpstreamHost =
+    h === 'worldmonitor.app' ||
+    h === 'www.worldmonitor.app' ||
+    h.endsWith('.worldmonitor.app');
+  if (h === 'localhost' || h === '127.0.0.1' || !onUpstreamHost) {
+    try {
+      const urlVariant = new URLSearchParams(window.location.search).get('variant');
+      if (isSiteVariant(urlVariant)) return urlVariant;
+    } catch { /* ignore */ }
     const stored = loadStoredVariant();
     if (isSiteVariant(stored)) return stored;
     return buildVariant;

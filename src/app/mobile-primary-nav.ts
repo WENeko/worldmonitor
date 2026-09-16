@@ -189,7 +189,7 @@ export class MobilePrimaryNav {
 
     overlay.addEventListener('click', () => this.closeMenu(), options);
     close.addEventListener('click', () => this.closeMenu(), options);
-    const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || (location.hostname !== 'worldmonitor.app' && location.hostname !== 'www.worldmonitor.app' && !location.hostname.endsWith('.worldmonitor.app'));
     menu.querySelectorAll<HTMLButtonElement>('.mobile-menu-variant').forEach((button) => {
       button.addEventListener('click', () => {
         const variant = button.dataset.variant;
