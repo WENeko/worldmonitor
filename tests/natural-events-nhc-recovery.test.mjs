@@ -161,7 +161,7 @@ test('retains validated NHC coverage after required point requests fail without 
     payload.events.filter((event) => event.sourceName === 'NHC'),
     [retainedStorm],
   );
-  assert.deepEqual(calls, { eonet: 1, gdacs: 1, nhc: 30, hko: 1 });
+  assert.deepEqual(calls, { eonet: 1, gdacs: 6, nhc: 30, hko: 1 });
   assert.equal(payload._nhcSnapshot.fetchedAt, NOW);
   assert.equal(payload._nhcSnapshot.consecutiveFailures, 1);
   assert.equal(verdict(payload, NOW + 5 * MIN).sourceFailurePendingUntil, new Date(NOW + 215 * MIN).toISOString());
@@ -613,7 +613,7 @@ test('real seeder persists NHC recovery state before replacing the canonical pay
 
   const published = runSeedFixture(initial, NOW + 5 * MIN);
   assert.equal(published.status, 0, published.output);
-  assert.deepEqual(published.calls, { eonet: 1, gdacs: 1, nhc: 30, hko: 1 });
+  assert.deepEqual(published.calls, { eonet: 1, gdacs: 6, nhc: 30, hko: 1 });
   const store = new Map(published.store);
   const state = JSON.parse(store.get('natural:events:nhc-snapshot:v1'));
   const publicData = JSON.parse(store.get('natural:events:v1')).data;
@@ -632,7 +632,7 @@ test('real seeder persists NHC recovery state before replacing the canonical pay
   assert.equal(failedStore.get('natural:events:v1'), canonical);
   assert.equal(failedStore.get('seed-meta:natural:events'), meta);
   assert.equal(failedStore.get('natural:events:nhc-snapshot:v1'), JSON.stringify(previousNhcSnapshot));
-  assert.deepEqual(failed.calls, { eonet: 1, gdacs: 1, nhc: 30, hko: 1 });
+  assert.deepEqual(failed.calls, { eonet: 1, gdacs: 6, nhc: 30, hko: 1 });
 });
 
 test('real seeder preserves canonical data and advances repeated unsafe-empty failures', () => {

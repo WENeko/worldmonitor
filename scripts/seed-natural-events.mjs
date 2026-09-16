@@ -208,16 +208,31 @@ function parseGdacsTcFields(props) {
   return fields;
 }
 
-async function fetchGdacs(fetchFn = globalThis.fetch) {
-  const res = await fetchFn(GDACS_API, {
+// One list request per event type. GDACS changed the MAP endpoint on or before
+// 2026-09-16: a bare request answers `400 {"message":"Eventtype is required."}`
+// and `eventtype=ALL` / a `;`-joined list answers `400 {"message":"Please
+// specify only 1 eventtype."}`, so the single mixed-type call this seeder made
+// since #5276 failed every run and crashed it whenever EONET also blipped. The
+// per-type responses carry the same GeoJSON feature shape the mapper below
+// reads. Any type failing rejects the whole fetch: fetchNaturalEvents treats a
+// rejected GDACS result as "cannot prove complete coverage", and a silently
+// shorter list would overclaim exactly that (tests/natural-events-gdacs-eventtype.test.mjs).
+async function fetchGdacsType(eventtype, fetchFn) {
+  const res = await fetchFn(`${GDACS_API}?eventtype=${eventtype}`, {
     headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
     signal: AbortSignal.timeout(15_000),
   });
-  if (!res.ok) throw new Error(`GDACS ${res.status}`);
+  if (!res.ok) throw new Error(`GDACS ${res.status} (${eventtype})`);
 
   const data = await res.json();
-  if (!Array.isArray(data?.features)) throw new Error('GDACS malformed response');
-  const features = data.features;
+  if (!Array.isArray(data?.features)) throw new Error(`GDACS malformed response (${eventtype})`);
+  return data.features;
+}
+
+export async function fetchGdacs(fetchFn = globalThis.fetch) {
+  const features = (await Promise.all(
+    Object.keys(GDACS_TO_CATEGORY).map((eventtype) => fetchGdacsType(eventtype, fetchFn)),
+  )).flat();
   const seen = new Set();
   const events = [];
 
