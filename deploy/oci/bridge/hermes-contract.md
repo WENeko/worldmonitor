@@ -9,7 +9,17 @@
 > sans repasser par ce fichier — le repo reste la source de vérité tant que
 > le système est en développement.
 >
+> `bash push-contract.sh` fait cette copie à ta place vers ce chemin unique
+> (le script vit dans le même dossier que ce fichier) ; `--check` compare la
+> copie persistée à celle du repo sans rien écrire. Le nom du fichier ne
+> porte volontairement **pas** la version : elle vit dans le changelog
+> ci-dessous et dans l'historique git. Un `hermes-contract-v5.md` créerait un
+> second exemplaire à maintenir, et donc une source d'erreur.
+>
 > **Changelog du document (repo)** :
+> - 2026-09-16 : le fichier du repo perd son suffixe de version
+>   (`hermes-contract-v4.md` → `hermes-contract.md`) et gagne
+>   `push-contract.sh`. **Aucune règle modifiée** : le contrat reste v4.
 > - v4 (2026-09-04) : ajout des compétences `read_receipts` (règle 8) et
 >   `commission_research` (règle 9) + règle 10 (interface unique) ;
 >   vocabulaire `mode` étendu à `RESEARCH` ; schéma de directive enrichi

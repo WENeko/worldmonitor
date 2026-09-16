@@ -16,7 +16,7 @@ the Macro Director loop.
   its mandate / pre-trade checks. The same applies to research: Hermès can
   *commission* read-only research through the bridge (`mode: RESEARCH`)
   instead of re-implementing indicator math itself — see
-  `hermes-contract-v4.md` for the skill that makes that a habit.
+  `hermes-contract.md` for the skill that makes that a habit.
 - So the directive has to be handed to the agent. Doing that by hand every
   time (`docker exec vibe-trading vibe-trading -p "..." --json`) is the
   manual version of this bridge — fine for a one-off test, not a daily
@@ -114,7 +114,7 @@ trusts the agent's exit code alone for mandated orders. `audit/audits.jsonl`
 is the append-only trail for backtesting the loop itself. The status
 vocabulary is the *learning signal*: Hermès updates priors from
 `RESEARCH_DONE` findings and `EXECUTED` outcomes (see
-`hermes-contract-v4.md`).
+`hermes-contract.md`).
 
 ## Operational runbook
 
@@ -381,10 +381,17 @@ The bridge is intentionally the *cheapest* container in the stack:
 
 ## Companion documents
 
-- `hermes-contract-v4.md` — the paste-ready INTERFACE CONTRACT v4 for
-  Hermès: adds the `read_receipts` and `commission_research` skills that
-  turn the bridge receipts into the learning loop, plus the directive
-  vocabulary (including `RESEARCH` mode) in one prompt.
+- `hermes-contract.md` — the paste-ready INTERFACE CONTRACT for Hermès:
+  adds the `read_receipts` and `commission_research` skills that turn the
+  bridge receipts into the learning loop, plus the directive vocabulary
+  (including `RESEARCH` mode) in one prompt. The filename carries **no
+  version** on purpose: the version lives in the file's own changelog and
+  in git history, so a bump never forks the document into a second copy.
+- `push-contract.sh` — pushes that one file to the one path Hermès reads
+  (`/opt/data/hermes/INTERFACE_CONTRACT.md` inside the `hermes` container,
+  both overridable), then verifies the rules 8/9/10 markers landed. Run it
+  with `--check` to diff the repo copy against the persisted one without
+  writing anything — that is the divergence guard.
 - `sample-directive.json` / `sample-directive-synthetic.json` /
   `sample-directive-research.json` — the three directive shapes, plus
   `sample-directive-crypto-alpaca.json` (BTC/USD 0.001 on
