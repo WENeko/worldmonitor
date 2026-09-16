@@ -42,7 +42,7 @@
 # recreates vibe-trading, then proves the whole path with its own HTTPS request.
 #
 # Env overrides: ENV_FILE, VIBE_PORT (8899), LITELLM_PORT (4000),
-#   HTTPS_PORT (443), HTTPS_LITELLM_PORT (8443), WAIT_S (90).
+#   HTTPS_PORT (443), HTTPS_LITELLM_PORT (8443), WAIT_S (90), SERVE_TIMEOUT (180).
 # ============================================================================
 
 set -uo pipefail
@@ -56,6 +56,10 @@ LITELLM_PORT="${LITELLM_PORT:-4000}"
 HTTPS_PORT="${HTTPS_PORT:-443}"
 HTTPS_LITELLM_PORT="${HTTPS_LITELLM_PORT:-8443}"
 WAIT_S="${WAIT_S:-90}"
+# `tailscale serve --bg` blocks while it provisions the TLS certificate — usually
+# well under a minute. Past this budget the ACME order is wedged, not slow, and
+# an indefinite wait is indistinguishable from a hang (observed in the field).
+SERVE_TIMEOUT="${SERVE_TIMEOUT:-180}"
 
 DO_INSTALL=0; DO_DRY_RUN=0; DO_CHECK=0; DO_RESET=0
 for arg in "$@"; do
@@ -245,6 +249,22 @@ if [ "$ENV_CHANGED" -eq 1 ] && [ "$DO_DRY_RUN" -eq 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 4b. --check ends here: report only — no publishing, no probing. Probing in
+# check mode used to FAIL with 'connection refused' on a host that simply has
+# no serve mappings yet, reading like a breakage when nothing was broken.
+# ---------------------------------------------------------------------------
+if [ "$DO_CHECK" -eq 1 ]; then
+  printf '%b\n' "${GREEN}Check complete — nothing was changed.${NC}"
+  if "${TS[@]}" serve status 2>&1 | grep -qi 'no serve config'; then
+    printf '%s\n' "  No serve mappings exist yet, so there is nothing to probe. Run without"
+    printf '%s\n' "  --check to publish https://${DNS_NAME}/ and the LiteLLM mapping, then verify."
+  else
+    printf '%s\n' "  Mappings exist; run without --check to re-verify the HTTPS path end to end."
+  fi
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # 5. Publish the two mappings
 # ---------------------------------------------------------------------------
 if [ "$DO_CHECK" -eq 0 ]; then
@@ -253,15 +273,26 @@ if [ "$DO_CHECK" -eq 0 ]; then
     warn "dry-run: would run: tailscale serve --bg --yes --https=${HTTPS_LITELLM_PORT} http://127.0.0.1:${LITELLM_PORT}"
   else
     step "Publishing ${DNS_NAME} to your tailnet (TLS certificate is fetched on first use) ..."
-    "${TS[@]}" serve --bg --yes --https="$HTTPS_PORT" "http://127.0.0.1:${VIBE_PORT}" >"$TMP_DIR/serve-vibe.out" 2>&1 \
-      || { sed -n '1,6p' "$TMP_DIR/serve-vibe.out" >&2; \
-           fail "tailscale serve failed for https:${HTTPS_PORT} -> 127.0.0.1:${VIBE_PORT}.
-      Most common cause: HTTPS Certificates are not enabled for the tailnet
-      (Tailscale admin console -> DNS -> HTTPS Certificates). MagicDNS must be
-      enabled there too." ; }
+    if ! timeout "$SERVE_TIMEOUT" "${TS[@]}" serve --bg --yes --https="$HTTPS_PORT" "http://127.0.0.1:${VIBE_PORT}" >"$TMP_DIR/serve-vibe.out" 2>&1; then
+      sed -n '1,6p' "$TMP_DIR/serve-vibe.out" >&2
+      if grep -qiE 'serve is not enabled' "$TMP_DIR/serve-vibe.out" 2>/dev/null; then
+        approve_url="$(grep -oE 'https://login\.tailscale\.com/f/serve\?node=[A-Za-z0-9]+' "$TMP_DIR/serve-vibe.out" | head -n1)"
+        fail "tailscaled refused to publish: the tailnet-level Serve feature is not enabled yet.
+      Approve it in a browser logged in as the tailnet admin${approve_url:+: ${approve_url}}
+      (one-time per tailnet; the URL is also printed by tailscale itself above),
+      then rerun this script. While in the admin console, check DNS ->
+      HTTPS Certificates is on — the certificate request comes right after."
+      fi
+      fail "tailscale serve did not return within ${SERVE_TIMEOUT}s for https:${HTTPS_PORT} -> 127.0.0.1:${VIBE_PORT}.
+      serve blocks while provisioning the TLS certificate; past ~2 min the ACME
+      order is wedged, not slow. See the actual error with:
+        sudo tailscale cert ${DNS_NAME}
+        sudo journalctl -u tailscaled --since '-20 min' | grep -iE 'cert|acme|rate|error' | tail -30
+      'sudo systemctl restart tailscaled' unwedges it in most cases; then rerun."
+    fi
     ok "tailscale serve: $(url_for_port "$HTTPS_PORT") -> http://127.0.0.1:${VIBE_PORT}  (Web UI + REST API)"
 
-    if "${TS[@]}" serve --bg --yes --https="$HTTPS_LITELLM_PORT" "http://127.0.0.1:${LITELLM_PORT}" >"$TMP_DIR/serve-litellm.out" 2>&1; then
+    if timeout "$SERVE_TIMEOUT" "${TS[@]}" serve --bg --yes --https="$HTTPS_LITELLM_PORT" "http://127.0.0.1:${LITELLM_PORT}" >"$TMP_DIR/serve-litellm.out" 2>&1; then
       ok "tailscale serve: $(url_for_port "$HTTPS_LITELLM_PORT") -> http://127.0.0.1:${LITELLM_PORT}  (Admin UI at /ui)"
     else
       warn "could not publish the LiteLLM mapping on https:${HTTPS_LITELLM_PORT}: $(sed -n '1,2p' "$TMP_DIR/serve-litellm.out" | tr '\n' ' ')"
