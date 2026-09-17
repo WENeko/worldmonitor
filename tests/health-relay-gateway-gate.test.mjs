@@ -305,7 +305,8 @@ test('a stall that outlives its grace becomes an operational RELAY_GATE_UNREACHA
   // The streak is carried, but NOT as a live softening deadline: an expired
   // `transportGraceUntil` is registered in ENTRY_SOFTENING_DEADLINES, so
   // republishing it would make every snapshot instantly unservable and turn a
-  // persistent outage into a full Redis sweep + relay probe per poll (#8282 review).
+  // persistent outage into a full Redis sweep per poll instead of one warm
+  // read (#8282 review).
   assert.equal(entry.transportGraceExpiredAt, expiredGrace, 'the original deadline is carried across windows');
   assert.equal(entry.transportGraceUntil, undefined, 'an expired deadline is never republished as a softening');
   const snapshotWrite = redisCommands.find(([op, key]) => op === 'SET' && key === HEALTH_SNAPSHOT_KEY);

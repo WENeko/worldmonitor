@@ -3803,8 +3803,13 @@ function parsePreviousRelayGatewayGate(raw) {
 function withTransportGrace(fresh, previous, now) {
   if (fresh.status !== 'RELAY_GATE_UNREACHABLE') return fresh;
   // The streak anchor survives its own deadline: after the grace lapses it
-  // rides in `transportGraceExpiredAt`, so an unreachable relay that recovers
-  // and fails again still reads as one continuous outage.
+  // rides in `transportGraceExpiredAt`, so an unbroken run of unreachable
+  // verdicts reads as one continuous outage for as long as the predecessor is
+  // retained (RELAY_GATEWAY_GATE_PROBE_RETENTION_SECONDS); a gap longer than
+  // that evicts it and the next sighting is a first one.
+  // Only an unreachable predecessor is carried — any other verdict in between
+  // (including OK) clears the anchor, and the next failure is a first
+  // sighting that earns a fresh grace.
   const carried = previous?.status === 'RELAY_GATE_UNREACHABLE'
     ? [previous.transportGraceUntil, previous.transportGraceExpiredAt]
       .find((raw) => typeof raw === 'string' && Number.isFinite(Date.parse(raw))) ?? null
@@ -3814,8 +3819,13 @@ function withTransportGrace(fresh, previous, now) {
   // `transportGraceUntil` is registered in ENTRY_SOFTENING_DEADLINES, so an
   // expired one makes hasExpiredActivationGrace reject every snapshot that
   // carries it and snapshotTtlSeconds clip the TTL to a second — turning a
-  // persistent relay outage into a full Redis sweep and relay probe on every
-  // single health poll, hammering both failing services (#8282 review).
+  // persistent relay outage into a full Redis sweep on every single health
+  // poll instead of one warm read (#8282 review). The relay itself is not
+  // re-probed at that rate: readOrProbeRelayGatewayGate reuses a cached
+  // verdict inside its own freshness window before it ever takes the lease.
+  // That holds whenever a reusable verdict is in the cache — so not when the
+  // stored record is an unprobed follower fallback, and not when a probe's
+  // own publish failed. Both leave the next sweep to probe again.
   return isExpiredDeadline(deadline, now)
     ? { ...fresh, transportGraceExpiredAt: deadline }
     : { ...fresh, transportGraceUntil: deadline };
