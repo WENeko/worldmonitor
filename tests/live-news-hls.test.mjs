@@ -9,7 +9,7 @@ const root = resolve(__dirname, '..');
 
 const readSrc = (relPath) => readFileSync(resolve(root, relPath), 'utf-8');
 
-const liveNewsSrc = readSrc('src/components/LiveNewsPanel.ts');
+const liveNewsSrc = readSrc('src/components/LiveNewsPanel.ts') + readSrc('src/services/live-channels.ts');
 const liveWebcamsSrc = readSrc('src/components/LiveWebcamsPanel.ts');
 const liveNewsSvc = readSrc('src/services/live-news.ts');
 const youtubeApi = readSrc('api/youtube/live.js');
