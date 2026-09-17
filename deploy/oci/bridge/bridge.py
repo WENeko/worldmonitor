@@ -66,6 +66,14 @@ from pathlib import Path
 
 LOG = logging.getLogger("directive-bridge")
 
+# A directive whose receipt already exists is re-seen on every poll (15 s by
+# default). Logging every one of them every tick floods the log — six parked
+# files already mean ~34 000 lines a day, which is where the first real
+# directive goes to die. Report a given id at INFO once per process, then at
+# DEBUG: the state stays observable (BRIDGE_LOG_LEVEL=DEBUG) without drowning
+# the signal. `--archive` removes the cause instead of the symptom.
+_SKIP_REPORTED: set[str] = set()
+
 DIRECTIVE_VERSION = 2
 
 # Directional directives that actually request exposure change. Everything
@@ -780,7 +788,16 @@ def process_file(cfg: BridgeConfig, path: Path) -> None:
             and cfg.research_allowed
         )
         if previous is not None and not parked_and_gate_open:
-            LOG.info("directive %s already processed; skipping", directive_id)
+            if directive_id in _SKIP_REPORTED:
+                LOG.debug("directive %s already processed; skipping", directive_id)
+            else:
+                _SKIP_REPORTED.add(directive_id)
+                LOG.info(
+                    "directive %s already processed; skipping (repeat skips are "
+                    "logged at DEBUG; drop the file from the inbox with "
+                    "`--archive`)",
+                    directive_id,
+                )
             return
         if parked_and_gate_open:
             LOG.info(
@@ -889,6 +906,80 @@ def process_file(cfg: BridgeConfig, path: Path) -> None:
     LOG.info("directive %s → %s", directive_id, outcome)
 
 
+def archive_processed(cfg: BridgeConfig, report_only: bool = False) -> int:
+    """Move already-processed directives out of the watched directory.
+
+    The bridge deliberately cannot write to `directives/` (owned by Hermès's
+    uid 1000, mode 0755 — see the Dockerfile), so this has to run as root
+    inside the container:
+
+        docker exec -u 0 bridge python /app/bridge.py --archive --check
+        docker exec -u 0 bridge python /app/bridge.py --archive
+
+    A directive is archived when its receipt exists with any status **except**
+    GATED — exactly the set `process_file` skips forever. A GATED receipt is
+    parked and non-final, so its directive must stay in the watched directory
+    for the bridge to re-process it once the research gate opens.
+
+    Receipts are never moved: they are the idempotency key and the input to
+    Hermès's daily learning review, so archiving a directive file changes no
+    behaviour beyond the log volume.
+    """
+    archive = cfg.directives / "archive"
+    archived: list[str] = []
+    parked: list[str] = []
+    failed: list[str] = []
+
+    for path in collect_pending(cfg):
+        receipt_path = cfg.executions / f"{path.stem}.json"
+        if not receipt_path.is_file():
+            continue  # no receipt yet: pending, not processed
+        try:
+            status = json.loads(receipt_path.read_text(encoding="utf-8")).get("status")
+        except (json.JSONDecodeError, OSError) as exc:
+            # Not archived on purpose: `process_file` cannot read this receipt
+            # either, so it treats the directive as never processed and will
+            # re-execute it. Flagged, and reported through a non-zero exit.
+            LOG.warning(
+                "unreadable receipt %s: %s — %s left in place (the bridge will "
+                "re-process it)",
+                receipt_path.name,
+                exc,
+                path.name,
+            )
+            failed.append(path.name)
+            continue
+        if status == "GATED":
+            parked.append(f"{path.name} (GATED: parked, re-processed when the gate opens)")
+            continue
+        if report_only:
+            archived.append(f"{path.name} ({status})")
+            continue
+        try:
+            archive.mkdir(parents=True, exist_ok=True)
+            path.replace(archive / path.name)
+        except OSError as exc:
+            LOG.error("could not archive %s: %s", path.name, exc)
+            failed.append(path.name)
+            continue
+        archived.append(f"{path.name} ({status})")
+
+    verb = "would archive" if report_only else "archived"
+    for entry in archived:
+        print(f"  {verb} {entry}")
+    for entry in parked:
+        print(f"  kept {entry}")
+    for entry in failed:
+        print(f"  FAILED {entry}")
+    print(
+        f"{verb} {len(archived)} directive file(s); "
+        f"{len(parked)} parked; {len(failed)} failed"
+    )
+    if archived and not report_only:
+        print(f"archive directory: {archive}")
+    return 1 if failed else 0
+
+
 def collect_pending(cfg: BridgeConfig) -> list[Path]:
     if not cfg.directives.is_dir():
         return []
@@ -905,6 +996,11 @@ def main(argv: list[str]) -> int:
     )
     cfg = BridgeConfig()
     cfg.ensure_dirs()
+
+    # `--archive` is handled before `--check` so `--archive --check` stays the
+    # report-only form of the archive instead of a config dump.
+    if "--archive" in argv:
+        return archive_processed(cfg, report_only="--check" in argv)
 
     if "--check" in argv:
         print(cfg.describe())

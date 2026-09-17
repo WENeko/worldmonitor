@@ -97,7 +97,9 @@ CONTRACT fields. See `sample-directive.json`.
   automatically once the gate opens (no re-delivery needed). See
   `sample-directive-research.json`.
 - Idempotent: a receipt already present for `directive_id` → skip (except
-  `GATED`, which is not final).
+  `GATED`, which is not final). The skip is logged at INFO **once per process**
+  and at DEBUG afterwards, and `--archive` clears the file out of the inbox —
+  see "Inbox tidiness" below.
 
 ## Receipts (what Hermès reads)
 
@@ -155,6 +157,76 @@ docker exec bridge cat /var/lib/bridge/executions/DIR-SYNTH-20260904-070100-001.
 #      docker compose up -d bridge   # after exporting BRIDGE_ALLOW_RESEARCH=1
 #   4) receipt status RESEARCH_DONE + findings in the agent JSON result
 ```
+
+## Inbox tidiness — archiving processed directives
+
+`directives/` is a ring buffer, not a log: a file whose receipt already exists
+is skipped forever, and the bridge can only *say* so. Six parked files meant six
+`already processed; skipping` lines per 15 s tick — ~34 000 lines a day, which is
+where a first real directive goes to die. Two independent fixes are in place:
+
+- **In the watcher** (`bridge.py`): the first skip of a given `directive_id` is
+  logged at INFO, every later one at DEBUG. `BRIDGE_LOG_LEVEL=DEBUG` shows them
+  all again when you are actually debugging idempotency.
+- **At the source**: `--archive` moves the processed files out of the watched
+  directory.
+
+The bridge runs as `vibe` and `directives/` is owned by Hermès's uid 1000 on
+purpose (the bridge may only *read* directives), so archiving has to run as root
+**inside the container**:
+
+```bash
+docker compose build bridge && docker compose up -d bridge   # picks up bridge.py
+docker exec -u 0 bridge python /app/bridge.py --archive --check   # report only
+docker exec -u 0 bridge python /app/bridge.py --archive
+```
+
+Rules it follows:
+
+- A directive is archived when its receipt exists with any status **except**
+  `GATED` — exactly the set `process_file` skips forever. A `GATED` receipt is
+  parked and non-final, so its directive **stays** in the watched directory for
+  the bridge to re-process when `BRIDGE_ALLOW_RESEARCH=1`.
+- A directive with **no** receipt is pending, not processed: never touched.
+- A directive with an **unreadable** receipt is never touched and is reported as
+  `FAILED` with a non-zero exit — the bridge cannot read that receipt either, so
+  it treats the directive as never processed and will re-execute it.
+- Receipts are never moved. They remain the idempotency key and the input to
+  Hermès's daily learning review; archiving a directive file changes nothing but
+  the log volume (`directives/archive/` is not watched).
+
+## First real directive — acceptance
+
+The loop is closed when a directive **Hermès wrote** has a receipt. The
+`DIR-SYNTH-*` files are operator-made samples: they prove the bridge executes an
+order, not that Hermès *delivers* one (règle 8 — delivery is the file appearing
+in `/opt/data/bridge/directives/`).
+
+```bash
+# 1. in the Hermès dashboard, ask for one cycle, e.g.
+#    "Run one decision cycle and deliver your directive through the bridge"
+# 2. watch the inbox and the watcher (règle 10: read state → decide → write
+#    directive file → wait for receipt)
+docker exec bridge sh -c 'ls -la /var/lib/bridge/directives/ | grep -v archive'
+docker logs --tail=20 bridge
+# 3. the proof: a receipt whose id is not a sample, and its agent run id
+docker exec bridge sh -c 'ls -lt /var/lib/bridge/executions/*.json | head -3'
+docker exec bridge cat /var/lib/bridge/executions/<directive_id>.json
+```
+
+Accept it when the receipt carries a **terminal** status — `EXECUTED`,
+`NO_EXECUTION`, `RESEARCH_DONE`, `RESEARCH_TIMEOUT`, `RESEARCH_FAILED`,
+`REJECTED`, `FAILED` or `TIMEOUT` — and a `run_id` under `agent_result` for
+everything that reached the agent. `GATED` is **not** acceptance: it is parked.
+
+Two legitimate-looking results that are not failures:
+
+- A directive carrying `NO_EXECUTION` is a complete success. `action_directive`
+  `NO_ACTION` / `PAUSE_TRADING` / `DE_RISK` is recorded without an order
+  (DE_RISK position reduction is not implemented yet) — no market hours needed.
+- A mandated `execution_request` dropped outside US market hours (13:30–20:00
+  UTC, weekdays) legitimately fails closed on `order_not_filled`. Re-drop under a
+  **fresh `directive_id`** during hours; a final id never re-runs.
 
 ## Multi-asset paper: crypto, Binance testnet
 
@@ -233,6 +305,7 @@ fractional fill verifies exactly like a whole-share one.
 | `BRIDGE_ALLOW_RESEARCH` | `0` | `1` lets `mode: RESEARCH` commissions run as read-only agent tasks |
 | `BRIDGE_SKIP_FILL_CHECK` | `0` | `1` trusts the agent's exit code for `execution_request` directives (disables the positions-based fill verification — not recommended) |
 | `BRIDGE_VIBE_TRADING_BIN` | `vibe-trading` | CLI binary path |
+| `BRIDGE_LOG_LEVEL` | `INFO` | Log level. `DEBUG` also shows the per-tick "already processed; skipping" lines |
 
 **Stand-down**: touching `/var/lib/bridge/halt` pauses processing until
 removed. From the host (the volume has no host path — see above):
