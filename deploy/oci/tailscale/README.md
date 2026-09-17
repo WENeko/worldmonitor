@@ -8,6 +8,7 @@ change to the OCI ingress rules:
 |---|---|
 | Vibe-Trading Web UI + REST API | `https://<node>.<tailnet>.ts.net/` |
 | LiteLLM Admin UI | `https://<node>.<tailnet>.ts.net:8443/ui` |
+| Hermès dashboard | `https://<node>.<tailnet>.ts.net:9443/` |
 
 TLS is a real, automatically renewed certificate for the `*.ts.net` name —
 nothing to buy, nothing to renew, no domain to point anywhere. `--bg` mappings
@@ -28,8 +29,9 @@ bash tailscale/setup-tailscale.sh            # configure + verify + write .env
 | `--install` | install Tailscale first (`curl -fsSL https://tailscale.com/install.sh \| sh`) if it is missing |
 | `--reset` | remove all `tailscale serve` mappings on this node |
 
-Knobs: `VIBE_PORT` (8899), `LITELLM_PORT` (4000), `HTTPS_PORT` (443),
-`HTTPS_LITELLM_PORT` (8443), `WAIT_S` (90), `ENV_FILE` (`../.env`).
+Knobs: `VIBE_PORT` (8899), `LITELLM_PORT` (4000), `HERMES_PORT` (9119),
+`HTTPS_PORT` (443), `HTTPS_LITELLM_PORT` (8443), `HTTPS_HERMES_PORT` (9443),
+`WAIT_S` (90), `ENV_FILE` (`../.env`).
 
 Prerequisites, both in the Tailscale admin console → **DNS**: **MagicDNS** and
 **HTTPS Certificates** enabled for the tailnet. The script names whichever of
@@ -103,13 +105,83 @@ makes the tailnet itself the authentication layer.
 - Related: why the loopback guard exists at all is documented in
   `verify-ui.sh`'s header — the same Host check rejects the OCI public IP.
 
-## Other ports (Hermès dashboard 9119, MCP 8642/8900)
+## The Hermès dashboard (`:9119`) — mapping is not enough
 
-One more mapping each, same shape:
+Published by the same command, on its own HTTPS port:
+
+```text
+https://<node>.<tailnet>.ts.net:9443/   ->   http://127.0.0.1:9119
+```
+
+But the mapping alone returns
+
+```text
+HTTP 400 {"detail":"Invalid Host header. Dashboard requests must use the bound
+hostname or the configured public hostname."}
+```
+
+`tailscale serve` forwards the browser's `Host` verbatim, and the dashboard
+validates it (`hermes_cli/web_server.py`, `host_header_middleware`, GHSA-ppp5-vxwm-4cf7 — the
+same DNS-rebinding defence that produces Vibe-Trading's `API_ALLOWED_HOSTS` 403,
+one layer up). It accepts only the bound hostname or the hostname declared in
+`dashboard.public_url` (`HERMES_DASHBOARD_PUBLIC_URL` wins over config.yaml).
+
+Declaring that URL is **not free**: a non-loopback public URL also engages the
+dashboard's auth gate, and the gate **fails closed** — with no provider
+registered the dashboard refuses to bind at all rather than serve unauthenticated
+(that hardening followed the June 2026 `HERMES_DASHBOARD_INSECURE` campaign). So,
+order matters, and the script enforces it:
+
+1. Put the bundled password provider in `.env` (no external IDP):
+
+   ```bash
+   HERMES_DASHBOARD_BASIC_AUTH_USERNAME=<user>
+   HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=<password>
+   # optional: sessions survive a restart instead of a per-process signing key
+   HERMES_DASHBOARD_BASIC_AUTH_SECRET=<random>
+   ```
+
+2. Rerun `bash tailscale/setup-tailscale.sh`. It writes
+   `HERMES_DASHBOARD_PUBLIC_URL=$(url_for_port 9443)` into `.env` and recreates
+   `hermes` (which restarts the agent). Without both credentials it **refuses to
+   write** the URL and says so — that is deliberate, not a bug.
+
+3. Open `https://<node>.<tailnet>.ts.net:9443/` and sign in with the pair above.
+
+**The same thing without touching `.env`** — the route that works on a checkout
+predating the compose pass-through. Write the three values into the Hermes config
+instead, always through the container's shim:
 
 ```bash
-sudo tailscale serve --bg --yes --https=9443 http://127.0.0.1:9119
+H=/opt/hermes/bin/hermes          # shim: drops to the `hermes` user, exports HOME=/opt/data
+U='<user>'; P='<password>'
+
+docker exec hermes $H config path                                   # -> /opt/data/config.yaml
+docker exec hermes $H config set dashboard.basic_auth.username "$U" # provider FIRST
+docker exec hermes $H config set dashboard.basic_auth.password "$P"
+docker exec hermes $H config set dashboard.public_url "https://$(tailscale status --json | sed -n 's/.*"DNSName": *"\([^"]*\)\.*".*/\1/p' | head -1).ts.net:9443"
+
+docker restart hermes             # a config change needs a service restart
 ```
+
+Three traps, all observed in the field:
+
+- **`sh -lc` breaks it.** A *login* shell rebuilds `PATH` and loses
+  `/opt/hermes/bin`, so you get `hermes: not found`. Use the absolute path, or a
+  plain `sh -c`.
+- **Bare `<placeholder>` breaks it.** `sh` reads `<` as a redirection
+  (`Syntax error: end of file unexpected`) — substitute real values into a
+  variable, as above.
+- **`docker compose up -d hermes` does nothing here.** With `.env` and the
+  compose file unchanged it prints `Container hermes Running` and leaves the
+  process alone, so the dashboard never re-reads the config. `docker restart
+  hermes` is the deterministic one; session history lives under `/opt/data`, so
+  nothing is lost.
+
+The probe reports which of the three states you are in: `200` (dashboard or its
+login page), the `400 Invalid Host header` above, `401`/`403` (signed out), or
+nothing answering locally either — meaning `HERMES_DASHBOARD=1` is not in effect
+for the running container (`docker compose up -d hermes`).
 
 MCP's HTTP transports additionally have their own allow-list
 (`VIBE_TRADING_MCP_ALLOWED_HOSTS`) and stay loopback-only by default — add the
@@ -125,6 +197,8 @@ tailnet name there too if you proxy them.
 | Certificate warning / no cert | HTTPS Certificates off for the tailnet (admin console → DNS). `tailscale serve` fetches the cert on first use — the first request can take ~30 s. |
 | `Connection refused` | `tailscale serve status` shows nothing, the mapping targeted the wrong port, or the container is down (`docker compose ps`). |
 | Works on the laptop, not on the phone | Tailscale is installed and logged in on the laptop only — the app is the client, per device. |
+| Hermès `:9443` answers `400 "Invalid Host header"` | the dashboard rejects a Host it was not told about. Add `HERMES_DASHBOARD_BASIC_AUTH_USERNAME` + `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD` to `.env`, rerun `setup-tailscale.sh` (it writes `HERMES_DASHBOARD_PUBLIC_URL` and recreates `hermes`). |
+| Hermès dashboard logs `Refusing to bind dashboard to …` | `HERMES_DASHBOARD_PUBLIC_URL` was set without an auth provider — a non-loopback public URL always requires one. Set the basic pair, then `docker compose up -d hermes`. |
 
 Prefer the SSH tunnel instead? That is `../tunnel/` — same UIs, but it needs a
 terminal (or the supervised service) on the machine with the browser.

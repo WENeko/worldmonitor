@@ -15,6 +15,13 @@
 # What it produces
 #   https://<node>.<tailnet>.ts.net/          Vibe-Trading Web UI + REST API
 #   https://<node>.<tailnet>.ts.net:8443/ui   LiteLLM Admin UI
+#   https://<node>.<tailnet>.ts.net:9443/     Hermes dashboard (loopback :9119)
+#
+# The Hermes dashboard is the one mapping that needs .env as well: it rejects a
+# proxied Host it does not know (HTTP 400 "Invalid Host header") unless that URL
+# is declared, and declaring it engages its auth gate. Set
+# HERMES_DASHBOARD_BASIC_AUTH_USERNAME + _PASSWORD in .env and this script writes
+# HERMES_DASHBOARD_PUBLIC_URL for you. See section 4c below.
 #
 # Reachable from any device already on your tailnet — laptop, phone, browser —
 # with a real, automatically renewed TLS certificate, and with NO port opened in
@@ -41,8 +48,9 @@
 # writes it into .env (docker-compose.yml passes it through to the container),
 # recreates vibe-trading, then proves the whole path with its own HTTPS request.
 #
-# Env overrides: ENV_FILE, VIBE_PORT (8899), LITELLM_PORT (4000),
-#   HTTPS_PORT (443), HTTPS_LITELLM_PORT (8443), WAIT_S (90), SERVE_TIMEOUT (180).
+# Env overrides: ENV_FILE, VIBE_PORT (8899), LITELLM_PORT (4000), HERMES_PORT (9119),
+#   HTTPS_PORT (443), HTTPS_LITELLM_PORT (8443), HTTPS_HERMES_PORT (9443),
+#   WAIT_S (90), SERVE_TIMEOUT (180).
 # ============================================================================
 
 set -uo pipefail
@@ -53,8 +61,12 @@ ENV_FILE="${ENV_FILE:-$COMPOSE_DIR/.env}"
 COMPOSE_FILE="$COMPOSE_DIR/docker-compose.yml"
 VIBE_PORT="${VIBE_PORT:-8899}"
 LITELLM_PORT="${LITELLM_PORT:-4000}"
+# Hermes dashboard. It is bound to 127.0.0.1 by HERMES_DASHBOARD_HOST in
+# docker-compose.yml, so it is only reachable through this proxy (or a tunnel).
+HERMES_PORT="${HERMES_PORT:-9119}"
 HTTPS_PORT="${HTTPS_PORT:-443}"
 HTTPS_LITELLM_PORT="${HTTPS_LITELLM_PORT:-8443}"
+HTTPS_HERMES_PORT="${HTTPS_HERMES_PORT:-9443}"
 WAIT_S="${WAIT_S:-90}"
 # `tailscale serve --bg` blocks while it provisions the TLS certificate — usually
 # well under a minute. Past this budget the ACME order is wedged, not slow, and
@@ -257,7 +269,8 @@ if [ "$DO_CHECK" -eq 1 ]; then
   printf '%b\n' "${GREEN}Check complete — nothing was changed.${NC}"
   if "${TS[@]}" serve status 2>&1 | grep -qi 'no serve config'; then
     printf '%s\n' "  No serve mappings exist yet, so there is nothing to probe. Run without"
-    printf '%s\n' "  --check to publish https://${DNS_NAME}/ and the LiteLLM mapping, then verify."
+    printf '%s\n' "  --check to publish https://${DNS_NAME}/, the LiteLLM mapping and the"
+    printf '%s\n' "  Hermes dashboard mapping, then verify."
   else
     printf '%s\n' "  Mappings exist; run without --check to re-verify the HTTPS path end to end."
   fi
@@ -265,12 +278,67 @@ if [ "$DO_CHECK" -eq 1 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Publish the two mappings
+# 4c. HERMES_DASHBOARD_PUBLIC_URL — the Host the dashboard will accept
+# ---------------------------------------------------------------------------
+# Same trap as Vibe-Trading's API_ALLOWED_HOSTS, one layer up: `tailscale serve`
+# forwards the browser's Host header verbatim, and the dashboard rejects any Host
+# that is neither the bound hostname nor the one declared here, with
+#   HTTP 400 {"detail":"Invalid Host header. Dashboard requests must use the
+#   bound hostname or the configured public hostname."}
+# Declaring it is NOT free: a non-loopback public URL engages the dashboard auth
+# gate, and that gate fails closed — without a registered provider the dashboard
+# refuses to bind. So this writes the URL only when the operator has already set
+# the basic-auth pair in .env; it never invents a credential.
+#
+# Placed after the --check exit above on purpose: --check stays read-only.
+HERMES_PUBLIC_URL="$(url_for_port "$HTTPS_HERMES_PORT")"
+HERMES_ENV_CHANGED=0
+CURRENT_HERMES_URL="$(env_value "$ENV_FILE" HERMES_DASHBOARD_PUBLIC_URL)"
+
+if [ "$CURRENT_HERMES_URL" = "$HERMES_PUBLIC_URL" ]; then
+  ok "HERMES_DASHBOARD_PUBLIC_URL already set to ${HERMES_PUBLIC_URL} in .env"
+else
+  BA_USER="$(env_value "$ENV_FILE" HERMES_DASHBOARD_BASIC_AUTH_USERNAME)"
+  BA_PASS="$(env_value "$ENV_FILE" HERMES_DASHBOARD_BASIC_AUTH_PASSWORD)"
+  if [ -z "$BA_USER" ] || [ -z "$BA_PASS" ]; then
+    warn "not declaring HERMES_DASHBOARD_PUBLIC_URL yet: the dashboard auth gate"
+    warn "engages on a non-loopback public URL and fails closed without a provider,"
+    warn "so hermes would refuse to bind and the :${HTTPS_HERMES_PORT} mapping would serve nothing."
+    warn "Add both lines to ${ENV_FILE} first, then rerun this script:"
+    warn "    HERMES_DASHBOARD_BASIC_AUTH_USERNAME=<user>"
+    warn "    HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=<password>"
+  elif [ "$DO_DRY_RUN" -eq 1 ]; then
+    warn "dry-run: would set HERMES_DASHBOARD_PUBLIC_URL=${HERMES_PUBLIC_URL} in ${ENV_FILE} (was: ${CURRENT_HERMES_URL:-unset})"
+  else
+    upsert_env_var "$ENV_FILE" HERMES_DASHBOARD_PUBLIC_URL "$HERMES_PUBLIC_URL"
+    HERMES_ENV_CHANGED=1
+    ok "HERMES_DASHBOARD_PUBLIC_URL=${HERMES_PUBLIC_URL} written to .env (only that line changed)"
+  fi
+fi
+
+# A value in .env is useless if the container never sees it (same failure mode as
+# API_ALLOWED_HOSTS above, so it is named the same way).
+grep -q 'HERMES_DASHBOARD_PUBLIC_URL' "$COMPOSE_FILE" \
+  || warn "docker-compose.yml does not pass HERMES_DASHBOARD_PUBLIC_URL and the basic-auth pair into the hermes container, so the values above cannot reach the dashboard: git pull on this host and rerun."
+
+if [ "$HERMES_ENV_CHANGED" -eq 1 ] && [ "$DO_DRY_RUN" -eq 0 ]; then
+  if command -v docker >/dev/null 2>&1; then
+    step "Recreating hermes so the dashboard accepts Host ${DNS_NAME} (this restarts the agent) ..."
+    ( cd "$COMPOSE_DIR" && docker compose up -d hermes ) \
+      || fail "docker compose up -d hermes failed (see the output above)"
+  else
+    warn "docker is not on PATH here; run it yourself: cd ${COMPOSE_DIR} && docker compose up -d hermes"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Publish the three mappings
 # ---------------------------------------------------------------------------
 if [ "$DO_CHECK" -eq 0 ]; then
   if [ "$DO_DRY_RUN" -eq 1 ]; then
     warn "dry-run: would run: tailscale serve --bg --yes --https=${HTTPS_PORT} http://127.0.0.1:${VIBE_PORT}"
     warn "dry-run: would run: tailscale serve --bg --yes --https=${HTTPS_LITELLM_PORT} http://127.0.0.1:${LITELLM_PORT}"
+    warn "dry-run: would run: tailscale serve --bg --yes --https=${HTTPS_HERMES_PORT} http://127.0.0.1:${HERMES_PORT}"
   else
     step "Publishing ${DNS_NAME} to your tailnet (TLS certificate is fetched on first use) ..."
     if ! timeout "$SERVE_TIMEOUT" "${TS[@]}" serve --bg --yes --https="$HTTPS_PORT" "http://127.0.0.1:${VIBE_PORT}" >"$TMP_DIR/serve-vibe.out" 2>&1; then
@@ -297,6 +365,16 @@ if [ "$DO_CHECK" -eq 0 ]; then
     else
       warn "could not publish the LiteLLM mapping on https:${HTTPS_LITELLM_PORT}: $(sed -n '1,2p' "$TMP_DIR/serve-litellm.out" | tr '\n' ' ')"
       warn "the Vibe-Trading mapping above is unaffected; retry later or pick another HTTPS_LITELLM_PORT"
+    fi
+
+    # The Hermes dashboard is a separate app with its own session model: this only
+    # publishes the mapping. Whether it answers over the tailnet is reported by
+    # the informational probe below, never asserted here.
+    if timeout "$SERVE_TIMEOUT" "${TS[@]}" serve --bg --yes --https="$HTTPS_HERMES_PORT" "http://127.0.0.1:${HERMES_PORT}" >"$TMP_DIR/serve-hermes.out" 2>&1; then
+      ok "tailscale serve: $(url_for_port "$HTTPS_HERMES_PORT") -> http://127.0.0.1:${HERMES_PORT}  (Hermes dashboard)"
+    else
+      warn "could not publish the Hermes dashboard mapping on https:${HTTPS_HERMES_PORT}: $(sed -n '1,2p' "$TMP_DIR/serve-hermes.out" | tr '\n' ' ')"
+      warn "the mappings above are unaffected; retry later or pick another HTTPS_HERMES_PORT"
     fi
   fi
 fi
@@ -370,14 +448,46 @@ else
   warn "tailnet: ${LITELLM_TS_URL} -> ${LITELLM_META} (informational; the litellm image tag is main-stable)"
 fi
 
+# Hermes dashboard: informational, like LiteLLM. It is a web app with its own
+# session/auth model, so a non-200 here must NOT fail the run — it names which
+# of the two causes it is: nothing listening on :9119 (HERMES_DASHBOARD), or the
+# dashboard itself refusing (its own gate, reached fine through the proxy).
+HERMES_TS_URL="$(url_for_port "$HTTPS_HERMES_PORT")/"
+HERMES_BODY="$TMP_DIR/hermes.html"
+HERMES_META="$(curl -sS --noproxy '*' -o "$HERMES_BODY" -L --max-time 20 -w '%{http_code} %{content_type}' "$HERMES_TS_URL" || true)"
+HERMES_CODE="${HERMES_META%% *}"
+if grep -q 'Invalid Host header' "$HERMES_BODY" 2>/dev/null; then
+  # The exact error an undeclared public URL produces: the proxy is fine, the
+  # dashboard's DNS-rebinding guard is doing its job. The hint depends on whether
+  # this very run just declared the URL (then the container is the missing step).
+  if [ "$HERMES_ENV_CHANGED" -eq 1 ]; then
+    HERMES_HOST_HINT="HERMES_DASHBOARD_PUBLIC_URL=$(url_for_port "$HTTPS_HERMES_PORT") was just written to ${ENV_FILE}; hermes has to be recreated before the dashboard sees it: cd ${COMPOSE_DIR} && docker compose up -d hermes"
+  else
+    HERMES_HOST_HINT="declare it with HERMES_DASHBOARD_BASIC_AUTH_USERNAME + HERMES_DASHBOARD_BASIC_AUTH_PASSWORD in ${ENV_FILE}, then rerun this script: it writes HERMES_DASHBOARD_PUBLIC_URL=$(url_for_port "$HTTPS_HERMES_PORT") and recreates hermes"
+  fi
+  warn "tailnet: ${HERMES_TS_URL} -> ${HERMES_META}: the dashboard refuses the proxied Host (DNS-rebinding guard) - ${HERMES_HOST_HINT}"
+elif [ "$HERMES_CODE" = "200" ]; then
+  ok "tailnet: ${HERMES_TS_URL} -> ${HERMES_META} (Hermes dashboard)"
+elif [ "$HERMES_CODE" = "401" ] || [ "$HERMES_CODE" = "403" ]; then
+  warn "tailnet: ${HERMES_TS_URL} -> ${HERMES_META}: the proxy reached the dashboard and the dashboard refused. That is its own sign-in gate, not a serve problem — open it in a browser and sign in (basic auth credentials from .env)."
+else
+  HERMES_LOCAL_CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${HERMES_PORT}/" 2>/dev/null || true)"
+  if [ -n "$HERMES_LOCAL_CODE" ] && [ "$HERMES_LOCAL_CODE" != "000" ]; then
+    warn "tailnet: ${HERMES_TS_URL} -> ${HERMES_META} while 127.0.0.1:${HERMES_PORT} answers HTTP ${HERMES_LOCAL_CODE}: the dashboard is up, the proxied path is the suspect (tailscale serve status)."
+  else
+    warn "tailnet: ${HERMES_TS_URL} -> ${HERMES_META}, and nothing answers on 127.0.0.1:${HERMES_PORT} either: confirm HERMES_DASHBOARD=1 for the running container (docker-compose.yml) and 'docker compose up -d hermes'."
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # 7. Summary
 # ---------------------------------------------------------------------------
 printf '%b\n' "${GREEN}Tailnet access configured.${NC}"
 printf '%s\n' "  Vibe-Trading Web UI: $(url_for_port "$HTTPS_PORT")"
 printf '%s\n' "  LiteLLM Admin UI:    ${LITELLM_TS_URL}  (login: UI_USERNAME + UI_PASSWORD from .env)"
+printf '%s\n' "  Hermes dashboard:    ${HERMES_TS_URL}"
 printf '%s\n' "  Open these from any device already on your tailnet — no tunnel, no port"
-printf '%s\n' "  forwarding, and nothing to open in the OCI ingress rules (8899/${LITELLM_PORT} stay loopback-only)."
+printf '%s\n' "  forwarding, and nothing to open in the OCI ingress rules (8899/${LITELLM_PORT}/${HERMES_PORT} stay loopback-only)."
 printf '%s\n' "  Survives reboots: 'tailscale serve --bg' resumes automatically."
-printf '%s\n' "  Change later with HTTPS_PORT / HTTPS_LITELLM_PORT, or undo with --reset."
+printf '%s\n' "  Change later with HTTPS_PORT / HTTPS_LITELLM_PORT / HTTPS_HERMES_PORT, or undo with --reset."
 exit 0

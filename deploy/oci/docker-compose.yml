@@ -29,6 +29,22 @@ services:
       API_SERVER_ENABLED: ${API_SERVER_ENABLED:-false}
       API_SERVER_HOST: 127.0.0.1
       API_SERVER_KEY: ${API_SERVER_KEY:-}
+      # Dashboard behind a reverse proxy (tailscale serve -> 127.0.0.1:9119).
+      # `tailscale serve` forwards the browser's Host header VERBATIM, and the
+      # dashboard rejects any Host that is neither the bound hostname nor the
+      # hostname declared here (hermes_cli/web_server.py, host_header_middleware,
+      # GHSA-ppp5-vxwm-4cf7):
+      #   HTTP 400 {"detail":"Invalid Host header. Dashboard requests must use
+      #   the bound hostname or the configured public hostname."}
+      # Which is why the mapping alone is never enough — the URL has to be
+      # declared here too. But declaring a NON-loopback URL also engages the
+      # dashboard auth gate, and that gate fails closed (the dashboard refuses
+      # to bind) when no provider is registered. So the basic pair must be set
+      # first; blank counts as unset. tailscale/setup-tailscale.sh writes the
+      # URL only when it finds both, and never invents a credential.
+      HERMES_DASHBOARD_PUBLIC_URL: ${HERMES_DASHBOARD_PUBLIC_URL:-}
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: ${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-}
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:-}
 
     command: ["gateway", "run"]
 

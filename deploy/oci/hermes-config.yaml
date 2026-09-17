@@ -10,3 +10,48 @@ mcp_servers:
 # CLI/docs for the installed version; LiteLLM is the fallback gateway used by
 # Vibe-Trading and is not a replacement for Hermes' own model configuration.
 # Keep at least one independent Hermes provider if Hermes is the orchestrator.
+
+# --- Level 1: cap the context Hermes sends to the model ---------------------
+# 2026-09-16, the archetypal failure: a 135-message conversation reached
+# ~119k tokens and the free OpenRouter endpoint (nvidia/nemotron-3-ultra-550b-
+# a55b:free) timed out on all three attempts --
+#   "API call failed after 3 retries. A Timeout Occurred | provider=openrouter"
+# Nothing was wrong with LiteLLM or the container. A free-tier endpoint simply
+# cannot absorb a context of that size, and the default trigger is a RATIO:
+# `compression.threshold` (0.50, floored at 0.75 for windows under 512K) -- on a
+# large declared window that fires far too late for such an endpoint.
+#
+# `compression.threshold_tokens` is the absolute cap: compression triggers at the
+# LOWER of the ratio and this count, clamped to the model's real window. One
+# command, applied inside the container (it validates and writes config.yaml):
+#
+#   docker exec hermes /opt/hermes/bin/hermes config set compression.threshold_tokens 32000
+#
+# Use that absolute path, not a bare `hermes`, and never `sh -lc`. Facts worth
+# keeping: `sh -lc` runs a LOGIN shell, which rebuilds PATH and loses
+# /opt/hermes/bin ("hermes: not found"); and /opt/hermes/bin/hermes is a shim
+# that drops to the `hermes` user and exports HOME=/opt/data before exec'ing the
+# venv binary, so the write lands in /opt/data/config.yaml -- the file the
+# gateway reads -- owned by the uid that reads it. Running the venv binary
+# directly as root can leave it root:root instead. Check with:
+#   docker exec hermes /opt/hermes/bin/hermes config path
+#
+# Equivalent in config.yaml if you prefer editing the file:
+#
+#   compression:
+#     threshold_tokens: 32000
+#
+# Note that a config change is only picked up when the service restarts:
+# `docker compose up -d hermes` does NOTHING when the compose file and .env are
+# unchanged (it prints "Container hermes Running"). Use `docker restart hermes`
+# -- session history lives under /opt/data, so nothing is lost.
+#
+# Optional second dial, independent of the trigger above: `proactive_prune_tokens`
+# (0 = off) reclaims stale tool output deterministically, with no summarizer call
+# -- it is what stops old tool results being re-sent on every single turn:
+#
+#   docker exec hermes hermes config set compression.proactive_prune_tokens 24000
+#
+# Both are documented in hermes_cli/config_defaults.py ("compression" section) of
+# the installed version. Verify the effective value, do not assume:
+#   docker exec hermes hermes config get compression.threshold_tokens
