@@ -164,6 +164,28 @@ docker exec hermes $H config set dashboard.public_url "https://$(tailscale statu
 docker restart hermes             # a config change needs a service restart
 ```
 
+**Signing in with your Nous Portal account instead** (the one created through
+GitHub SSO): the bundled `nous` provider is OAuth, so nothing local to remember —
+but it needs a registered OAuth client first. `hermes login` is deprecated and
+prints only a notice, so add the credential with the modern command:
+
+```bash
+H=/opt/hermes/bin/hermes
+docker exec hermes $H auth add nous --no-browser   # device code: prints a URL to open on any device
+docker exec hermes $H auth status nous
+docker exec hermes $H dashboard register \
+  --redirect-uri https://<node>.<tailnet>.ts.net:9443/auth/callback
+docker restart hermes
+```
+
+`--redirect-uri` is not optional for a tailnet deployment: omitting it registers a
+localhost-only client, and the path must end exactly in `/auth/callback` (the
+bundled providers reject anything else). Registration writes
+`HERMES_DASHBOARD_OAUTH_CLIENT_ID` into the Hermes environment file; after the
+restart the login page offers a **Nous Research** button, and GitHub SSO happens on
+the portal side. Both providers can stay registered — the page shows the password
+form and the OAuth button.
+
 Three traps, all observed in the field:
 
 - **`sh -lc` breaks it.** A *login* shell rebuilds `PATH` and loses
