@@ -189,18 +189,32 @@ form and the OAuth button.
 The client id must have the shape `agent:{instance_id}`, which the portal applies
 server-side. Any other value makes the bundled provider **skip registration with a
 warning only** — the process starts, the page loads, and the button is simply
-absent. That silent state has one decisive check, and it is not the log:
+absent. One check decides, and it is what the page itself fetches:
 
 ```bash
-docker exec hermes /opt/hermes/bin/hermes config get dashboard.oauth.client_id
-curl -sS http://127.0.0.1:9119/api/auth/providers        # what the page actually fetches
+curl -sS http://127.0.0.1:9119/api/auth/providers
 ```
 
-Empty client id = registration never succeeded (its own output says why, e.g.
-"You're not logged into Nous Portal"); a value without the `agent:` prefix = the
-shape contract rejected it; `nous` missing from the provider list while the client
-id is right = the dashboard was not restarted after the value was written (the
-provider is registered at startup).
+`nous` in that list = done. `nous` missing is one of three things — and
+`hermes config get dashboard.oauth.client_id` **cannot tell them apart**:
+`dashboard register` writes the id to the Hermes *environment file*
+(`/opt/data/.env`), not to `config.yaml`, and env wins over config
+(`plugins/dashboard_auth/_shared.py`, `resolve_env_or_cfg`; an empty env value
+counts as unset). A blank `config get` therefore proves nothing.
+
+| Symptom | Where to look |
+|---|---|
+| registration never succeeded | re-run `dashboard register` and read its own output (e.g. "You're not logged into Nous Portal") |
+| id written without the `agent:` prefix | `docker exec hermes sh -c 'grep HERMES_DASHBOARD_OAUTH_CLIENT_ID /opt/data/.env'` |
+| id right, provider still absent | the dashboard was not restarted — registration happens at startup |
+
+`dashboard register` also writes `HERMES_DASHBOARD_PUBLIC_URL` itself. Declaring
+the same variable in the host `.env` is not an error, but it is a second source of
+truth for one value, and the compose-injected variable **wins** over the
+container's own env file. Pick one owner: either the host `.env` (this script,
+step 2 above — which needs the password pair as its precondition) or
+`dashboard register` (the OAuth route, no precondition). Rotate or revoke the
+client any time at <https://portal.nousresearch.com/local-dashboards>.
 
 Three traps, all observed in the field:
 
