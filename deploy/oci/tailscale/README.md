@@ -186,6 +186,22 @@ restart the login page offers a **Nous Research** button, and GitHub SSO happens
 the portal side. Both providers can stay registered — the page shows the password
 form and the OAuth button.
 
+The client id must have the shape `agent:{instance_id}`, which the portal applies
+server-side. Any other value makes the bundled provider **skip registration with a
+warning only** — the process starts, the page loads, and the button is simply
+absent. That silent state has one decisive check, and it is not the log:
+
+```bash
+docker exec hermes /opt/hermes/bin/hermes config get dashboard.oauth.client_id
+curl -sS http://127.0.0.1:9119/api/auth/providers        # what the page actually fetches
+```
+
+Empty client id = registration never succeeded (its own output says why, e.g.
+"You're not logged into Nous Portal"); a value without the `agent:` prefix = the
+shape contract rejected it; `nous` missing from the provider list while the client
+id is right = the dashboard was not restarted after the value was written (the
+provider is registered at startup).
+
 Three traps, all observed in the field:
 
 - **`sh -lc` breaks it.** A *login* shell rebuilds `PATH` and loses
