@@ -263,11 +263,14 @@ right, and both have bitten in production:
   suffix-only fallback, so `BTC/USD` ≡ `BTCUSD` and `AAPL.US` ≡ `AAPL`, while
   `BTC/USD` ≠ `BTC/USDT`.
 - **A mandated size is not an exact size.** Alpaca paper delivered `0.0009975`
-  BTC for a mandated `0.001`; the receipt does not say whether that is an
+  BTC for a mandated `0.001` — on **both** landed buys observed so far, i.e.
+  exactly -0.25 % each time. The receipt does not say whether that is an
   in-kind fee, lot rounding, or a partial fill. A shortfall within
   `BRIDGE_FILL_TOLERANCE_PCT` (default `0.005` = 0.5 % of the mandated size,
   floor `1e-6`) is therefore accepted; below that bar but above zero is
-  `partial_fill`. Set it to `0` for exact-match discipline.
+  `partial_fill`. On this venue `0` is unusable for crypto: with the observed
+  -0.25 % haircut, exact-match discipline reads every crypto buy that lands as
+  `partial_fill`. Keep `0` for equities, where fills have been exact.
 
 But when the directive
 carries **no** `execution_request`, the whole check is skipped
@@ -284,15 +287,36 @@ crypto, which trades 24/7 and so carries no market-hours dependency (equities
 legitimately fail closed outside 13:30–20:00 UTC on weekdays):
 
 ```bash
-docker cp ~/wm-stack/deploy/oci/bridge/sample-directive-crypto-alpaca.json \
-       bridge:/var/lib/bridge/directives/   # id DIR-SYNTH-CRYPTO-20260907-120000-001
+# The sample's own id (DIR-SYNTH-CRYPTO-20260907-120000-001) is spent the first
+# time it is dropped: a re-drop is skipped as already processed. Mint a fresh id.
+python3 -c "
+import json,pathlib
+d=json.loads(pathlib.Path('bridge/sample-directive-crypto-alpaca.json').read_text())
+d['directive_id']='DIR-SYNTH-CRYPTO-<YYYYMMDD-HHMMSS>-001'
+pathlib.Path('/tmp/rail-check.json').write_text(json.dumps(d,indent=2))
+"
+docker cp /tmp/rail-check.json bridge:/var/lib/bridge/directives/
 docker exec bridge sh -c 'cat "$(ls -t /var/lib/bridge/executions/*.json | head -1)"'
 #   status: EXECUTED  +  fill_verification.ok: true
-#   fill_verification.detail: "BTC/USD: 0 -> 0.0009975 (delta 0.0009975)
-#     [broker row 'BTCUSD']; expected BTC/USD qty to rise by >= 0.001 (was 0)"
 
 # the out-of-band check: the broker, queried by you rather than by the bridge
 docker exec vibe-trading vibe-trading connector positions
+```
+
+Observed end-to-end on 2026-09-18 (drop at 17:14Z, run
+`20260918_171459_41_97b4fc`):
+
+```json
+{
+  "directive_id": "DIR-SYNTH-CRYPTO-20260918-180000-001",
+  "status": "EXECUTED",
+  "exit_code": 0,
+  "agent_result": { "status": "success", "run_id": "20260918_171459_41_97b4fc" },
+  "fill_verification": {
+    "ok": true,
+    "detail": "BTC/USD: 0.0009975 -> 0.001995 (delta 0.0009975) [broker row 'BTCUSD']; expected BTC/USD qty to rise by >= 0.001 (was 0.0009975)"
+  }
+}
 ```
 
 That proves the **execution rail**. Proving that **Hermès** can execute is the
@@ -343,7 +367,9 @@ forex units. The fill guard compares float quantities with a tolerance, so a
 fractional fill verifies exactly like a whole-share one.
 
 - **Crypto on Alpaca paper (zero new setup)**: Alpaca's paper account trades
-  crypto 24/7 (`BTC/USD`, `ETH/USD`, ...) with the same key pair. Drop
+  crypto 24/7 (`BTC/USD`, `ETH/USD`, ...) with the same key pair — confirmed
+  here rather than assumed: a `BTC/USD` buy filled and verified at 05:27Z,
+  outside the 13:30-20:00Z equity window. Drop
   `sample-directive-crypto-alpaca.json` and keep `BRIDGE_CONNECTOR` at its
   default — the bridge prompt already canonicalizes `BTC/USD` as the run
   identity (no `.US` suffix is added to crypto shapes, and the symbol-dialect
@@ -556,6 +582,14 @@ The bridge is intentionally the *cheapest* container in the stack:
   `directive_id`** after fixing the cause. Re-runs outside US market hours
   will legitimately fail closed — that is the intended behavior. Opt out
   per-operations with `BRIDGE_SKIP_FILL_CHECK=1`.
+- **The same crypto directive failed once and filled 20 minutes later**
+  (observed 2026-09-18): two drops of the identical sample under fresh ids
+  gave a genuine non-fill at 16:55Z (the positions read `0.0009975` before and
+  after it, and again before the next run) and a verified fill at 17:15Z. A
+  `FAILED` / `order_not_filled` on crypto is therefore not automatically the
+  symbol bug or the market hours: read the failed run's own receipt
+  (`agent_result`, `stdout_tail`, `stderr_tail`) and its artifacts under
+  `/home/vibe/.vibe-trading/runs/<run_id>/` before changing anything.
 - **Receipt `FAILED` with `order_not_filled` while the position is visibly
   there** (observed 2026-09-18T05:28Z: mandated `0.001` `BTC/USD`, broker row
   `BTCUSD` holding `0.0009975`, receipt said `0 -> 0`): the venue's row
