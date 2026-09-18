@@ -237,6 +237,46 @@ Accept it when the receipt carries a **terminal** status — `EXECUTED`,
 `REJECTED`, `FAILED` or `TIMEOUT` — and a `run_id` under `agent_result` for
 everything that reached the agent. `GATED` is **not** acceptance: it is parked.
 
+### What proves a directive was really executed
+
+For a directive that requests an exposure change, acceptance is **two facts in
+the receipt**, not one:
+
+1. `"status": "EXECUTED"`
+2. a `fill_verification` object carrying `"ok": true`
+
+The second is not redundant. When the directive carries an `execution_request`,
+the bridge queries connector positions before the run and again after it and
+compares the delta against `qty` (tolerance 1e-6); a failed comparison rewrites
+the status to `FAILED` with `reason: order_not_filled`. But when the directive
+carries **no** `execution_request`, the whole check is skipped
+(`if execution is not None and outcome == "EXECUTED" and not cfg.skip_fill_check`),
+no `fill_verification` is written, and `EXECUTED` then means only "the agent
+process exited 0". The contract mandates an `execution_request` for any exposure
+change, so the field's presence is the evidence that the mandate was honoured —
+and its absence is a receipt that proves nothing about the broker.
+`BRIDGE_SKIP_FILL_CHECK=1` removes the field too: a receipt produced in that mode
+can never prove an execution.
+
+The fastest honest proof, in two parts — the sample exercises the rail Alpaca
+crypto, which trades 24/7 and so carries no market-hours dependency (equities
+legitimately fail closed outside 13:30–20:00 UTC on weekdays):
+
+```bash
+docker cp ~/wm-stack/deploy/oci/bridge/sample-directive-crypto-alpaca.json \
+       bridge:/var/lib/bridge/directives/   # id DIR-SYNTH-CRYPTO-20260907-120000-001
+docker exec bridge sh -c 'cat "$(ls -t /var/lib/bridge/executions/*.json | head -1)"'
+#   status: EXECUTED  +  fill_verification.ok: true
+#   fill_verification.detail: "BTC/USD: 0 -> 0.001 (delta 0.001); expected ..."
+
+# the out-of-band check: the broker, queried by you rather than by the bridge
+docker exec vibe-trading vibe-trading connector positions
+```
+
+That proves the **execution rail**. Proving that **Hermès** can execute is the
+same two fields on a directive Hermès wrote under its own id — which is the
+remaining open item, and the only version that also closes rule 8.
+
 ### The first real run, observed (2026-09-17T21:46Z)
 
 This is what acceptance looked like — not a placeholder, the actual receipt:
