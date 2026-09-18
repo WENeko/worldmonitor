@@ -40,7 +40,12 @@ itself as it learns which ones are reliable.
   know at 14:03 when the directive was issued”, “which source broke X first”,
   “how reliable is source Y over weeks” — questions the 72 h rolling files
   cannot answer. Query it read-only from Hermès via
-  `/opt/data/feed-intel/archive.sqlite` (the volume is mounted ro).
+  `/opt/data/feed-intel/archive.sqlite`. The volume is mounted **rw** into
+  `hermes`, because contract règle 7 also mandates an audit trail there
+  (`audits.jsonl`) — with `:ro` that rule could never be satisfied. Ownership
+  is by filename: producer state (`status.json`, `latest.json`,
+  `archive.sqlite`, per-sector snapshots) belongs to feed-intel; Hermès only
+  appends its own audit files. Read producer state read-only, always.
 
 Sector taxonomy mirrors WorldMonitor coverage: `geopolitics, military, news,
 finance, energy, infrastructure-cyber, environment, aviation, china, tech`.
@@ -59,8 +64,10 @@ docker compose run --rm feed-intel node poll-feeds.mjs --check
 
 The compose file bind-mounts `./feeds/sources.json` rw into both `feed-intel`
 (`/app/sources.json`) and `hermes` (`/opt/data/feed-sources.json`), and the
-state volume (`feed_intel_data`) into `hermes` read-only at
-`/opt/data/feed-intel`. No rebuild is needed after editing the catalog.
+state volume (`feed_intel_data`) into `hermes` at `/opt/data/feed-intel`
+(**rw** — Hermès appends its règle-7 audit trail there; the producer's own
+files stay feed-intel's, see above). No rebuild is needed after editing the
+catalog.
 
 ## Provenance & trust rules
 

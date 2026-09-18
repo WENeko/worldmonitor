@@ -11,10 +11,30 @@ services:
 
     volumes:
       - ~/.hermes:/opt/data
-      # feed-intel (deploy/oci/feeds): Hermès reads the per-sector snapshots
-      # read-only and edits the source catalog directly (add/disable/re-rate
-      # sources — feed-intel picks it up at the next cycle, no restart).
-      - feed_intel_data:/opt/data/feed-intel:ro
+      # feed-intel (deploy/oci/feeds): Hermès reads the per-sector snapshots and
+      # edits the source catalog directly (add/disable/re-rate sources —
+      # feed-intel picks it up at the next cycle, no restart).
+      #
+      # MOUNTED rw, deliberately. Contract règle 7 mandates an audit trail INSIDE
+      # this volume — /opt/data/feed-intel/audits.jsonl — which a `:ro` mount made
+      # impossible to satisfy. The failure is silent and misattributed: Hermès
+      # logs `Read-only file system` on /opt/data/feed-intel/.hermes-tmp.*, the
+      # file-mutation verifier flags the file as NOT modified, and the decision
+      # cycle still completes, so nothing points at the mount.
+      # Ownership inside the volume is by FILENAME: status.json, latest.json,
+      # archive.sqlite and the per-sector snapshots belong to feed-intel (the
+      # producer). Hermès only appends its own audit artifacts (audits.jsonl,
+      # decisions.jsonl). Never write producer state from Hermès.
+      #
+      # Changing this line REQUIRES recreation, and `up -d` is not proof that it
+      # happened: with an unchanged service definition it prints "Container hermes
+      # Running" -- or "Start", if the container had exited and was merely
+      # started again -- and only a changed one prints "Recreate". So verify the
+      # mount the container ACTUALLY got, not the file on disk:
+      #   docker inspect -f '{{range .Mounts}}{{.Destination}} {{if .RW}}rw{{else}}ro{{end}}{{"\n"}}{{end}}' hermes
+      # and prove writability from inside, as the user Hermès runs as:
+      #   docker exec hermes sh -c 'touch /opt/data/feed-intel/.wtest && rm /opt/data/feed-intel/.wtest && echo WRITABLE'
+      - feed_intel_data:/opt/data/feed-intel:rw
       - ./feeds/sources.json:/opt/data/feed-sources.json:rw
       # directive-bridge (deploy/oci/bridge): the exchange volume where
       # Hermès drops directive JSON (/opt/data/bridge/directives) and reads

@@ -211,13 +211,43 @@ docker exec bridge sh -c 'ls -la /var/lib/bridge/directives/ | grep -v archive'
 docker logs --tail=20 bridge
 # 3. the proof: a receipt whose id is not a sample, and its agent run id
 docker exec bridge sh -c 'ls -lt /var/lib/bridge/executions/*.json | head -3'
-docker exec bridge cat /var/lib/bridge/executions/<directive_id>.json
+# the newest receipt, without retyping its id. A `<directive_id>` placeholder in
+# a shell command is a REDIRECTION, not a hole to fill in
+# (`-bash: directive_id: No such file or directory`) -- let the shell pick it:
+docker exec bridge sh -c 'cat "$(ls -t /var/lib/bridge/executions/*.json | head -1)"'
 ```
 
 Accept it when the receipt carries a **terminal** status — `EXECUTED`,
 `NO_EXECUTION`, `RESEARCH_DONE`, `RESEARCH_TIMEOUT`, `RESEARCH_FAILED`,
 `REJECTED`, `FAILED` or `TIMEOUT` — and a `run_id` under `agent_result` for
 everything that reached the agent. `GATED` is **not** acceptance: it is parked.
+
+### The first real run, observed (2026-09-17T21:46Z)
+
+This is what acceptance looked like — not a placeholder, the actual receipt:
+
+```json
+{
+  "directive_id": "DIR-20260917-214500-001",
+  "version": 2,
+  "mode": "PAPER",
+  "action_directive": "NO_ACTION",
+  "status": "NO_EXECUTION",
+  "processed_at": "2026-09-17T21:46:30Z",
+  "executed_at": "2026-09-17T21:46:30Z",
+  "connector": "alpaca-paper-trade",
+  "note": "action_directive does not request exposure change; recorded without execution"
+}
+```
+
+Read it correctly before calling it thin:
+
+- `NO_ACTION` → nothing to execute, so there is no `agent_result` and no
+  `run_id`. That field only exists for directives that reached the agent.
+- 357 bytes is the *size of a decision not to trade*, not a truncated receipt.
+- The **receipt** stays where it is forever: `executions/` is append-only and the
+  receipt is the idempotence key. Only the directive *file* is droppable, via
+  `--archive`.
 
 Two legitimate-looking results that are not failures:
 

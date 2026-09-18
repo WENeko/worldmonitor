@@ -50,8 +50,71 @@ mcp_servers:
 # (0 = off) reclaims stale tool output deterministically, with no summarizer call
 # -- it is what stops old tool results being re-sent on every single turn:
 #
-#   docker exec hermes hermes config set compression.proactive_prune_tokens 24000
+#   docker exec hermes /opt/hermes/bin/hermes config set compression.proactive_prune_tokens 24000
 #
 # Both are documented in hermes_cli/config_defaults.py ("compression" section) of
 # the installed version. Verify the effective value, do not assume:
-#   docker exec hermes hermes config get compression.threshold_tokens
+#   docker exec hermes /opt/hermes/bin/hermes config get compression.threshold_tokens
+#
+# --- Level 1b: the trigger fired and compression STILL did nothing ----------
+# 2026-09-17, one cycle after the cap was set:
+#
+#   "Context is over the compression threshold (~55,647 tokens >= 32,000)
+#    but compression is currently blocked (structural_backoff:246)"
+#
+# Read that correctly: `threshold_tokens` DID fire -- the 32,000 in the message
+# is the cap doing its job. `structural_backoff:<s>` is NOT a failure. It is the
+# anti-thrash guard (`_record_structural_no_op` in agent/context_compressor.py)
+# deferring retries for 300s because NOTHING in the transcript was eligible to
+# compress. Moving the threshold cannot clear it: the block is about the SHAPE of
+# the transcript, not its size.
+#
+# The reason is NOT in the container logs on this deployment, by construction --
+# do not go looking for it, and do not read its absence as "the guard never ran":
+#
+#   docker logs hermes 2>&1 | grep -i "Compression skipped"   # ALWAYS empty here
+#
+# `_record_structural_no_op` wraps its one warning in `if not self.quiet_mode:`
+# and the GATEWAY -- the process that serves this dashboard -- builds its agent
+# with `quiet_mode: True` (tui_gateway/agent_callbacks.py:298). That warning is a
+# CLI affordance. Verified 2026-09-17: the grep returned empty while
+# `agent.conversation_loop` WARNINGs from the same process DID reach the same
+# log, so it is the flag, not a broken log pipeline.
+#
+# What you do get is the label in the notice itself: `<s>` is the number of
+# seconds LEFT on the 300s window (`_STRUCTURAL_NO_OP_BACKOFF_SECONDS = 300.0`,
+# `_compression_block_reason` returns f"{label}:{remaining:.0f}"). A notice at
+# 246 means the guard re-armed ~54s earlier, and it re-arms on every
+# over-threshold turn that finds nothing eligible -- a countdown, not a lock.
+#
+# The three ways to land there (failure_class, telemetry-only; the gateway never
+# prints it):
+#
+#   insufficient_messages     n_messages <= protect_head_size + 3 + 1
+#   no_compressible_window    the transcript fits INSIDE the protected tail
+#   empty_post_handoff_window the window holds only already-summarized handoffs
+#
+# `no_compressible_window` is the one to expect on a large declared window: the
+# tail budget is max(10_000, min(25_000, context_length * 0.025)) tokens
+# (tail_mode "lean", the default) plus `protect_last_n` = 20 messages, and the
+# head (`_protect_head_size`) is protected as well, so the trigger can fire
+# while most of the context sits in a region nothing is allowed to touch.
+#
+# `/compress` in the dashboard is the cheapest discriminator: it runs the
+# compressor with force=True, which clears the cooldown AND this 300s backoff
+# (#93022) and skips the feasibility check -- but it does NOT bypass the three
+# structural no-ops above. So if `/compress` summarizes, the window was
+# compressible; if the notice returns at ~300s with the same token count, the
+# window is structurally empty and only `/new` is a fix -- which is what the
+# notice tells you to do.
+#
+# Dials, in the order worth trying (all three verified in
+# hermes_cli/config_defaults.py, "compression" section):
+#   1. compression.proactive_prune_tokens: 24000  -- deterministic, no summarizer
+#      call, documented there as independent of `threshold` (default 0 = off), and
+#      it does NOT need a compressible window to reclaim anything.
+#   2. compression.protect_last_n: 12             -- shrinks the protected tail
+#      (default 20).
+#   3. `/new` in the dashboard -- when the shape itself is the problem (or a
+#      session freshly created and barely used), a fresh session is the only
+#      real remedy; the 300s backoff just retries the same empty window.
