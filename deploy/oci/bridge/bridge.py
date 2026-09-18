@@ -38,8 +38,15 @@ Fail-closed rules:
 - For directives that carry an `execution_request`, the bridge verifies
   the mandated order actually landed — connector positions before/after
   the run — before writing `EXECUTED`. An agent that exits 0 without a
-  matching fill is recorded as `FAILED` with reason `order_not_filled`
-  (opt out per-operations with `BRIDGE_SKIP_FILL_CHECK=1`).
+  matching fill is recorded as `FAILED` with reason `order_not_filled`;
+  a fill that moved the position but landed short of the mandate is
+  `FAILED` with `partial_fill` (opt out per-operations with
+  `BRIDGE_SKIP_FILL_CHECK=1`). Broker rows are matched across symbol
+  dialects (`BTC/USD` comes back as `BTCUSD`, `AAPL.US` as `AAPL`), and a
+  shortfall within `BRIDGE_FILL_TOLERANCE_PCT` (default 0.5 % of the
+  mandated size) is accepted, because a landed fill can sit a fraction of
+  a percent below the mandate. The receipt always prints the exact position
+  delta and names the broker row it matched.
 - `BRIDGE_DRY_RUN=1` logs what would run instead of invoking the agent.
 
 Modes:
@@ -169,6 +176,18 @@ def env_setting(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+def env_float(name: str, default: float) -> float:
+    """Float env override; unset, unparseable, or negative uses `default`."""
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 0 else default
+
+
 class BridgeConfig:
     def __init__(self) -> None:
         self.home = Path(env_setting("BRIDGE_HOME", "/var/lib/bridge"))
@@ -190,6 +209,7 @@ class BridgeConfig:
             "0",
             "false",
         )
+        self.fill_tolerance_pct = env_float("BRIDGE_FILL_TOLERANCE_PCT", 0.005)
         self.max_qty = int(env_setting("BRIDGE_MAX_QTY", "3"))
         self.vibe_bin = shutil.which(
             env_setting("BRIDGE_VIBE_TRADING_BIN", "vibe-trading")
@@ -209,7 +229,8 @@ class BridgeConfig:
             f"timeout_s={self.timeout_s}\n"
             f"connector={self.connector} dry_run={self.dry_run}\n"
             f"research_allowed={self.research_allowed}\n"
-            f"fill_check={'SKIPPED' if self.skip_fill_check else 'on'}\n"
+            f"fill_check={'SKIPPED' if self.skip_fill_check else 'on'} "
+            f"fill_tolerance_pct={self.fill_tolerance_pct:g}\n"
             f"vibe_trading_bin={self.vibe_bin or 'NOT FOUND'}\n"
             f"llm_env: api_key={'set' if os.environ.get('OPENAI_API_KEY') else 'MISSING'} "
             f"base_url={os.environ.get('OPENAI_BASE_URL') or 'UNSET (would default to api.openai.com)'}"
@@ -276,16 +297,63 @@ def _as_float(value: object) -> float | None:
         return None
 
 
-def _position_qty(positions: dict, symbol: str) -> float:
-    """Quantity held for `symbol`, tolerating venue suffixes (.US / -USD)."""
-    key = symbol.upper()
+# Venue/quote suffixes the broker drops or rewrites: AAPL.US comes back as
+# AAPL, BTC/USD as BTCUSD. Only a trailing suffix is ever stripped, and only
+# from one side of a comparison, so BTC/USD can never be confused with a
+# different pair such as BTC/USDT.
+_VENUE_SUFFIXES = ("USDT", "USDC", "USD", "US")
+_NON_ALNUM_RE = re.compile(r"[^A-Z0-9]")
+
+
+def _symbol_match_key(symbol: str) -> str:
+    """Bare alphanumeric form used to match a symbol against a broker row.
+
+    The broker does not echo the directive's spelling: Alpaca reports the
+    pair ``BTC/USD`` as ``BTCUSD``. Comparing raw strings makes a position
+    that is genuinely there read as ``0 -> 0``, which is how a filled crypto
+    order gets reported as if nothing landed.
+    """
+    return _NON_ALNUM_RE.sub("", str(symbol or "").upper())
+
+
+def _symbols_equivalent(left: str, right: str) -> bool:
+    """True when two symbols denote the same instrument.
+
+    Equal after normalization (``BTC/USD`` == ``BTCUSD``), or differing only
+    by a trailing venue/quote suffix (``AAPL.US`` == ``AAPL``).
+    """
+    a = _symbol_match_key(left)
+    b = _symbol_match_key(right)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    for shorter, longer in ((a, b), (b, a)):
+        if longer.startswith(shorter) and longer[len(shorter) :] in _VENUE_SUFFIXES:
+            return True
+    return False
+
+
+def _position_row(positions: dict, symbol: str) -> tuple[str | None, float]:
+    """``(broker row key, qty)`` for `symbol`; ``(None, 0.0)`` when not held.
+
+    Exact keys win over normalized matches. The row key is returned so a
+    receipt can name the row it matched — a symbol-dialect mismatch is then
+    visible in the receipt instead of looking like a missing fill.
+    """
+    key = str(symbol or "").strip().upper()
     for candidate in (key, key + ".US", key + "-USD"):
         if candidate in positions:
-            return float(positions[candidate])
+            return candidate, float(positions[candidate])
     for held, qty in positions.items():
-        if str(held).upper().replace(".US", "").replace("-USD", "") == key:
-            return float(qty)
-    return 0.0
+        if _symbols_equivalent(str(held), key):
+            return str(held), float(qty)
+    return None, 0.0
+
+
+def _position_qty(positions: dict, symbol: str) -> float:
+    """Quantity held for `symbol` (0.0 when the broker shows no position)."""
+    return _position_row(positions, symbol)[1]
 
 
 def _parse_positions(output: str) -> dict[str, float] | None:
@@ -403,20 +471,31 @@ def verify_fill(
                 "cannot confirm the mandated order landed"
             ),
         }
+    row_key, after = _position_row(post_positions, symbol)
     before = _position_qty(pre_positions or {}, symbol)
-    after = _position_qty(post_positions, symbol)
     delta = after - before
-    tolerance = 1e-6
+    # Dust is not a position, and a mandated size is not exact: Alpaca paper
+    # delivered 0.0009975 BTC for a mandated 0.001 (in-kind fee, lot rounding,
+    # or a partial fill — the receipt does not distinguish them). The allowance
+    # is therefore relative and configurable, and never silent — the detail
+    # prints the exact delta, and a fill that moved the position without
+    # reaching the bar is `partial_fill`, a different verdict from
+    # `order_not_filled`.
+    dust = 1e-6
+    tolerance = max(dust, abs(qty) * cfg.fill_tolerance_pct)
+    landed = delta > dust
     if side == "BUY":
         expected = f"expected {symbol} qty to rise by >= {qty:g} (was {before:g})"
         ok = delta >= qty - tolerance
     elif side == "SELL":
-        if before <= tolerance:
+        if before <= dust:
             expected = (
                 f"expected a {symbol} SELL fill but none was held before the run"
             )
             ok = False
+            landed = False
         else:
+            landed = delta < -dust
             expected = f"expected {symbol} qty to fall by >= {qty:g} (was {before:g})"
             ok = delta <= -qty + tolerance
     else:
@@ -425,12 +504,21 @@ def verify_fill(
             "reason": "invalid_execution_request",
             "detail": f"side '{side}' is not BUY or SELL",
         }
-    detail = f"{symbol}: {before:g} -> {after:g} (delta {delta:g}); {expected}"
+    row_note = ""
+    if row_key is not None and row_key.strip().upper() != symbol.strip().upper():
+        row_note = f" [broker row '{row_key}']"
+    detail = (
+        f"{symbol}: {before:g} -> {after:g} (delta {delta:g}){row_note}; {expected}"
+    )
     if not ok:
-        detail += "; connector positions do not show the mandated fill"
+        detail += (
+            "; connector positions show a partial fill only"
+            if landed
+            else "; connector positions do not show the mandated fill"
+        )
     return {
         "ok": ok,
-        "reason": None if ok else "order_not_filled",
+        "reason": None if ok else ("partial_fill" if landed else "order_not_filled"),
         "detail": detail,
     }
 
@@ -896,8 +984,8 @@ def process_file(cfg: BridgeConfig, path: Path) -> None:
             outcome = "FAILED"
             extra["status"] = "FAILED"
             extra["error"] = (
-                "agent reported success but the mandated order did not land: "
-                f"{verification['reason']} — {verification['detail']}"
+                "agent reported success but the mandated order was not "
+                f"confirmed: {verification['reason']} — {verification['detail']}"
             )
             LOG.error("directive %s: %s", directive_id, extra["error"])
 

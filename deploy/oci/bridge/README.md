@@ -109,10 +109,15 @@ CONTRACT fields. See `sample-directive.json`.
 `TIMEOUT` / `DRY_RUN`), `processed_at`, `connector`, the agent's JSON result
 (`run_id`, order, account/position state) and error tails. For directives
 that carry an `execution_request`, the receipt also includes a
-`fill_verification` block (connector positions before/after the run); a
+`fill_verification` block (connector positions before/after the run). A
 `FAILED` status with reason `order_not_filled` means the agent finished
-successfully but the mandated order did not land — the bridge no longer
-trusts the agent's exit code alone for mandated orders. `audit/audits.jsonl`
+successfully but the mandated order did not land; `partial_fill` means
+something landed, short of the mandate. The bridge no longer trusts the
+agent's exit code alone for mandated orders. The block always carries the
+exact before → after delta and names the broker row it matched
+(`[broker row 'BTCUSD']`), so a spelling difference between the directive
+symbol and the venue's row is visible instead of looking like a missing
+fill. `audit/audits.jsonl`
 is the append-only trail for backtesting the loop itself. The status
 vocabulary is the *learning signal*: Hermès updates priors from
 `RESEARCH_DONE` findings and `EXECUTED` outcomes (see
@@ -247,8 +252,24 @@ the receipt**, not one:
 
 The second is not redundant. When the directive carries an `execution_request`,
 the bridge queries connector positions before the run and again after it and
-compares the delta against `qty` (tolerance 1e-6); a failed comparison rewrites
-the status to `FAILED` with `reason: order_not_filled`. But when the directive
+compares the delta against `qty`; a miss rewrites the status to `FAILED` with
+`reason: order_not_filled` (nothing moved) or `reason: partial_fill` (something
+moved, short of the mandate). Two details decide whether that comparison is
+right, and both have bitten in production:
+
+- **Symbol dialects.** The venue does not echo the directive's spelling:
+  Alpaca reports the pair `BTC/USD` as `BTCUSD` and drops the `.US` venue
+  suffix from equities. Matching is done on normalized symbols with a
+  suffix-only fallback, so `BTC/USD` ≡ `BTCUSD` and `AAPL.US` ≡ `AAPL`, while
+  `BTC/USD` ≠ `BTC/USDT`.
+- **A mandated size is not an exact size.** Alpaca paper delivered `0.0009975`
+  BTC for a mandated `0.001`; the receipt does not say whether that is an
+  in-kind fee, lot rounding, or a partial fill. A shortfall within
+  `BRIDGE_FILL_TOLERANCE_PCT` (default `0.005` = 0.5 % of the mandated size,
+  floor `1e-6`) is therefore accepted; below that bar but above zero is
+  `partial_fill`. Set it to `0` for exact-match discipline.
+
+But when the directive
 carries **no** `execution_request`, the whole check is skipped
 (`if execution is not None and outcome == "EXECUTED" and not cfg.skip_fill_check`),
 no `fill_verification` is written, and `EXECUTED` then means only "the agent
@@ -267,7 +288,8 @@ docker cp ~/wm-stack/deploy/oci/bridge/sample-directive-crypto-alpaca.json \
        bridge:/var/lib/bridge/directives/   # id DIR-SYNTH-CRYPTO-20260907-120000-001
 docker exec bridge sh -c 'cat "$(ls -t /var/lib/bridge/executions/*.json | head -1)"'
 #   status: EXECUTED  +  fill_verification.ok: true
-#   fill_verification.detail: "BTC/USD: 0 -> 0.001 (delta 0.001); expected ..."
+#   fill_verification.detail: "BTC/USD: 0 -> 0.0009975 (delta 0.0009975)
+#     [broker row 'BTCUSD']; expected BTC/USD qty to rise by >= 0.001 (was 0)"
 
 # the out-of-band check: the broker, queried by you rather than by the bridge
 docker exec vibe-trading vibe-trading connector positions
@@ -325,7 +347,10 @@ fractional fill verifies exactly like a whole-share one.
   `sample-directive-crypto-alpaca.json` and keep `BRIDGE_CONNECTOR` at its
   default — the bridge prompt already canonicalizes `BTC/USD` as the run
   identity (no `.US` suffix is added to crypto shapes, and the symbol-dialect
-  rule collapses to a single dialect for them).
+  rule collapses to a single dialect for them). The **positions row** comes
+  back in the other dialect (`BTCUSD`, no slash), which the fill guard
+  normalizes — do not compare the receipt's `detail` string with the
+  directive symbol by eye and conclude the fill is missing.
 - **Binance spot testnet (`testnet.binance.vision`)**: upstream Vibe-Trading
   ships the `binance-paper-trade` profile (ccxt → testnet host) — the
   testnet is a developer sandbox: sign in with a **GitHub account** on
@@ -389,6 +414,7 @@ fractional fill verifies exactly like a whole-share one.
 | `BRIDGE_DRY_RUN` | `0` | `1` logs the prompt, never invokes the agent |
 | `BRIDGE_ALLOW_RESEARCH` | `0` | `1` lets `mode: RESEARCH` commissions run as read-only agent tasks |
 | `BRIDGE_SKIP_FILL_CHECK` | `0` | `1` trusts the agent's exit code for `execution_request` directives (disables the positions-based fill verification — not recommended) |
+| `BRIDGE_FILL_TOLERANCE_PCT` | `0.005` | Accepted shortfall between the mandated `qty` and the fill, as a fraction of `qty` (in-kind venue fees, lot rounding; floor `1e-6`). `0` = exact match. Beyond it, a receipt that moved the position is `FAILED` / `partial_fill` |
 | `BRIDGE_VIBE_TRADING_BIN` | `vibe-trading` | CLI binary path |
 | `BRIDGE_LOG_LEVEL` | `INFO` | Log level. `DEBUG` also shows the per-tick "already processed; skipping" lines |
 
@@ -530,6 +556,15 @@ The bridge is intentionally the *cheapest* container in the stack:
   `directive_id`** after fixing the cause. Re-runs outside US market hours
   will legitimately fail closed — that is the intended behavior. Opt out
   per-operations with `BRIDGE_SKIP_FILL_CHECK=1`.
+- **Receipt `FAILED` with `order_not_filled` while the position is visibly
+  there** (observed 2026-09-18T05:28Z: mandated `0.001` `BTC/USD`, broker row
+  `BTCUSD` holding `0.0009975`, receipt said `0 -> 0`): the venue's row
+  spelling did not match the directive symbol, and the mandated-vs-landed gap
+  (0.25 %) exceeded a hard 1e-6 tolerance. Both are fixed: matching is
+  dialect-aware and the allowance is relative. The receipt names the row it
+  matched (`[broker row '…']`); when that note is absent, no row matched at
+  all. A receipt produced before the fix is final — re-run under a **fresh
+  `directive_id`**.
 - **`docker compose up` → `Container "/vibe-trading" is already in use`**:
   a leftover standalone `vibe-trading` container from the old
   `~/trading-stack` quickstart still holds the name. Retire that project

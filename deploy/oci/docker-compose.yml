@@ -183,6 +183,10 @@ services:
       BRIDGE_DRY_RUN: ${BRIDGE_DRY_RUN:-0}
       # Research commissions (mode: RESEARCH) — opt-in, off by default.
       BRIDGE_ALLOW_RESEARCH: ${BRIDGE_ALLOW_RESEARCH:-0}
+      # Accepted shortfall between a mandated qty and the landed fill, as a
+      # fraction of the mandate (in-kind venue fees, lot rounding). 0 = exact
+      # match. A miss beyond it is FAILED / partial_fill. See bridge/README.md.
+      BRIDGE_FILL_TOLERANCE_PCT: ${BRIDGE_FILL_TOLERANCE_PCT:-0.005}
       # Paper connector profile the agent must use: alpaca-paper-trade
       # (default) or binance-paper-trade (Binance spot testnet, keys in
       # ~/.vibe-trading/binance.json on the shared vibe_data volume —
