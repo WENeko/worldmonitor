@@ -117,7 +117,10 @@ agent's exit code alone for mandated orders. The block always carries the
 exact before → after delta and names the broker row it matched
 (`[broker row 'BTCUSD']`), so a spelling difference between the directive
 symbol and the venue's row is visible instead of looking like a missing
-fill. `audit/audits.jsonl`
+fill. A failed fill check additionally carries `run_evidence` — the failing
+run's own `state.json` and its rejected tool calls, copied from the run
+directory before it can be rotated away (see "What proves a directive was
+really executed"). `audit/audits.jsonl`
 is the append-only trail for backtesting the loop itself. The status
 vocabulary is the *learning signal*: Hermès updates priors from
 `RESEARCH_DONE` findings and `EXECUTED` outcomes (see
@@ -281,6 +284,30 @@ change, so the field's presence is the evidence that the mandate was honoured �
 and its absence is a receipt that proves nothing about the broker.
 `BRIDGE_SKIP_FILL_CHECK=1` removes the field too: a receipt produced in that mode
 can never prove an execution.
+
+### What a failed receipt can say about itself
+
+Both rules above make the *comparison* right. Neither one explains an agent
+that exits 0 and places nothing, and that is the third field to read:
+**`run_evidence`**. When a fill check fails, the bridge copies from the run
+directory the agent reported (`agent_result.run_dir`):
+
+| Field | Source | Why it matters |
+|---|---|---|
+| `terminal_state` | `state.json` | the run's terminal state. In the observed case, 25 bytes: `{"status": "success"}`. |
+| `identity` | `artifacts/grounding_evidence.json` | the identity the ledger actually locked — what a mismatch is measured against. |
+| `tool_failures` | same | every tool call with its `error_code`. A gate rejection the CLI never prints. |
+| `rejected_tool_calls` | same, when `tool_failures` is absent | shape-agnostic fallback: any object carrying a non-null `error_code`. |
+| `files` | the run directory | what the run left behind, so you know whether an autopsie is even possible. |
+
+Without it, `stdout_tail` (the CLI's one-line status: `status`, `run_id`,
+`run_dir`, `reason`) and `prompt_tail` (the END of the prompt, not the answer)
+are all a failed receipt says — which is why three consecutive
+`FAILED / order_not_filled` receipts had to be explained by reading artifacts by
+hand. The copy stays small (strings clipped at 300 characters, lists at 12
+items, failures at 8) so Hermès can still read the receipt. It is best-effort: a
+missing directory, unreadable or malformed JSON, or a shape change upstream
+leaves the receipt exactly as it was.
 
 The fastest honest proof, in two parts — the sample exercises the rail Alpaca
 crypto, which trades 24/7 and so carries no market-hours dependency (equities
@@ -587,11 +614,18 @@ The bridge is intentionally the *cheapest* container in the stack:
   gave a genuine non-fill at 16:55Z (the positions read `0.0009975` before and
   after it, and again before the next run) and a verified fill at 17:15Z. A
   `FAILED` / `order_not_filled` on crypto is therefore not automatically the
-  symbol bug or the market hours. The receipt does **not** carry the cause: it
-  fixes the run's identity and the bridge's verdict, and its `stdout_tail`
-  holds only the CLI's final status line (`status`, `run_id`, `run_dir`,
-  `reason`), never the agent's account of the order it tried. The story is in
-  the run's artifacts:
+  symbol bug or the market hours. In that case the run's artifact names the
+  cause: `tool_failures` carries `error_code: identity_mismatch` on
+  `trading_place_order` — "Consumer symbol/venue differs from the locked
+  resolver identity; silent suffix or exchange rewrites are forbidden" — so the
+  order was refused by the identity gate in-process and never reached Alpaca.
+  That grep does not show *which* two spellings clashed; the window below puts
+  the symbol the model passed next to the locked identity. The receipt of that
+  run predates the fix and does **not** carry the cause: its `stdout_tail` holds
+  only the CLI's final status line (`status`, `run_id`, `run_dir`, `reason`),
+  never the agent's account of the order it tried. Receipts written from this
+  revision include it as `run_evidence` (see "What proves a directive was really
+  executed"), so this autopsie is only needed for an older run:
 
   ```bash
   # take the run id out of the receipt instead of typing it by hand
@@ -599,10 +633,25 @@ The bridge is intentionally the *cheapest* container in the stack:
     "cat /var/lib/bridge/executions/DIR-SYNTH-CRYPTO-20260918-070000-001.json" \
     | python3 -c "import json,sys;print(json.load(sys.stdin)['agent_result']['run_id'])")
   docker exec vibe-trading ls -la /home/vibe/.vibe-trading/runs/$RID/
+  docker exec vibe-trading sh -c \
+    "sed -n '100,160p' /home/vibe/.vibe-trading/runs/$RID/artifacts/grounding_evidence.json"
   ```
 
   In the case above the receipt proves only that the run is worth reading: it
   exited `0`, reported `success`, wrote nothing to stderr, and no order landed.
+- **Run artifact shows `error_code: identity_mismatch` on
+  `trading_place_order`** (observed 2026-09-18T16:55Z): the gate locked one
+  spelling and the order tool was handed another — the order never reached the
+  broker, so the positions could not move. The prompt used to contradict itself
+  here: rule 3 forbade `search_symbol` for the mandated instrument and, three
+  lines later, prescribed it as *the* recovery from an identity error. For a
+  broker-native mandate (crypto, futures, FX) resolving is the cause, not the
+  cure — Alpaca writes `BTC/USD` as `BTCUSD` (its own position rows say so), so
+  a resolver locks `BTCUSD` and every retry of the mandate's spelling is then
+  refused as a mismatch. Rule 3 now says: do not end the run, do not resolve,
+  retry the exact mandated symbol alone. **Deduced** from the artifact plus the
+  broker's row spelling — the run that confirms it is the next fresh drop, whose
+  receipt will carry `identity` for exactly this reason.
 - **Receipt `FAILED` with `order_not_filled` while the position is visibly
   there** (observed 2026-09-18T05:28Z: mandated `0.001` `BTC/USD`, broker row
   `BTCUSD` holding `0.0009975`, receipt said `0 -> 0`): the venue's row

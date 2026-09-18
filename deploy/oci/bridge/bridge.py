@@ -684,16 +684,25 @@ def build_prompt(cfg: BridgeConfig, data: dict) -> str:
             f"   search_symbol must never share a turn with any other tool call."
         )
     elif instrument:
+        # The recovery clause must not contradict the sentence above it. For a
+        # broker-native identity (BTC/USD, BTC/USDT, GC=F) resolving the symbol
+        # locks the BROKER's spelling — Alpaca writes BTC/USD as BTCUSD, as its
+        # own position rows show — after which the mandate's spelling is rejected
+        # as a mismatch on every retry. Observed 2026-09-18: a crypto run whose
+        # only identity-gate rejection was `identity_mismatch` on
+        # trading_place_order, i.e. no order ever reached the broker.
         rule3 = (
             f"3. Run-scoped identity is locked on \"{instrument}\" from the start (rule:\n"
             f"   RUN INSTRUMENT IDENTITY above). Connector tool calls (orders, quotes,\n"
             f"   positions) must pass exactly this symbol: \"{instrument}\". Never call\n"
             f"   search_symbol for this instrument, and never trade any other symbol or\n"
-            f"   venue. If a connector tool still returns an identity gate error\n"
+            f"   venue. If a connector tool returns an identity gate error\n"
             f"   (identity_required / identity_conflict / identity_mismatch), do NOT\n"
-            f"   end the run: call search_symbol ALONE in your next turn, wait for its\n"
-            f"   result, then retry the exact mandated order in a following turn.\n"
-            f"   search_symbol must never share a turn with any other tool call."
+            f"   end the run and do NOT resolve the symbol: retry the exact mandated\n"
+            f"   order ALONE in your next turn, still passing \"{instrument}\". The\n"
+            f"   identity is already locked above; a resolver call would lock the\n"
+            f"   broker's own spelling instead (Alpaca writes BTC/USD as BTCUSD), and\n"
+            f"   the mandated spelling would then be refused on every retry."
         )
     else:
         rule3 = "3. Never trade any symbol other than the directive's target."
@@ -808,6 +817,128 @@ def run_agent(cfg: BridgeConfig, prompt: str) -> dict:
         "stdout_tail": stdout[-2000:] or None,
         "stderr_tail": stderr[-1000:] or None,
     }
+
+
+# ---------------------------------------------------------------------------
+# Run evidence — the failing run's own account, copied into the receipt
+# ---------------------------------------------------------------------------
+#
+# A receipt can record WHAT the bridge observed (no fill) without saying WHY the
+# agent produced none. `stdout_tail` is the CLI's one-line status and
+# `prompt_tail` is the END OF THE PROMPT, not the model's answer — so field
+# evidence 2026-09-18 showed three consecutive `FAILED / order_not_filled`
+# receipts whose cause lived only in the run's own artifacts, requiring an
+# autopsie (`<run_dir>/artifacts/grounding_evidence.json`). Two of those three
+# were the bridge's own false negatives; the third was a tool-level rejection
+# (`identity_mismatch` on `trading_place_order`) that never reached stdout.
+# Copying that artifact into the receipt costs a few hundred bytes and makes
+# the next failure explain itself.
+#
+# Deliberately best-effort: a missing directory, a permission error, malformed
+# JSON or a shape change upstream returns {} and leaves the receipt exactly as
+# it was before this function existed. It never raises, never invents a field,
+# and never consults the network.
+
+# Receipts are read by Hermès, so the copy stays small: real grounding entries
+# are ~300 B each and `state.json` is a one-key object.
+_EVIDENCE_STRING_CAP = 300
+_EVIDENCE_ITEMS = 12
+
+
+def _clip(value, cap: int = _EVIDENCE_STRING_CAP) -> str:
+    text = (
+        value
+        if isinstance(value, str)
+        else json.dumps(value, ensure_ascii=False, default=str)
+    )
+    return text if len(text) <= cap else text[:cap] + " ...[clipped]"
+
+
+def _bounded(value) -> dict | list | str:
+    """Same shape, every scalar rendered as a clipped string."""
+    if isinstance(value, dict):
+        return {str(k): _bounded(v) for k, v in list(value.items())[:_EVIDENCE_ITEMS]}
+    if isinstance(value, list):
+        return [_bounded(v) for v in value[:_EVIDENCE_ITEMS]]
+    return _clip(value)
+
+
+def _scan_error_entries(node, found: list, limit: int) -> None:
+    """Every object carrying a non-null `error_code`, in document order.
+
+    Shape-agnostic fallback: upstream keys the ledger's rejections differently
+    across versions, but an entry with a populated `error_code` is the one thing
+    every observed version writes.
+    """
+    if len(found) >= limit:
+        return
+    if isinstance(node, dict):
+        if node.get("error_code"):
+            found.append(_bounded(node))
+            return
+        for value in node.values():
+            _scan_error_entries(value, found, limit)
+    elif isinstance(node, list):
+        for value in node:
+            _scan_error_entries(value, found, limit)
+
+
+def _list_run_files(root: Path, limit: int = 20) -> list:
+    listing: list = []
+    try:
+        paths = sorted(p for p in root.rglob("*") if p.is_file())
+    except OSError:
+        return listing
+    for path in paths[:limit]:
+        try:
+            listing.append(f"{path.relative_to(root)} ({path.stat().st_size} B)")
+        except OSError:
+            listing.append(str(path.relative_to(root)))
+    return listing
+
+
+def run_evidence(run_dir, limit: int = 8) -> dict:
+    """The run's terminal state and rejected tool calls, with the run dir.
+
+    Returns {} when the run left nothing readable, so the caller can attach the
+    field only when it actually carries evidence.
+    """
+    if not run_dir:
+        return {}
+    root = Path(str(run_dir))
+    if not root.is_dir():
+        return {}
+    evidence: dict = {"run_dir": str(root)}
+    files = _list_run_files(root)
+    if files:
+        evidence["files"] = files
+    try:
+        terminal_state = json.loads(
+            (root / "state.json").read_text(encoding="utf-8")
+        )
+        # An empty object (or a bare `null`) carries nothing; a field that says
+        # "unknown" is worse than no field at all.
+        if terminal_state:
+            evidence["terminal_state"] = terminal_state
+    except (OSError, json.JSONDecodeError):
+        pass
+    try:
+        grounding = json.loads(
+            (root / "artifacts" / "grounding_evidence.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return evidence if len(evidence) > 1 else {}
+    if isinstance(grounding, dict) and grounding.get("identity") is not None:
+        evidence["identity"] = _bounded(grounding["identity"])
+    failures = grounding.get("tool_failures") if isinstance(grounding, dict) else None
+    if isinstance(failures, list) and failures:
+        evidence["tool_failures"] = [_bounded(entry) for entry in failures[:limit]]
+    else:
+        found: list = []
+        _scan_error_entries(grounding, found, limit)
+        if found:
+            evidence["rejected_tool_calls"] = found
+    return evidence if len(evidence) > 1 else {}
 
 
 # ---------------------------------------------------------------------------
@@ -988,6 +1119,17 @@ def process_file(cfg: BridgeConfig, path: Path) -> None:
                 f"confirmed: {verification['reason']} — {verification['detail']}"
             )
             LOG.error("directive %s: %s", directive_id, extra["error"])
+            # The receipt must outlive the run directory: carry the agent's own
+            # account of the failure while it is still on disk.
+            agent_result = fragment.get("agent_result")
+            run_dir = (
+                agent_result.get("run_dir")
+                if isinstance(agent_result, dict)
+                else None
+            )
+            evidence = run_evidence(run_dir)
+            if evidence:
+                extra["run_evidence"] = evidence
 
     receipt = build_receipt(cfg, data, outcome, extra)
     write_receipt(cfg, receipt)
