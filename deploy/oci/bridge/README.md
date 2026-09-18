@@ -149,6 +149,14 @@ docker logs -f bridge
 docker exec vibe-trading vibe-trading connector positions
 #   4) read the receipt (bridge view == Hermès view of the same volume):
 docker exec bridge cat /var/lib/bridge/executions/DIR-SYNTH-20260904-070100-001.json
+#   5) RE-RUNNING THE SAME SAMPLE IS A SILENT NO-OP. The receipt is the
+#      idempotence key: `process_file` skips any directive_id that already has
+#      one, whatever its status — DIR-SYNTH-20260904-070100-001's receipt is
+#      FAILED (2026-09-04) and dropping the file again would only print an
+#      `already processed; skipping` line. Renaming the FILE does not help
+#      either: the lookup is on the id inside it, never the filename (see
+#      "Inbox tidiness"). Give the copy a fresh inner "directive_id" — or move
+#      the old receipt aside first — then it runs for real.
 
 # research commission (read-only, no order):
 #   1) copy sample-directive-research.json into the exchange (as above)
