@@ -49,8 +49,11 @@ import { safeJsonRpcId, utf8ByteLength } from './utils';
 import type { McpAuthContext, McpHandlerDeps } from './types';
 import type { McpBudget } from './quota';
 
-// MCP methods servable WITHOUT authentication. These are the zero-data
-// discovery surface an agent (or an agent-readiness scanner) needs to learn
+// MCP methods servable WITHOUT authentication — on the machine-discovery
+// aliases only (WELL_KNOWN_MCP_PATHS). The transport paths (`/mcp`, `/api/mcp`)
+// challenge every unauthenticated request before this set is consulted; see
+// the connect-time challenge in mcpHandler for why. On the aliases, these are
+// the zero-data discovery surface an agent-readiness scanner needs to learn
 // what this server is and what it exposes BEFORE authenticating — exactly the
 // metadata already published in the static server-card.json and the public
 // docs. `tools/list`, `resources/list`, `resources/templates/list`,
@@ -837,6 +840,30 @@ async function mcpHandlerInner(
   }
 
   const { id, method } = body;
+
+  // Connect-time challenge. An unauthenticated `initialize` on the transport is
+  // refused with the same structured 401 + `WWW-Authenticate` an unauthenticated
+  // tool call gets. `initialize` is the handshake every interactive MCP client
+  // must open with, and hosted connectors (Cursor's agent backend,
+  // grok-connectors-manager) decide whether a server needs sign-in from how it
+  // is answered: a 200 recorded "connected, nothing to authenticate", and the
+  // 401 a paid call later returned had no authorization server behind it, so
+  // their sign-in control never worked. The JSON-RPC id is echoed so an SDK
+  // transport correlates the refusal instead of waiting out its timeout.
+  //
+  // Only the handshake is challenged. Stateless callers never send it — the
+  // published `worldmonitor` CLI and the SDKs POST `tools/list` and
+  // `tools/call get_sources` directly, with no key — so keyless catalog reads
+  // and the free tool keep working for every version already installed. A full
+  // anonymous handshake remains available on the machine-discovery aliases,
+  // which is where agent-readiness scanners POST theirs.
+  if (method === 'initialize' && !hasCredentials(req) && !WELL_KNOWN_MCP_PATHS.has(requestPathname)) {
+    const denied = await resolveAuthContext(req, deps, resourceMetadataUrl, corsHeaders, id);
+    if (!denied.ok) {
+      usage.phase = 'auth';
+      return denied.response;
+    }
+  }
 
   // Anonymous-servable resources/read promotions. Two kinds of resource carry
   // NO data and spend NO quota, so they are served on the anonymous discovery

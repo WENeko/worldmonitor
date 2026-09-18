@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import dns from 'node:dns';
 import { fetchNaturalEvents, naturalEventsAfterPublish } from '../scripts/seed-natural-events.mjs';
 
 const NOW = Date.parse('2026-09-18T06:00:00Z');
@@ -38,6 +39,96 @@ function fixture(fail) {
 const run = transport => fetchNaturalEvents({
   now: NOW, fetchFn: transport.fetchFn,
   fetchHkoWarningsFn: async () => ({ warnings: [], dataAvailable: true, sourceDecision: { status: 'used' } }),
+});
+
+function dualFamilyFailure() {
+  return new TypeError('fetch failed', { cause: Object.assign(new AggregateError([
+    Object.assign(new Error(), { code: 'ETIMEDOUT', syscall: 'connect', address: '127.0.0.1' }),
+    Object.assign(new Error(), { code: 'ENETUNREACH', syscall: 'connect', address: '::1' }),
+  ]), { code: 'ETIMEDOUT' }) });
+}
+
+test('EONET retries the dual-family connect failure over IPv4 and destroys its dispatcher', async t => {
+  const server = createServer((_req, res) => { res.end(JSON.stringify({ events: [event] })); });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const lookup = dns.lookup;
+  const families = [];
+  t.mock.method(dns, 'lookup', (host, options, callback) => {
+    if (host !== 'eonet.fixture.invalid') return lookup(host, options, callback);
+    families.push(options.family);
+    process.nextTick(callback, null, '127.0.0.1', 4);
+  });
+  let dispatcher;
+  const transport = fixture(async (source, attempt, options) => {
+    if (source !== 'eonet') { assert.equal(options.dispatcher, undefined); return; }
+    if (attempt === 1) { assert.equal(options.dispatcher, undefined); throw dualFamilyFailure(); }
+    dispatcher = options.dispatcher;
+    return fetch(`http://eonet.fixture.invalid:${server.address().port}`, options);
+  });
+  const result = await run(transport);
+  assert.deepEqual(families, [4]);
+  assert.equal(dispatcher.destroyed, true);
+  assert.equal(transport.calls.get('eonet'), 2);
+  for (const [source, count] of transport.calls) if (source !== 'eonet') assert.equal(count, 1, source);
+  assert.ok(result.events.some(item => item.id === event.id));
+  assert.equal(result._sourceSnapshots.eonet.fetchedAt, NOW);
+});
+
+test('IPv4 fallback is limited to EONET and the exact connect failure signature', async () => {
+  const wrongFamily = dualFamilyFailure();
+  wrongFamily.cause.errors[1].address = '127.0.0.2';
+  const wrongCode = dualFamilyFailure();
+  wrongCode.cause.errors[1].code = 'ECONNREFUSED';
+  for (const [source, failure] of [
+    ['gdacs:TC', dualFamilyFailure()],
+    ['eonet', new DOMException('timeout', 'TimeoutError')],
+    ['eonet', new TypeError('fetch failed', { cause: { code: 'ETIMEDOUT' } })],
+    ['eonet', new TypeError('fetch failed', { cause: new AggregateError([]) })],
+    ['eonet', wrongFamily],
+    ['eonet', wrongCode],
+  ]) {
+    const transport = fixture((current, _attempt, options) => {
+      assert.equal(options.dispatcher, undefined);
+      if (current === source) throw failure;
+    });
+    await run(transport);
+    assert.equal(transport.calls.get(source), 2);
+  }
+});
+
+test('failed IPv4 retry destroys its dispatcher and preserves the previous success and expiry', async () => {
+  const initial = await run(fixture());
+  let dispatcher;
+  const transport = fixture((source, attempt, options) => {
+    if (source !== 'eonet') return;
+    if (attempt === 1) throw dualFamilyFailure();
+    dispatcher = options.dispatcher;
+    throw new DOMException('timeout', 'TimeoutError');
+  });
+  const now = NOW + 3_600_000;
+  const result = await fetchNaturalEvents({
+    now, previousSources: initial._sourceSnapshots, fetchFn: transport.fetchFn,
+    fetchHkoWarningsFn: async () => ({ warnings: [], dataAvailable: true, sourceDecision: { status: 'used' } }),
+  });
+  assert.equal(dispatcher.destroyed, true);
+  assert.equal(transport.calls.get('eonet'), 2);
+  for (const [source, count] of transport.calls) if (source !== 'eonet') assert.equal(count, 1, source);
+  const health = naturalEventsAfterPublish(result).freshnessMetaPatch.sourceHealth.eonet;
+  assert.equal(health.status, 'retained');
+  assert.equal(health.lastSuccessAt, NOW);
+  assert.equal(health.lastAttemptAt, now);
+  assert.equal(health.retainedUntil, NOW + 9 * 3_600_000);
+});
+
+test('a body-stage failure does not select the EONET connect fallback', async () => {
+  const transport = fixture((source, _attempt, options) => {
+    assert.equal(options.dispatcher, undefined);
+    if (source === 'eonet') return { ok: true, json: async () => { throw dualFamilyFailure(); } };
+  });
+  await run(transport);
+  assert.equal(transport.calls.get('eonet'), 2);
 });
 
 test('transient EONET request and GDACS body failure recover without replaying companions', async () => {
@@ -214,4 +305,86 @@ test('an errored response body cannot turn a permanent HTTP status into a retry'
   const result = await run(transport);
   assert.equal(transport.calls.get('eonet'), 1);
   assert.deepEqual(naturalEventsAfterPublish(result).freshnessMetaPatch.failedSources, ['eonet']);
+});
+
+test('connection diagnostics preserve aggregate members and families without addresses', async t => {
+  const logs = [];
+  t.mock.method(console, 'warn', (...args) => logs.push(args.join(' ')));
+  t.mock.method(console, 'log', (...args) => logs.push(args.join(' ')));
+  const aggregate = new AggregateError([
+    Object.assign(new Error('private IPv4 details'), { code: 'ETIMEDOUT', syscall: 'connect', address: '127.0.0.1' }),
+    Object.assign(new Error('private IPv6 details'), { code: 'ENETUNREACH', syscall: 'connect', address: '::1' }),
+  ]);
+  aggregate.code = 'ETIMEDOUT';
+  const transport = fixture(source => {
+    if (source === 'eonet') throw new TypeError('fetch failed with secret URL', { cause: aggregate });
+  });
+  const result = await run(transport);
+  const output = logs.join('\n');
+  assert.match(output, /"code":"ETIMEDOUT","syscall":"connect","family":4/);
+  assert.match(output, /"code":"ENETUNREACH","syscall":"connect","family":6/);
+  assert.match(output, /attemptElapsedMs=\d+/);
+  assert.match(output, /"node":"\d+\.\d+\.\d+"/);
+  assert.doesNotMatch(output, /127\.0\.0\.1|::1|private|secret URL/);
+  assert.deepEqual(naturalEventsAfterPublish(result).freshnessMetaPatch.failedSources, ['eonet']);
+  assert.equal(transport.calls.get('eonet'), 2);
+  for (const [source, count] of transport.calls) if (source !== 'eonet') assert.equal(count, 1, source);
+});
+
+test('connection diagnostics bound cyclic and wide errors and omit unknown sensitive fields', async t => {
+  const logs = [];
+  t.mock.method(console, 'warn', (...args) => logs.push(args.join(' ')));
+  t.mock.method(console, 'log', (...args) => logs.push(args.join(' ')));
+  const error = new TypeError('secret message');
+  error.cause = error;
+  error.errors = Array.from({ length: 30 }, () => ({
+    name: 'secret name', code: 'secret code', syscall: 'secret syscall',
+    address: 'secret hostname', stack: 'secret stack',
+  }));
+  const transport = fixture(source => { if (source === 'eonet') throw error; });
+  await run(transport);
+  const line = logs.find(item => item.includes(' details='));
+  const details = JSON.parse(line.split(' details=')[1]);
+  assert.equal(details.errors.length, 8);
+  assert.equal(details.truncated, true);
+  assert.doesNotMatch(logs.join('\n'), /secret/);
+  assert.ok(line.length < 2000, `diagnostic length ${line.length}`);
+  assert.equal(transport.calls.get('eonet'), 2);
+});
+
+test('throwing diagnostic getters preserve bounded failures and the retry limit', async t => {
+  const logs = [];
+  t.mock.method(console, 'warn', (...args) => logs.push(args.join(' ')));
+  t.mock.method(console, 'log', (...args) => logs.push(args.join(' ')));
+  const error = new TypeError('private fetch details');
+  Object.defineProperty(error, 'errors', { get() { throw new Error('secret getter failure'); } });
+  const transport = fixture(source => { if (source === 'eonet') throw error; });
+  const result = await run(transport);
+  const output = logs.join('\n');
+  assert.match(output, /eonet request FETCH_FAILED attempt=2 elapsedMs=\d+ attemptElapsedMs=\d+/);
+  assert.match(output, /details=\{"unavailable":true\}/);
+  assert.doesNotMatch(output, /secret|private/);
+  assert.equal(transport.calls.get('eonet'), 2);
+  for (const [source, count] of transport.calls) if (source !== 'eonet') assert.equal(count, 1, source);
+  assert.deepEqual(naturalEventsAfterPublish(result).freshnessMetaPatch.failedSources, ['eonet']);
+});
+
+test('failure timing separates each request duration from total elapsed time', async t => {
+  let clock = 0;
+  const logs = [];
+  t.mock.method(performance, 'now', () => clock);
+  t.mock.method(console, 'warn', (...args) => logs.push(args.join(' ')));
+  t.mock.method(console, 'log', (...args) => logs.push(args.join(' ')));
+  t.mock.method(globalThis, 'setTimeout', (callback) => {
+    clock += 500;
+    queueMicrotask(callback);
+  });
+  const transport = fixture(source => {
+    if (source !== 'eonet') return;
+    clock += 250;
+    throw new TypeError('fetch failed', { cause: { code: 'ETIMEDOUT' } });
+  });
+  await run(transport);
+  assert.match(logs.join('\n'), /attempt=1 elapsedMs=250 attemptElapsedMs=250/);
+  assert.match(logs.join('\n'), /attempt=2 elapsedMs=1000 attemptElapsedMs=250/);
 });
