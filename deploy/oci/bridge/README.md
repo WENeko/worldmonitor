@@ -587,9 +587,22 @@ The bridge is intentionally the *cheapest* container in the stack:
   gave a genuine non-fill at 16:55Z (the positions read `0.0009975` before and
   after it, and again before the next run) and a verified fill at 17:15Z. A
   `FAILED` / `order_not_filled` on crypto is therefore not automatically the
-  symbol bug or the market hours: read the failed run's own receipt
-  (`agent_result`, `stdout_tail`, `stderr_tail`) and its artifacts under
-  `/home/vibe/.vibe-trading/runs/<run_id>/` before changing anything.
+  symbol bug or the market hours. The receipt does **not** carry the cause: it
+  fixes the run's identity and the bridge's verdict, and its `stdout_tail`
+  holds only the CLI's final status line (`status`, `run_id`, `run_dir`,
+  `reason`), never the agent's account of the order it tried. The story is in
+  the run's artifacts:
+
+  ```bash
+  # take the run id out of the receipt instead of typing it by hand
+  RID=$(docker exec bridge sh -c \
+    "cat /var/lib/bridge/executions/DIR-SYNTH-CRYPTO-20260918-070000-001.json" \
+    | python3 -c "import json,sys;print(json.load(sys.stdin)['agent_result']['run_id'])")
+  docker exec vibe-trading ls -la /home/vibe/.vibe-trading/runs/$RID/
+  ```
+
+  In the case above the receipt proves only that the run is worth reading: it
+  exited `0`, reported `success`, wrote nothing to stderr, and no order landed.
 - **Receipt `FAILED` with `order_not_filled` while the position is visibly
   there** (observed 2026-09-18T05:28Z: mandated `0.001` `BTC/USD`, broker row
   `BTCUSD` holding `0.0009975`, receipt said `0 -> 0`): the venue's row
