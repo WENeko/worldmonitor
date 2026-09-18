@@ -41,10 +41,12 @@ mcp_servers:
 #   compression:
 #     threshold_tokens: 32000
 #
-# Note that a config change is only picked up when the service restarts:
-# `docker compose up -d hermes` does NOTHING when the compose file and .env are
-# unchanged (it prints "Container hermes Running"). Use `docker restart hermes`
-# -- session history lives under /opt/data, so nothing is lost.
+# Note that a config change is only picked up when the service restarts. A value
+# written by `hermes config set` lives in the mounted /opt/data, so `docker
+# restart hermes` is enough -- and session history lives there too, so nothing is
+# lost. That is NOT true of a change to the compose file itself (a volume flag, an
+# environment variable): only recreation re-reads it, and the `up` output does not
+# say whether that happened -- see docker-compose.yml.
 #
 # Optional second dial, independent of the trigger above: `proactive_prune_tokens`
 # (0 = off) reclaims stale tool output deterministically, with no summarizer call

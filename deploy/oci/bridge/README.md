@@ -187,7 +187,14 @@ Rules it follows:
   `GATED` — exactly the set `process_file` skips forever. A `GATED` receipt is
   parked and non-final, so its directive **stays** in the watched directory for
   the bridge to re-process when `BRIDGE_ALLOW_RESEARCH=1`.
-- A directive with **no** receipt is pending, not processed: never touched.
+- The receipt is located by the id **inside** the directive file, never by its
+  filename — the same key the watcher itself uses. A directive dropped under an
+  operator-chosen name (`sample-directive-synthetic.json`, whose inner id is
+  `DIR-SYNTH-…`) therefore archives like any other. Keying on the filename left
+  exactly that file in the inbox forever: processed by the bridge, invisible to
+  `--archive` — the one case the operator is most likely to create by hand.
+- A directive with **no** receipt is pending, not processed: never touched, and
+  now counted as `pending` in the summary so a silent inbox cannot hide a file.
 - A directive with an **unreadable** receipt is never touched and is reported as
   `FAILED` with a non-zero exit — the bridge cannot read that receipt either, so
   it treats the directive as never processed and will re-execute it.

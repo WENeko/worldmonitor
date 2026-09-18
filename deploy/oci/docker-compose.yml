@@ -26,11 +26,12 @@ services:
       # producer). Hermès only appends its own audit artifacts (audits.jsonl,
       # decisions.jsonl). Never write producer state from Hermès.
       #
-      # Changing this line REQUIRES recreation, and `up -d` is not proof that it
-      # happened: with an unchanged service definition it prints "Container hermes
-      # Running" -- or "Start", if the container had exited and was merely
-      # started again -- and only a changed one prints "Recreate". So verify the
-      # mount the container ACTUALLY got, not the file on disk:
+      # Changing this line REQUIRES recreation, and the `up` output does NOT tell
+      # you whether it happened. Observed 2026-09-18: applying this exact `ro` ->
+      # `rw` change still printed `✔ Container hermes  Start...`, the same line an
+      # already-stopped container produces. Do not read the label — either force
+      # the recreate, or check the mount the container ACTUALLY got:
+      #   docker compose up -d --force-recreate hermes
       #   docker inspect -f '{{range .Mounts}}{{.Destination}} {{if .RW}}rw{{else}}ro{{end}}{{"\n"}}{{end}}' hermes
       # and prove writability from inside, as the user Hermès runs as:
       #   docker exec hermes sh -c 'touch /opt/data/feed-intel/.wtest && rm /opt/data/feed-intel/.wtest && echo WRITABLE'

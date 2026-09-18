@@ -906,6 +906,30 @@ def process_file(cfg: BridgeConfig, path: Path) -> None:
     LOG.info("directive %s → %s", directive_id, outcome)
 
 
+def directive_identity(path: Path) -> str:
+    """The id `process_file` keys a receipt on: the `directive_id` INSIDE the file.
+
+    Not the filename — the two differ for any directive dropped under an
+    operator-chosen name, and the README tells you to copy
+    `sample-directive-synthetic.json`, whose inner id is `DIR-SYNTH-...`.
+    `process_file` has always keyed on the inner id, so keying the archive on
+    the stem left such a file in the inbox forever: processed by the bridge,
+    invisible to `--archive`.
+
+    The stem is the fallback only when the file yields no id at all, which is
+    the same key `process_file` uses when it writes a receipt for unparseable
+    JSON. A file that parses but carries no `directive_id` gets no receipt, so it
+    stays pending here — which is the correct outcome.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return path.stem
+    if isinstance(data, dict) and data.get("directive_id"):
+        return str(data["directive_id"])
+    return path.stem
+
+
 def archive_processed(cfg: BridgeConfig, report_only: bool = False) -> int:
     """Move already-processed directives out of the watched directory.
 
@@ -919,7 +943,9 @@ def archive_processed(cfg: BridgeConfig, report_only: bool = False) -> int:
     A directive is archived when its receipt exists with any status **except**
     GATED — exactly the set `process_file` skips forever. A GATED receipt is
     parked and non-final, so its directive must stay in the watched directory
-    for the bridge to re-process it once the research gate opens.
+    for the bridge to re-process it once the research gate opens. The receipt is
+    located by `directive_identity`: the id inside the file, the same key
+    `process_file` writes with.
 
     Receipts are never moved: they are the idempotency key and the input to
     Hermès's daily learning review, so archiving a directive file changes no
@@ -929,10 +955,12 @@ def archive_processed(cfg: BridgeConfig, report_only: bool = False) -> int:
     archived: list[str] = []
     parked: list[str] = []
     failed: list[str] = []
+    pending: list[str] = []
 
     for path in collect_pending(cfg):
-        receipt_path = cfg.executions / f"{path.stem}.json"
+        receipt_path = cfg.executions / f"{directive_identity(path)}.json"
         if not receipt_path.is_file():
+            pending.append(path.name)
             continue  # no receipt yet: pending, not processed
         try:
             status = json.loads(receipt_path.read_text(encoding="utf-8")).get("status")
@@ -971,9 +999,12 @@ def archive_processed(cfg: BridgeConfig, report_only: bool = False) -> int:
         print(f"  kept {entry}")
     for entry in failed:
         print(f"  FAILED {entry}")
+    for entry in pending:
+        print(f"  left {entry} (no receipt yet)")
     print(
         f"{verb} {len(archived)} directive file(s); "
-        f"{len(parked)} parked; {len(failed)} failed"
+        f"{len(parked)} parked; {len(failed)} failed; "
+        f"{len(pending)} pending (no receipt yet)"
     )
     if archived and not report_only:
         print(f"archive directory: {archive}")
