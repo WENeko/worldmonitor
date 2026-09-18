@@ -222,9 +222,10 @@ function decideTabCap(
 export function resolveTabCap(input: ExportGateInputs, currentTabCount: number): TabCapVerdict {
   if (input.desktopKeyPresent) return UNCAPPED;
   if (input.authPending) return UNCAPPED;
-  if (!input.signedIn) return decideTabCap(input, currentTabCount, FREE_TAB_CAP, 'anonymous');
-
-  const features = input.features;
+  // [fork-deploy] Dashboard tab cap removed on the Vercel single-function
+  // branch: every session may create unlimited dashboard tabs.
+  return UNCAPPED;
+  const features = input.features!;
   if (features === null) return UNCAPPED;
 
   const cap = features.maxDashboards;
