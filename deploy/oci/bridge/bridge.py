@@ -35,18 +35,31 @@ Fail-closed rules:
   `<home>/executions/<directive_id>.json`. Re-delivering the same
   directive does nothing (a `GATED` receipt is not final and can be
   re-processed).
-- For directives that carry an `execution_request`, the bridge verifies
-  the mandated order actually landed — connector positions before/after
-  the run — before writing `EXECUTED`. An agent that exits 0 without a
-  matching fill is recorded as `FAILED` with reason `order_not_filled`;
-  a fill that moved the position but landed short of the mandate is
-  `FAILED` with `partial_fill` (opt out per-operations with
-  `BRIDGE_SKIP_FILL_CHECK=1`). Broker rows are matched across symbol
-  dialects (`BTC/USD` comes back as `BTCUSD`, `AAPL.US` as `AAPL`), and a
-  shortfall within `BRIDGE_FILL_TOLERANCE_PCT` (default 0.5 % of the
-  mandated size) is accepted, because a landed fill can sit a fraction of
-  a percent below the mandate. The receipt always prints the exact position
-  delta and names the broker row it matched.
+- Execution is never written on the agent's word: every executable
+  directive mandates an exposure change, and connector positions are
+  compared across the run before `EXECUTED` is recorded (opt out
+  per-operations with `BRIDGE_SKIP_FILL_CHECK=1`). A baseline that cannot
+  be read is not a flat position: if the pre-run positions query fails, the
+  receipt is `FAILED / fill_verification_unavailable`, because a delta
+  against an invented zero would confirm a run that placed nothing. The two
+  shapes the
+  bridge accepts state their mandate differently, and both are verified:
+  - a directive carrying an `execution_request` is checked as written. An
+    agent that exits 0 without a matching fill is `FAILED` with reason
+    `order_not_filled`; a fill that moved the position but landed short of
+    the mandate is `FAILED` with `partial_fill`. A shortfall within
+    `BRIDGE_FILL_TOLERANCE_PCT` (default 0.5 % of the mandated size) is
+    accepted, because a landed fill can sit a fraction of a percent below
+    the mandate;
+  - a directional directive (the shape the Hermès contract's OUTPUT JSON
+    SCHEMA emits) states only the direction and leaves the size to the
+    model, so it is checked as a direction: the target position must move
+    the way `action_directive` asks. A flat position is
+    `FAILED / order_not_filled` and the opposite movement is
+    `FAILED / wrong_direction`.
+  Broker rows are matched across symbol dialects (`BTC/USD` comes back as
+  `BTCUSD`, `AAPL.US` as `AAPL`). The receipt always prints the exact
+  position delta and names the broker row it matched.
 - `BRIDGE_DRY_RUN=1` logs what would run instead of invoking the agent.
 
 Modes:
@@ -197,6 +210,42 @@ def canonical_identity(data: dict) -> str:
     if isinstance(execution, dict) and execution.get("symbol"):
         return qualify_us_symbol(execution["symbol"])
     return qualify_us_symbol(data.get("target_asset", ""))
+
+
+def exposure_mandate(data: dict) -> dict | None:
+    """The exposure change a directive mandates, in the form it states it.
+
+    Two shapes reach the EXECUTE path and both are verified, because both
+    mandate a change:
+
+    - an `execution_request` states the order itself and is checked as written
+      (symbol / side / qty);
+    - a directional directive states only `action_directive`, which is what the
+      Hermès contract's market schema emits. The size is left to the model by
+      design (prompt rule 2 sizes it under the gross-notional cap), so the
+      mandate is the direction alone — the returned dict carries
+      `direction_only` for `verify_fill`.
+
+    `None` means the directive mandates no exposure change at all: nothing to
+    verify. Before this existed, the second shape was executed and recorded
+    `EXECUTED` on the agent's exit code, which is the verdict the fill check was
+    built to stop being taken on trust.
+    """
+    execution = data.get("execution_request")
+    if isinstance(execution, dict):
+        return execution
+    directions = {
+        "INCREASE_LONG_SENSITIVITY": "BUY",
+        "INCREASE_SHORT_SENSITIVITY": "SELL",
+    }
+    side = directions.get(str(data.get("action_directive") or ""))
+    if side is None:
+        return None
+    return {
+        "symbol": canonical_identity(data),
+        "side": side,
+        "direction_only": True,
+    }
 
 
 def env_setting(name: str, default: str) -> str:
@@ -480,7 +529,12 @@ def query_positions(cfg: BridgeConfig) -> dict[str, float] | None:
 def verify_fill(
     cfg: BridgeConfig, execution: dict, pre_positions: dict | None
 ) -> dict:
-    """Confirm a mandated execution_request actually landed.
+    """Confirm the exposure change a directive mandated actually landed.
+
+    `execution` is what `exposure_mandate` returned: an `execution_request`
+    (checked as written) or a directional mandate carrying `direction_only`
+    (checked by direction — see `_direction_verdict`, which is why the qty
+    math below is never reached with a missing size).
 
     Returns {"ok": bool, "reason": str | None, "detail": str}. Runs the
     connector positions query itself (the post-run state).
@@ -488,6 +542,21 @@ def verify_fill(
     symbol = str(execution.get("symbol") or "").upper()
     side = str(execution.get("side") or "").upper()
     qty = _as_float(execution.get("qty")) or 0.0
+    if pre_positions is None:
+        # `query_positions` documents None as "unverifiable", and a missing
+        # BASELINE is not a flat position: `before` would default to 0, so a
+        # position that was already held reads as a rise and a run that placed
+        # nothing would report `ok: true`. Fail closed rather than invent a
+        # baseline.
+        return {
+            "ok": False,
+            "reason": "fill_verification_unavailable",
+            "detail": (
+                "pre-run connector positions query failed; a delta cannot be "
+                "measured without a baseline, so the mandated exposure change "
+                "is unconfirmed"
+            ),
+        }
     post_positions = query_positions(cfg)
     if post_positions is None:
         return {
@@ -501,6 +570,11 @@ def verify_fill(
     row_key, after = _position_row(post_positions, symbol)
     before = _position_qty(pre_positions or {}, symbol)
     delta = after - before
+    row_note = ""
+    if row_key is not None and row_key.strip().upper() != symbol.strip().upper():
+        row_note = f" [broker row '{row_key}']"
+    if execution.get("direction_only"):
+        return _direction_verdict(symbol, side, before, after, delta, row_note)
     # Dust is not a position, and a mandated size is not exact: Alpaca paper
     # delivered 0.0009975 BTC for a mandated 0.001 (in-kind fee, lot rounding,
     # or a partial fill — the receipt does not distinguish them). The allowance
@@ -531,9 +605,6 @@ def verify_fill(
             "reason": "invalid_execution_request",
             "detail": f"side '{side}' is not BUY or SELL",
         }
-    row_note = ""
-    if row_key is not None and row_key.strip().upper() != symbol.strip().upper():
-        row_note = f" [broker row '{row_key}']"
     detail = (
         f"{symbol}: {before:g} -> {after:g} (delta {delta:g}){row_note}; {expected}"
     )
@@ -548,6 +619,42 @@ def verify_fill(
         "reason": None if ok else ("partial_fill" if landed else "order_not_filled"),
         "detail": detail,
     }
+
+
+def _direction_verdict(
+    symbol: str, side: str, before: float, after: float, delta: float, row_note: str
+) -> dict:
+    """Verdict for a mandate that names a direction but no size.
+
+    Kept out of the qty branches on purpose. With no `qty` the BUY comparison
+    reads `delta >= 0 - tolerance`, which a position that never moved passes —
+    the one verdict this whole check exists to prevent. Direction is what this
+    shape of directive actually mandates, so direction is what is judged: a
+    flat position is `order_not_filled` (the agent's order never landed), and a
+    position that moved the wrong way is `wrong_direction` (it landed and did
+    something else).
+    """
+    dust = 1e-6
+    if side == "BUY":
+        ok = delta > dust
+        expected = f"expected {symbol} exposure to rise (was {before:g})"
+    elif side == "SELL":
+        ok = delta < -dust
+        expected = f"expected {symbol} exposure to fall (was {before:g})"
+    else:
+        return {
+            "ok": False,
+            "reason": "invalid_execution_request",
+            "detail": f"side '{side}' is not BUY or SELL",
+        }
+    detail = (
+        f"{symbol}: {before:g} -> {after:g} (delta {delta:g}){row_note}; {expected}"
+    )
+    if ok:
+        return {"ok": True, "reason": None, "detail": detail}
+    reason = "order_not_filled" if abs(delta) <= dust else "wrong_direction"
+    detail += "; connector positions do not show the mandated direction"
+    return {"ok": False, "reason": reason, "detail": detail}
 
 
 # ---------------------------------------------------------------------------
@@ -1167,9 +1274,9 @@ def process_file(cfg: BridgeConfig, path: Path) -> None:
         LOG.info("dry-run: would execute %s (%d chars)", directive_id, len(prompt))
         return
 
-    execution = data.get("execution_request")
+    mandate = exposure_mandate(data)
     pre_positions = None
-    if execution is not None and not cfg.skip_fill_check:
+    if mandate is not None and not cfg.skip_fill_check:
         pre_positions = query_positions(cfg)
         if pre_positions is None:
             LOG.warning(
@@ -1180,8 +1287,8 @@ def process_file(cfg: BridgeConfig, path: Path) -> None:
     outcome = fragment["status"]
     extra: dict = {"prompt_tail": prompt[-500:], **fragment}
 
-    if execution is not None and outcome == "EXECUTED" and not cfg.skip_fill_check:
-        verification = verify_fill(cfg, execution, pre_positions)
+    if mandate is not None and outcome == "EXECUTED" and not cfg.skip_fill_check:
+        verification = verify_fill(cfg, mandate, pre_positions)
         extra["fill_verification"] = verification
         if not verification["ok"]:
             outcome = "FAILED"

@@ -73,7 +73,7 @@ CONTRACT fields. See `sample-directive.json`.
 | `action_directive` | yes | `INCREASE_LONG_SENSITIVITY` / `INCREASE_SHORT_SENSITIVITY` / `NO_ACTION` / `PAUSE_TRADING` / `DE_RISK` |
 | `reasoning` | yes | free text |
 | `mode` | no (default `PAPER`) | `PAPER` / `PAPER_SYNTHETIC_TEST` / `RESEARCH` — anything else is rejected |
-| `execution_request` | no | For synthetic tests only: `{symbol, side, qty, order_type}` executed verbatim. **Forbidden in `RESEARCH` mode** |
+| `execution_request` | no | `{symbol, side, qty, order_type}` executed verbatim and **size-verified**. Absent, the mandate is the direction alone (`action_directive`) and the fill check verifies direction instead of size — see “Receipts”. **Forbidden in `RESEARCH` mode** |
 | `research_question` | for `RESEARCH` mode | Free-text question the agent answers with read-only tools |
 | `version` | no | schema version (currently 2) |
 
@@ -107,13 +107,17 @@ CONTRACT fields. See `sample-directive.json`.
 `status` (`EXECUTED` / `NO_EXECUTION` / `RESEARCH_DONE` /
 `RESEARCH_TIMEOUT` / `RESEARCH_FAILED` / `GATED` / `REJECTED` / `FAILED` /
 `TIMEOUT` / `DRY_RUN`), `processed_at`, `connector`, the agent's JSON result
-(`run_id`, order, account/position state) and error tails. For directives
-that carry an `execution_request`, the receipt also includes a
-`fill_verification` block (connector positions before/after the run). A
-`FAILED` status with reason `order_not_filled` means the agent finished
-successfully but the mandated order did not land; `partial_fill` means
-something landed, short of the mandate. The bridge no longer trusts the
-agent's exit code alone for mandated orders. The block always carries the
+(`run_id`, order, account/position state) and error tails. Every executed
+directive — one carrying an `execution_request` **or** a directional one — is
+also verified against connector positions before/after the run, and the receipt
+carries the `fill_verification` block. A `FAILED` status with reason
+`order_not_filled` means the agent finished successfully but the mandated
+exposure change did not land; `partial_fill` means something landed, short of a
+mandated size; `wrong_direction` means the position moved *against*
+`action_directive`; `fill_verification_unavailable` means a connector positions
+query failed, so there is no baseline or no post-run state to compare against —
+a receipt that proves nothing about the broker. The bridge no longer trusts the
+agent's exit code alone for any executable directive. The block always carries the
 exact before → after delta and names the broker row it matched
 (`[broker row 'BTCUSD']`), so a spelling difference between the directive
 symbol and the venue's row is visible instead of looking like a missing
@@ -197,6 +201,13 @@ docker exec -u 0 bridge python /app/bridge.py --archive --check   # report only
 docker exec -u 0 bridge python /app/bridge.py --archive
 ```
 
+That `-u 0` is load-bearing, not cosmetic: the first archive creates
+`directives/archive/` **root-owned** (observed `drwxr-xr-x root root` on
+2026-09-19), and a later run as `vibe` has no write permission inside it — every
+file then logs `could not archive <name>: [Errno 13] Permission denied`, is
+printed under `FAILED`, and the command exits non-zero
+(`return 1 if failed else 0`) without archiving anything.
+
 Rules it follows:
 
 - A directive is archived when its receipt exists with any status **except**
@@ -224,6 +235,32 @@ The loop is closed when a directive **Hermès wrote** has a receipt. The
 `DIR-SYNTH-*` files are operator-made samples: they prove the bridge executes an
 order, not that Hermès *delivers* one (règle 8 — delivery is the file appearing
 in `/opt/data/bridge/directives/`).
+
+Where the evidence actually stands (2026-09-19):
+
+- **Delivery path: open, by measurement.** Hermès can write the exchange volume
+  and holds the rules — both checked, see the `tee` entry under Troubleshooting.
+  Nothing on the permission side is blocking a directive.
+- **Contract-shaped ids have receipts**: `DIR-20260917-214500-001` (quoted
+  below) and, observed 2026-09-19T20:39Z, `DIR-20260919-203800-001` — a
+  `mode: PAPER` / `target_asset: SPY` directive that appeared in the exchange
+  volume owned by `1000:1000` and was classified `NO_EXECUTION` within 21 s of
+  the bridge's next tick (`action_directive: NO_ACTION`, receipt written under
+  its own id). Both prove the **delivery and readback half** of règle 8 under
+  Hermès' own id shape; both stop short of an order because the decision taken
+  was not to trade.
+- **Nothing in this repo schedules Hermès' cycle**: the compose service is
+  `command: ["gateway", "run"]` (the dashboard), and no cron or timer unit for
+  it exists under `deploy/oci/`. Per contract règle 10 the cycle starts with a
+  session, so an unchanged inbox between sessions is expected — it is not
+  evidence of a broken bridge.
+- **Still unobserved**: (a) a Hermès directive that requests a change
+  (`INCREASE_*`) reaching `EXECUTED` with `fill_verification.ok: true` — as
+  noted above, the contract's market schema carries no `execution_request`, so
+  that receipt will be verified **by direction**, not by size; (b) the règle 8
+  half — what Hermès *did* with the receipt. (a) is a file you can read here;
+  (b) lives only in Hermès' own memory and session, so ask it in the dashboard
+  what it recorded for a given id.
 
 ```bash
 # 1. in the Hermès dashboard, ask for one cycle, e.g.
@@ -274,16 +311,55 @@ right, and both have bitten in production:
   `partial_fill`. On this venue `0` is unusable for crypto: with the observed
   -0.25 % haircut, exact-match discipline reads every crypto buy that lands as
   `partial_fill`. Keep `0` for equities, where fills have been exact.
+- **A run can be refused once and still land — read the failing call's KIND,
+  not its presence.** Observed 2026-09-19T19:29Z
+  (`DIR-SYNTH-CRYPTO-20260919-192912-001`): `EXECUTED`, `ok: true`,
+  `0.00399 -> 0.0049875` — and the run's `grounding_evidence.json` still
+  carries one rejected call:
 
-But when the directive
-carries **no** `execution_request`, the whole check is skipped
-(`if execution is not None and outcome == "EXECUTED" and not cfg.skip_fill_check`),
-no `fill_verification` is written, and `EXECUTED` then means only "the agent
-process exited 0". The contract mandates an `execution_request` for any exposure
-change, so the field's presence is the evidence that the mandate was honoured —
-and its absence is a receipt that proves nothing about the broker.
-`BRIDGE_SKIP_FILL_CHECK=1` removes the field too: a receipt produced in that mode
-can never prove an execution.
+  ```json
+  { "tool": "trading_place_order", "status": "unavailable",
+    "error_code": "null",
+    "message": "{\"code\":42210000,\"message\":\"invalid crypto time_in_force\"}",
+    "recorded_at": "2026-09-19T19:29:45.104687Z" }
+  ```
+
+  — ten seconds before the fill (`executed_at` 19:30:06Z). The model retried
+  the order with a parameter the venue accepts, with no resolver call and
+  without ending the run. `run_evidence(root, limit=8)` copies this list from
+  the artifact, so the list is not a pass/fail signal — and note that the copy
+  renders **every scalar as a clipped string** (`_bounded`): a JSON `null`
+  reads back as `"null"`, `10` as `"10"`. The venue's own words are in
+  `message`, never in `error_code`:
+
+  | `tool_failures` | What it means | Did the order reach the broker? |
+  |---|---|---|
+  | empty | the first attempt was accepted | yes |
+  | `identity_required` / `identity_mismatch` / `invalid symbol: <spelling>` | the gate or the venue refused the **spelling** | no — the case that needs an autopsy |
+  | `invalid crypto time_in_force`, other venue **parameter** errors | the symbol was accepted; the venue refused an order parameter | yes, on the model's own retry |
+
+  An empty list is the cleanest result, never the acceptance criterion:
+  acceptance is the delta in `fill_verification`.
+
+A directional directive (no `execution_request`) is verified too — as a
+**direction**. `action_directive` says which way the exposure must move and the
+model sizes the order itself (prompt rule 2 sizes it under the gross-notional
+cap), so there is no qty to compare against and the check judges the sign of the
+delta. A flat position is `FAILED / order_not_filled`; a position that moved the
+other way is `FAILED / wrong_direction`; an unreadable pre-run baseline is
+`FAILED / fill_verification_unavailable`, never a baseline assumed to be zero —
+a position that was already held would otherwise read as a rise.
+
+That is not a convenience. The contract's market schema (`hermes-contract.md`,
+OUTPUT JSON SCHEMA) carries **no** `execution_request` — the word appears once
+in the whole contract, to forbid it in `RESEARCH` — so the first Hermès
+directive that asks for a change takes exactly this path. Judged through the qty
+branches instead, a missing `qty` reads as `0`, and the BUY comparison
+`delta >= 0 - tolerance` is satisfied by a position that never moved: the one
+verdict this whole section exists to prevent, and the exact shape of the
+2026-09-18T16:55Z run (agent exits 0, claims success, places nothing).
+`BRIDGE_SKIP_FILL_CHECK=1` still removes the block entirely — a receipt produced
+in that mode can never prove an execution.
 
 ### What a failed receipt can say about itself
 
@@ -296,8 +372,8 @@ directory the agent reported (`agent_result.run_dir`):
 |---|---|---|
 | `terminal_state` | `state.json` | the run's terminal state. In the observed case, 25 bytes: `{"status": "success"}`. |
 | `identity` | `artifacts/grounding_evidence.json` | the identity the ledger actually locked — what a mismatch is measured against. |
-| `tool_failures` | same | every tool call with its `error_code`. A gate rejection the CLI never prints. |
-| `rejected_tool_calls` | same, when `tool_failures` is absent | shape-agnostic fallback: any object carrying a non-null `error_code`. |
+| `tool_failures` | same | the run's failed tool calls — the gate or venue rejections the CLI never prints. Copied through `_bounded`, so every scalar is a clipped string (`null` → `"null"`) and the real text sits in each entry's `message`. |
+| `rejected_tool_calls` | same, when `tool_failures` is absent | shape-agnostic fallback (`_scan_error_entries`): every nested object whose raw `error_code` is truthy — keyed differently across ledger versions. |
 | `files` | the run directory | what the run left behind, so you know whether an autopsie is even possible. |
 
 Without it, `stdout_tail` (the CLI's one-line status: `status`, `run_id`,
@@ -433,6 +509,15 @@ fractional fill verifies exactly like a whole-share one.
   `fill_verification.ok: true`). `broker_tool_symbol()` therefore strips a
   venue suffix from an equity and passes a pair through untouched, and rule 3
   tells the agent not to mistake a strict read path for an identity error.
+- **Crypto orders carry a `time_in_force` the venue must accept.** Alpaca's
+  crypto order path rejects the equity default with
+  `{"code":42210000,"message":"invalid crypto time_in_force"}` (observed
+  2026-09-19T19:29:45Z, `trading_place_order`). It is a **parameter** refusal,
+  not an identity one: the symbol gate had already accepted the mandate, and
+  the run filled on the model's own retry seconds later — which is why the
+  bridge prompt deliberately names no value for this field. Prescribing one
+  from a single observation is exactly the mistake the `BTCUSD` episode above
+  cost; the venue's own message is the only authority here so far.
 - **Binance spot testnet (`testnet.binance.vision`)**: upstream Vibe-Trading
   ships the `binance-paper-trade` profile (ccxt → testnet host) — the
   testnet is a developer sandbox: sign in with a **GitHub account** on
@@ -495,7 +580,7 @@ fractional fill verifies exactly like a whole-share one.
 | `BRIDGE_MAX_QTY` | `3` | Reserved per-order quantity cap (not yet embedded in the prompt — discretionary orders are capped by gross notional ≈ $5k of the $100k paper account; mandated `execution_request` orders are operator-sized) |
 | `BRIDGE_DRY_RUN` | `0` | `1` logs the prompt, never invokes the agent |
 | `BRIDGE_ALLOW_RESEARCH` | `0` | `1` lets `mode: RESEARCH` commissions run as read-only agent tasks |
-| `BRIDGE_SKIP_FILL_CHECK` | `0` | `1` trusts the agent's exit code for `execution_request` directives (disables the positions-based fill verification — not recommended) |
+| `BRIDGE_SKIP_FILL_CHECK` | `0` | `1` trusts the agent's exit code for every executable directive (disables the positions-based fill verification — not recommended) |
 | `BRIDGE_FILL_TOLERANCE_PCT` | `0.005` | Accepted shortfall between the mandated `qty` and the fill, as a fraction of `qty` (in-kind venue fees, lot rounding; floor `1e-6`). `0` = exact match. Beyond it, a receipt that moved the position is `FAILED` / `partial_fill` |
 | `BRIDGE_VIBE_TRADING_BIN` | `vibe-trading` | CLI binary path |
 | `BRIDGE_LOG_LEVEL` | `INFO` | Log level. `DEBUG` also shows the per-tick "already processed; skipping" lines |
@@ -590,7 +675,15 @@ The bridge is intentionally the *cheapest* container in the stack:
   `vibe` and may only *read* directives. Drop test directives from the host
   with `docker cp` (daemon-side copy, as in the runbook above), never
   `docker exec … tee`. Hermès writes there through its own container as uid
-  1000.
+  1000. **Measured 2026-09-19, which closes the permission hypothesis**:
+  `bash push-contract.sh --check` reports the persisted contract byte-identical
+  to the repo copy (10818 bytes, rules 8/9/10 present), and the write test run
+  *as Hermès* — `docker exec hermes sh -c 'touch
+  /opt/data/bridge/directives/.wtest && rm /opt/data/bridge/directives/.wtest
+  && echo WRITABLE'` — returns `WRITABLE`. The directory is owned by
+  `hermes hermes` because `setup.sh` writes `HERMES_UID=$(id -u)` and the
+  compose default is 1000. A silent uid mismatch is therefore **not** why an
+  inbox would stay empty; ask whether a cycle ran at all.
 - **Run artifact shows `tool_failures` with `error_code: identity_required`
   (agent still exits 0)**: the upstream Vibe-Trading identity gate
   (`vibe-trading-ai@v0.1.14`, `agent/src/agent/grounding.py`) blocks any
@@ -611,8 +704,11 @@ The bridge is intentionally the *cheapest* container in the stack:
   forbids reporting success for an un-landed order. Diagnose a fresh run
   with:
   `docker exec bridge python3 -c "import json;d=json.load(open('/home/vibe/.vibe-trading/runs/<run_id>/artifacts/grounding_evidence.json'));print(json.dumps({'identity':d.get('identity'),'tool_failures':d.get('tool_failures')},indent=1))"`
-  — expect identity `locked` from the start (`source: user_message`) and an
-  empty `tool_failures`.
+  — expect identity `locked` from the start (`source: user_message`). An empty
+  `tool_failures` means the first attempt was accepted; a *non-empty* one is not
+  automatically a fault, so read the failing call's kind (the table under "What
+  proves a directive was really executed") — a landed buy can carry a
+  venue-parameter rejection the model retried past.
 - **Run artifact `tool_failures` shows `{"code":42210000,"message":"asset
   \"AAPL.US\" not found"}` from `trading_place_order`**: the identity gate
   passed (identity `locked`) but the *symbol dialect* was wrong. Upstream
@@ -749,10 +845,12 @@ The bridge is intentionally the *cheapest* container in the stack:
 ## Limits of this version (declare them)
 
 - Execution is delegated to the agent's judgment within the prompt's
-  guardrails; the bridge does not re-price orders. For directives that
-  carry an `execution_request` it DOES verify the fill against connector
-  positions and fails the receipt when the mandated order did not land;
-  discretionary directives (no `execution_request`) are not fill-checked.
+  guardrails; the bridge does not re-price orders. It DOES verify every
+  executable directive against connector positions before writing `EXECUTED` —
+  a **size** for an `execution_request`, a **direction** for a directional
+  directive. What a direction check cannot prove is how much was bought: a
+  token-sized increase and a correctly sized one produce the same kind of
+  `fill_verification` block, because there is no qty to compare against.
 - Research commissions are read-only by *prompt contract*, not by sandbox:
   the agent is trusted to stay out of order tools. Keep
   `BRIDGE_ALLOW_RESEARCH=0` unless you accept that trust boundary.
