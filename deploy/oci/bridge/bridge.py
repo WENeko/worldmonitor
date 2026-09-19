@@ -140,23 +140,27 @@ def qualify_us_symbol(symbol: str) -> str:
 
 
 _BROKER_NATIVE_SUFFIXED_RE = re.compile(r"^([A-Z0-9&]+)\.([A-Z]{2})$")
-_PAIR_RE = re.compile(r"^([A-Z0-9]{2,10})/([A-Z0-9]{2,10})$")
 
-# Venues that do not accept the canonical slashed pair, keyed by the connector
-# profile's prefix (so `alpaca-paper-trade` matches and every other profile is
-# left untouched — ccxt-based ones such as `binance-paper-trade` take the
-# unified `BASE/QUOTE` form).
+# A slashed pair is NOT rewritten, and that is a measured decision rather than a
+# default. On 2026-09-19 the bridge translated the mandate's `BTC/USD` into
+# Alpaca's own label `BTCUSD`, and the run that followed named both layers:
 #
-# Alpaca, measured on 2026-09-18 against this stack:
-#   connector quote BTCUSD   -> accepted
-#   connector quote BTC/USD  -> Connector quote failed: {"message":"code=400,
-#                               message=invalid symbol: BTC/USD"}
-# The same 400 sits in the artifact of the 16:55Z run, whose only order call was
-# then refused by the identity gate — the order never reached the broker. The
-# venue's own positions rows say `BTCUSD`, and every landed crypto order in this
-# stack must have used that spelling, since the slashed form is never accepted.
-_VENUE_PAIR_DIALECTS = {"alpaca": "{base}{quote}"}
-
+#   identity.authorized_symbols == ["BTC-USD"]        (locked from the prompt)
+#   trading_place_order -> identity_mismatch          (19:06:14, 19:06:18)
+#   trading_place_order -> 42210000 asset "BTC-USD" not found  (19:06:44)
+#
+# The run identity ledger folds the pair onto the dash form and refuses any
+# spelling that does not fold onto it, so `BTCUSD` never passes the gate; and
+# the dash form, once the model tried it to satisfy the gate, was refused by the
+# venue verbatim. The mandate's own `BTC/USD` is the only form that satisfies
+# both — which is also what every landed crypto order in this stack used
+# (17:15Z, 18:30Z, 18:46Z, all `EXECUTED` with `fill_verification.ok: true`).
+#
+# The venue's QUOTE path is stricter than its order path and does refuse the
+# pair (`code=400 invalid symbol: BTC/USD`, reproduced in a run artifact and via
+# `connector quote`). That is a read-layer limitation, not an identity problem;
+# rule 3 says so explicitly, because the 16:55Z run's order refusal was preceded
+# by exactly that 400 and a resolver call the model made to "repair" it.
 
 def broker_tool_symbol(canonical: str, connector: str = "") -> str:
     """Broker-native symbol for connector tool arguments.
@@ -173,25 +177,14 @@ def broker_tool_symbol(canonical: str, connector: str = "") -> str:
     identity (grounding ``_match_authorized_symbol``). Strip a trailing
     two-letter venue suffix.
 
-    A slashed pair is a second, connector-dependent rewrite: Alpaca refuses
-    ``BTC/USD`` outright and takes ``BTCUSD``, so a mandate written as a pair is
-    translated to the venue's spelling. Passing the directive's spelling
-    through unchanged is what made a run try to repair it at runtime, which is
-    how the identity gate ended up refusing an order that was never placed.
+    A slashed pair passes through unchanged: both the identity ledger and the
+    venue's order path take the mandate's spelling, and rewriting it to
+    ``BTCUSD`` was measured to break the identity gate (see the note above).
+    ``connector`` is accepted for call-site compatibility; no rule currently
+    keys off it.
     """
+    del connector  # kept in the signature so existing callers keep working
     s = str(canonical or "").strip().upper()
-    pair = _PAIR_RE.fullmatch(s)
-    if pair:
-        template = next(
-            (
-                value
-                for prefix, value in _VENUE_PAIR_DIALECTS.items()
-                if connector.startswith(prefix)
-            ),
-            None,
-        )
-        if template is not None:
-            return template.format(base=pair.group(1), quote=pair.group(2))
     match = _BROKER_NATIVE_SUFFIXED_RE.fullmatch(s)
     if match and match.group(1):
         return match.group(1)
@@ -675,10 +668,10 @@ def build_prompt(cfg: BridgeConfig, data: dict) -> str:
         broker_tool_symbol(instrument, cfg.connector) if instrument else ""
     )
     # An identity the venue does not accept verbatim needs the two-dialect note:
-    # a venue-suffixed equity (AAPL.US -> AAPL) and, on Alpaca, a crypto pair
-    # (BTC/USD -> BTCUSD). Everything else is its own broker-native symbol, so a
-    # single dialect applies and the note must not tell the agent to "never
-    # pass" the only correct symbol.
+    # today that is only a venue-suffixed equity (AAPL.US -> AAPL). A slashed
+    # pair is deliberately passed through, so it is its own broker-native
+    # symbol and the note must not tell the agent to "never pass" the only
+    # correct spelling.
     same_symbol = bool(instrument) and broker_symbol == instrument
     # Slashed pairs differ from venue-suffixed tickers in one more way: a
     # resolver cannot lock them. `search_symbol("BTC/USD")` was recorded
@@ -686,11 +679,23 @@ def build_prompt(cfg: BridgeConfig, data: dict) -> str:
     # 2026-09-18T16:55Z), so prescribing a resolver as the recovery from an
     # identity error is prescribing the failure.
     is_pair = "/" in instrument
-    rejection = (
-        f"the venue refuses verbatim (Alpaca answers code=400, message=invalid "
-        f"symbol: {instrument})"
+    # Only a venue-suffixed equity still gets a different broker-native symbol,
+    # so `rejection` describes that case alone; a pair never reaches the
+    # two-dialect note.
+    rejection = "the broker rejects (Alpaca error 42210000 asset not found)"
+    # The read layer is stricter than the order layer on this venue: the quote
+    # tool refuses the pair the order tool accepts (measured — see
+    # `broker_tool_symbol`). The 16:55Z run's order refusal was preceded by
+    # exactly that 400 and by a resolver call the model made to "repair" it, so
+    # the caveat is stated rather than left to the model's judgement.
+    pair_caveat = (
+        " The venue's QUOTE path may refuse this pair (Alpaca answers code=400,\n"
+        f"   message=invalid symbol: {instrument}) while its ORDER path accepts\n"
+        "   it. A quote refusal is a read-layer limitation, not an identity\n"
+        "   error: do not resolve the symbol and never re-spell the order because\n"
+        "   of it — check state with trading_account / trading_positions instead."
         if is_pair
-        else "the broker rejects (Alpaca error 42210000 asset not found)"
+        else ""
     )
     # One recovery clause per dialect. Prescribing a resolver is only correct
     # where the resolver is what locks a DIFFERENT, accepted spelling (a
@@ -739,7 +744,7 @@ def build_prompt(cfg: BridgeConfig, data: dict) -> str:
             f"canonicalized by the operator before the run started. Connector "
             f"tools (trading_place_order, trading_quote, trading_positions, "
             f"trading_history, ...) take this exact symbol. Do NOT re-resolve "
-            f"it with search_symbol: it is already canonical."
+            f"it with search_symbol: it is already canonical.{pair_caveat}"
         )
     else:
         identity_note = ""
@@ -757,14 +762,15 @@ def build_prompt(cfg: BridgeConfig, data: dict) -> str:
         )
     elif instrument:
         # The recovery clause must not contradict the sentence above it: for a
-        # broker-native identity (BTC/USDT, GC=F) a resolver call locks a
+        # broker-native identity (BTC/USD, GC=F) a resolver call locks a
         # different spelling, after which the mandate's spelling is refused on
         # every retry. `same_symbol` is true here, so `recovery` is the
-        # no-resolver variant.
+        # no-resolver variant. `pair_caveat` (empty for a plain ticker) keeps a
+        # strict read path from being mistaken for an identity error.
         rule3 = (
             f"3. Run-scoped identity is locked on \"{instrument}\" from the start (rule:\n"
             f"   RUN INSTRUMENT IDENTITY above). Connector tool calls (orders, quotes,\n"
-            f"   positions) must pass exactly this symbol: \"{instrument}\". Never call\n"
+            f"   positions) must pass exactly this symbol: \"{instrument}\".{pair_caveat} Never call\n"
             f"   search_symbol for this instrument, and never trade any other symbol or\n"
             f"   venue. If a connector tool returns an identity gate error\n"
             f"   (identity_required / identity_conflict / identity_mismatch):\n"
