@@ -388,3 +388,46 @@ test('failure timing separates each request duration from total elapsed time', a
   assert.match(logs.join('\n'), /attempt=1 elapsedMs=250 attemptElapsedMs=250/);
   assert.match(logs.join('\n'), /attempt=2 elapsedMs=1000 attemptElapsedMs=250/);
 });
+
+test('failure phase timings distinguish late headers from a stalled body and reset on retry', async t => {
+  let clock = 0;
+  const logs = [];
+  t.mock.method(performance, 'now', () => clock);
+  t.mock.method(console, 'warn', (...args) => logs.push(args.join(' ')));
+  t.mock.method(console, 'log', (...args) => logs.push(args.join(' ')));
+  t.mock.method(globalThis, 'setTimeout', callback => { clock += 500; queueMicrotask(callback); });
+  const initial = await run(fixture());
+  const transport = fixture((source, attempt) => {
+    if (source !== 'eonet') return;
+    clock += attempt === 1 ? 14000 : 100;
+    return { ok: true, json: async () => {
+      clock += attempt === 1 ? 1000 : 14900;
+      throw new DOMException('private body content', 'TimeoutError');
+    } };
+  });
+  const result = await fetchNaturalEvents({
+    now: NOW + 1000, previousSources: initial._sourceSnapshots, fetchFn: transport.fetchFn,
+    fetchHkoWarningsFn: async () => ({ warnings: [], dataAvailable: true, sourceDecision: { status: 'used' } }),
+  });
+  const output = logs.join('\n');
+  assert.match(output, /attempt=1 elapsedMs=15000 attemptElapsedMs=15000 headersElapsedMs=14000 bodyElapsedMs=1000/);
+  assert.match(output, /attempt=2 elapsedMs=30500 attemptElapsedMs=15000 headersElapsedMs=100 bodyElapsedMs=14900/);
+  assert.doesNotMatch(output, /private body content/);
+  assert.equal(transport.calls.get('eonet'), 2);
+  for (const [source, count] of transport.calls) if (source !== 'eonet') assert.equal(count, 1, source);
+  assert.equal(result._sourceSnapshots.eonet.fetchedAt, NOW);
+  assert.equal(result._sourceSnapshots.eonet.retainedUntil, initial._sourceSnapshots.eonet.retainedUntil);
+});
+
+test('request failures omit unobserved phase timings and successful responses add no diagnostics', async t => {
+  const logs = [];
+  t.mock.method(console, 'warn', (...args) => logs.push(args.join(' ')));
+  t.mock.method(console, 'log', (...args) => logs.push(args.join(' ')));
+  const transport = fixture((source, attempt) => {
+    if (source === 'eonet' && attempt === 1) throw new TypeError('fetch failed');
+  });
+  const result = await run(transport);
+  assert.ok(result.events.some(item => item.id === event.id));
+  assert.equal(result._sourceSnapshots.eonet.fetchedAt, NOW);
+  assert.doesNotMatch(logs.join('\n'), /headersElapsedMs|bodyElapsedMs|attempt=2/);
+});

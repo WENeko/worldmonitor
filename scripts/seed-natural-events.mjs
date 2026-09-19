@@ -194,12 +194,14 @@ async function fetchEventSourceJson(source, url, fetchFn) {
     const attemptStarted = performance.now();
     const dispatcher = ipv4Retry ? new Agent({ connect: { family: 4, timeout: SOURCE_REQUEST_TIMEOUT_MS } }) : undefined;
     let stage = 'request';
+    let headersReceivedAt;
     try {
       const res = await fetchFn(url, {
         headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
         signal: AbortSignal.timeout(Math.min(SOURCE_REQUEST_TIMEOUT_MS, remaining)),
         ...(dispatcher ? { dispatcher } : {}),
       });
+      headersReceivedAt = performance.now();
       if (!res.ok) {
         stage = 'http';
         const error = httpRetryError(res, { remainingBudgetMs: deadline - performance.now() });
@@ -218,6 +220,8 @@ async function fetchEventSourceJson(source, url, fetchFn) {
       if (cause instanceof SyntaxError) kind = 'INVALID_JSON';
       if (stage === 'http') kind = `HTTP_${cause.status}`;
       const finished = performance.now();
+      const phaseTimings = headersReceivedAt === undefined ? ''
+        : ` headersElapsedMs=${Math.round(headersReceivedAt - attemptStarted)}${stage === 'body' ? ` bodyElapsedMs=${Math.round(finished - headersReceivedAt)}` : ''}`;
       let details = '';
       if (transport && stage !== 'http') {
         try {
@@ -226,7 +230,7 @@ async function fetchEventSourceJson(source, url, fetchFn) {
           details = ' details={"unavailable":true}';
         }
       }
-      const error = Object.assign(new Error(`${source} ${stage} ${kind} attempt=${attempt} elapsedMs=${Math.round(finished - started)} attemptElapsedMs=${Math.round(finished - attemptStarted)}${details}`), {
+      const error = Object.assign(new Error(`${source} ${stage} ${kind} attempt=${attempt} elapsedMs=${Math.round(finished - started)} attemptElapsedMs=${Math.round(finished - attemptStarted)}${phaseTimings}${details}`), {
         nonRetryable: stage === 'http' ? cause.nonRetryable : !transport,
         retryAfterMs: cause.retryAfterMs,
       });
