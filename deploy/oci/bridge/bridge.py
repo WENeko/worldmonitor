@@ -140,24 +140,58 @@ def qualify_us_symbol(symbol: str) -> str:
 
 
 _BROKER_NATIVE_SUFFIXED_RE = re.compile(r"^([A-Z0-9&]+)\.([A-Z]{2})$")
+_PAIR_RE = re.compile(r"^([A-Z0-9]{2,10})/([A-Z0-9]{2,10})$")
+
+# Venues that do not accept the canonical slashed pair, keyed by the connector
+# profile's prefix (so `alpaca-paper-trade` matches and every other profile is
+# left untouched — ccxt-based ones such as `binance-paper-trade` take the
+# unified `BASE/QUOTE` form).
+#
+# Alpaca, measured on 2026-09-18 against this stack:
+#   connector quote BTCUSD   -> accepted
+#   connector quote BTC/USD  -> Connector quote failed: {"message":"code=400,
+#                               message=invalid symbol: BTC/USD"}
+# The same 400 sits in the artifact of the 16:55Z run, whose only order call was
+# then refused by the identity gate — the order never reached the broker. The
+# venue's own positions rows say `BTCUSD`, and every landed crypto order in this
+# stack must have used that spelling, since the slashed form is never accepted.
+_VENUE_PAIR_DIALECTS = {"alpaca": "{base}{quote}"}
 
 
-def broker_tool_symbol(canonical: str) -> str:
+def broker_tool_symbol(canonical: str, connector: str = "") -> str:
     """Broker-native symbol for connector tool arguments.
 
     Two symbol dialects exist upstream (vibe-trading-ai v0.1.14). The run
     identity ledger authorizes venue-qualified canonical symbols
     (``AAPL.US``), while the trading connector tools documented in
     agent/src/tools/trading_connector_tool.py take broker-native symbols
-    (``AAPL``, ``BTC-USDT``, ``700.HK``) and forward them verbatim to the
+    (``AAPL``, ``BTCUSD``, ``700.HK``) and forward them verbatim to the
     broker SDK. The Alpaca SDK does not strip the venue suffix, so passing
     ``AAPL.US`` to ``trading_place_order`` reaches Alpaca unchanged and is
     rejected: ``42210000 asset "AAPL.US" not found``. The identity gate
     accepts the bare ticker because it uniquely matches the locked canonical
     identity (grounding ``_match_authorized_symbol``). Strip a trailing
-    two-letter venue suffix; every other shape passes through untouched.
+    two-letter venue suffix.
+
+    A slashed pair is a second, connector-dependent rewrite: Alpaca refuses
+    ``BTC/USD`` outright and takes ``BTCUSD``, so a mandate written as a pair is
+    translated to the venue's spelling. Passing the directive's spelling
+    through unchanged is what made a run try to repair it at runtime, which is
+    how the identity gate ended up refusing an order that was never placed.
     """
     s = str(canonical or "").strip().upper()
+    pair = _PAIR_RE.fullmatch(s)
+    if pair:
+        template = next(
+            (
+                value
+                for prefix, value in _VENUE_PAIR_DIALECTS.items()
+                if connector.startswith(prefix)
+            ),
+            None,
+        )
+        if template is not None:
+            return template.format(base=pair.group(1), quote=pair.group(2))
     match = _BROKER_NATIVE_SUFFIXED_RE.fullmatch(s)
     if match and match.group(1):
         return match.group(1)
@@ -637,13 +671,55 @@ def build_prompt(cfg: BridgeConfig, data: dict) -> str:
             f"(gross exposure well under $5k of the $100k paper account)."
         )
     )
-    broker_symbol = broker_tool_symbol(instrument) if instrument else ""
-    # A venue-suffixed equity identity (AAPL.US) differs from its broker-native
-    # ticker (AAPL) — the two-dialect note below applies. Crypto (BTC/USD) and
-    # other non-suffixed shapes are their own broker-native symbol, so a single
-    # dialect applies and the note must not tell the agent to "never pass" the
-    # only correct symbol.
+    broker_symbol = (
+        broker_tool_symbol(instrument, cfg.connector) if instrument else ""
+    )
+    # An identity the venue does not accept verbatim needs the two-dialect note:
+    # a venue-suffixed equity (AAPL.US -> AAPL) and, on Alpaca, a crypto pair
+    # (BTC/USD -> BTCUSD). Everything else is its own broker-native symbol, so a
+    # single dialect applies and the note must not tell the agent to "never
+    # pass" the only correct symbol.
     same_symbol = bool(instrument) and broker_symbol == instrument
+    # Slashed pairs differ from venue-suffixed tickers in one more way: a
+    # resolver cannot lock them. `search_symbol("BTC/USD")` was recorded
+    # `ambiguous` with seven unrelated candidates and no symbol (run of
+    # 2026-09-18T16:55Z), so prescribing a resolver as the recovery from an
+    # identity error is prescribing the failure.
+    is_pair = "/" in instrument
+    rejection = (
+        f"the venue refuses verbatim (Alpaca answers code=400, message=invalid "
+        f"symbol: {instrument})"
+        if is_pair
+        else "the broker rejects (Alpaca error 42210000 asset not found)"
+    )
+    # One recovery clause per dialect. Prescribing a resolver is only correct
+    # where the resolver is what locks a DIFFERENT, accepted spelling (a
+    # venue-suffixed equity: AAPL.US -> AAPL). Everywhere else the identity is
+    # already the broker-native one, so resolving can only make it worse.
+    if is_pair:
+        recovery = (
+            f"   do NOT end the run and do NOT resolve the symbol. Retry the exact\n"
+            f"   mandated order ALONE in your next turn, still passing\n"
+            f"   \"{broker_symbol}\". A resolver call cannot lock a pair — it answers\n"
+            f"   `ambiguous` with a list of unrelated candidates — and a spelling the\n"
+            f"   venue refuses can never be repaired that way."
+        )
+    elif same_symbol:
+        recovery = (
+            f"   do NOT end the run and do NOT resolve the symbol: this identity is\n"
+            f"   already the broker-native one, and a resolver call would lock a\n"
+            f"   different spelling instead, after which \"{instrument}\" is refused\n"
+            f"   on every retry. Retry the exact mandated order ALONE in your next\n"
+            f"   turn, still passing \"{broker_symbol}\"."
+        )
+    else:
+        recovery = (
+            f"   that means you batched a resolver with a consumer call: do NOT end\n"
+            f"   the run. Call search_symbol(\"{instrument}\") ALONE in your next turn,\n"
+            f"   wait for its result, then retry the exact mandated order in a\n"
+            f"   following turn. search_symbol must never share a turn with any other\n"
+            f"   tool call."
+        )
     if instrument and not same_symbol:
         identity_note = (
             f"\nRUN INSTRUMENT IDENTITY: {instrument}\n"
@@ -652,10 +728,9 @@ def build_prompt(cfg: BridgeConfig, data: dict) -> str:
             f"NOT re-resolve it with search_symbol: it is already canonical. Two "
             f"symbol dialects apply: connector tools (trading_place_order, "
             f"trading_quote, trading_positions, trading_history, ...) take the "
-            f"broker-native symbol '{broker_symbol}' — never '{instrument}', which "
-            f"the broker rejects (Alpaca error 42210000 asset not found); the "
-            f"identity gate authorizes the bare ticker because it uniquely matches "
-            f"the locked identity."
+            f"broker-native symbol '{broker_symbol}' — never '{instrument}', "
+            f"which {rejection}. The identity gate authorizes '{broker_symbol}' "
+            f"because it uniquely matches the locked identity."
         )
     elif instrument:
         identity_note = (
@@ -676,33 +751,24 @@ def build_prompt(cfg: BridgeConfig, data: dict) -> str:
             f"   \"{instrument}\" — the identity gate authorizes \"{broker_symbol}\"\n"
             f"   because it uniquely matches the locked identity. Never call\n"
             f"   search_symbol for this instrument, and never trade any other symbol or\n"
-            f"   venue. If a connector tool still returns an identity gate error\n"
-            f"   (identity_required / identity_conflict / identity_mismatch), that\n"
-            f"   means you batched a resolver with a consumer call: do NOT end the run.\n"
-            f"   Call search_symbol(\"{instrument}\") ALONE in your next turn, wait for\n"
-            f"   its result, then retry the exact mandated order in a following turn.\n"
-            f"   search_symbol must never share a turn with any other tool call."
+            f"   venue. If a connector tool returns an identity gate error\n"
+            f"   (identity_required / identity_conflict / identity_mismatch):\n"
+            f"{recovery}"
         )
     elif instrument:
-        # The recovery clause must not contradict the sentence above it. For a
-        # broker-native identity (BTC/USD, BTC/USDT, GC=F) resolving the symbol
-        # locks the BROKER's spelling — Alpaca writes BTC/USD as BTCUSD, as its
-        # own position rows show — after which the mandate's spelling is rejected
-        # as a mismatch on every retry. Observed 2026-09-18: a crypto run whose
-        # only identity-gate rejection was `identity_mismatch` on
-        # trading_place_order, i.e. no order ever reached the broker.
+        # The recovery clause must not contradict the sentence above it: for a
+        # broker-native identity (BTC/USDT, GC=F) a resolver call locks a
+        # different spelling, after which the mandate's spelling is refused on
+        # every retry. `same_symbol` is true here, so `recovery` is the
+        # no-resolver variant.
         rule3 = (
             f"3. Run-scoped identity is locked on \"{instrument}\" from the start (rule:\n"
             f"   RUN INSTRUMENT IDENTITY above). Connector tool calls (orders, quotes,\n"
             f"   positions) must pass exactly this symbol: \"{instrument}\". Never call\n"
             f"   search_symbol for this instrument, and never trade any other symbol or\n"
             f"   venue. If a connector tool returns an identity gate error\n"
-            f"   (identity_required / identity_conflict / identity_mismatch), do NOT\n"
-            f"   end the run and do NOT resolve the symbol: retry the exact mandated\n"
-            f"   order ALONE in your next turn, still passing \"{instrument}\". The\n"
-            f"   identity is already locked above; a resolver call would lock the\n"
-            f"   broker's own spelling instead (Alpaca writes BTC/USD as BTCUSD), and\n"
-            f"   the mandated spelling would then be refused on every retry."
+            f"   (identity_required / identity_conflict / identity_mismatch):\n"
+            f"{recovery}"
         )
     else:
         rule3 = "3. Never trade any symbol other than the directive's target."

@@ -394,16 +394,31 @@ forex units. The fill guard compares float quantities with a tolerance, so a
 fractional fill verifies exactly like a whole-share one.
 
 - **Crypto on Alpaca paper (zero new setup)**: Alpaca's paper account trades
-  crypto 24/7 (`BTC/USD`, `ETH/USD`, ...) with the same key pair — confirmed
-  here rather than assumed: a `BTC/USD` buy filled and verified at 05:27Z,
-  outside the 13:30-20:00Z equity window. Drop
-  `sample-directive-crypto-alpaca.json` and keep `BRIDGE_CONNECTOR` at its
-  default — the bridge prompt already canonicalizes `BTC/USD` as the run
-  identity (no `.US` suffix is added to crypto shapes, and the symbol-dialect
-  rule collapses to a single dialect for them). The **positions row** comes
-  back in the other dialect (`BTCUSD`, no slash), which the fill guard
-  normalizes — do not compare the receipt's `detail` string with the
-  directive symbol by eye and conclude the fill is missing.
+  crypto 24/7 with the same key pair — confirmed by landed buys (`BTC/USD`
+  0.001 filled and verified at 05:27Z, then again at 17:15Z, both outside the
+  13:30-20:00Z equity window). Drop `sample-directive-crypto-alpaca.json` and
+  keep `BRIDGE_CONNECTOR` at its default.
+- **Three spellings are in play for a crypto instrument, not one.** A run's own
+  `grounding_evidence.json` (2026-09-18T16:55Z) shows all three at once: the
+  directive and the prompt say `BTC/USD`; the run identity ledger locked
+  `BTC-USD` (`identity.records[].symbol`, `source: ["user_message"]` — it
+  normalizes the prompt's slash form); the venue writes `BTCUSD` (its positions
+  row, and the `[broker row 'BTCUSD']` note a passing receipt carries). No `.US`
+  suffix is added to crypto shapes, but the symbol-dialect rule does **not**
+  collapse to a single dialect for them either — that expectation is what
+  produced the failure below.
+- **A directive spelling is not automatically a tool spelling.** In that same
+  run a `trading_quote` call with the mandated `BTC/USD` came back
+  `code=400, message=invalid symbol: BTC/USD`; the model then tried to repair
+  the spelling (a resolver query on `BTC/USD`, recorded `ambiguous` with seven
+  candidate symbols), and its `trading_place_order` was refused with
+  `identity_mismatch` — the order never reached the broker and no position
+  moved. The fill guard caught it, which is why a passing run's `detail` names
+  the row it matched. Do not compare that string with the directive symbol by
+  eye and conclude the fill is missing. The bridge now translates the pair to
+  the venue's spelling on Alpaca profiles (`broker_tool_symbol`, pinned by the
+  measurement above), so this trap is closed by configuration rather than by
+  the model's obedience.
 - **Binance spot testnet (`testnet.binance.vision`)**: upstream Vibe-Trading
   ships the `binance-paper-trade` profile (ccxt → testnet host) — the
   testnet is a developer sandbox: sign in with a **GitHub account** on
@@ -639,6 +654,29 @@ The bridge is intentionally the *cheapest* container in the stack:
 
   In the case above the receipt proves only that the run is worth reading: it
   exited `0`, reported `success`, wrote nothing to stderr, and no order landed.
+- **Run artifact shows `invalid symbol: <the directive's spelling>` on a
+  read tool, followed by `identity_mismatch` on `trading_place_order`**
+  (observed 2026-09-18T16:55Z, `trading_quote` + `BTC/USD`): the mandated
+  spelling is neither the ledger's nor the venue's — see the three-spelling
+  entries under "Multi-asset paper". Ask the venue itself instead of guessing,
+  and spend no directive id doing it:
+
+  ```bash
+  docker exec vibe-trading vibe-trading connector quote --help
+  docker exec vibe-trading vibe-trading connector quote BTCUSD
+  docker exec vibe-trading vibe-trading connector quote BTC/USD
+  ```
+
+  Measured on 2026-09-18 against this stack: `quote BTCUSD` returns a quote
+  table, and `quote BTC/USD` fails with `Connector quote failed:
+  {"message":"code=400, message=invalid symbol: BTC/USD"}` — byte-for-byte the
+  message in the artifact above. `BTCUSD` is therefore the one spelling that
+  satisfies both the venue and the identity gate (whose locked form is
+  `BTC-USD`), which is also why every landed crypto order in this stack must
+  have been placed that way. `broker_tool_symbol()` now performs the
+  translation for Alpaca profiles: the prompt mandates `BTCUSD` and never the
+  pair. A ccxt profile (`binance-paper-trade`) keeps the unified `BASE/QUOTE`
+  form untouched, since that is what ccxt expects.
 - **Run artifact shows `error_code: identity_mismatch` on
   `trading_place_order`** (observed 2026-09-18T16:55Z): the gate locked one
   spelling and the order tool was handed another — the order never reached the
