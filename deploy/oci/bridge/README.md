@@ -259,27 +259,34 @@ Where the evidence actually stands (2026-09-20):
   it exists under `deploy/oci/`. Per contract règle 10 the cycle starts with a
   session, so an unchanged inbox between sessions is expected — it is not
   evidence of a broken bridge.
-- **Règle 7 audit trail: the bridge half is proven, Hermès' half is falsified
+- **Règle 7 audit trail: the bridge half is proven, Hermès' half is in dispute
   (2026-09-20).** `/var/lib/bridge/audit/audits.jsonl` is 26 241 B and its last
   line is the 2026-09-19T20:39Z `NO_EXECUTION` receipt, so the bridge's journal
-  is live in production. `/opt/data/feed-intel/audits.jsonl` **does not
-  exist**: the full listing of 2026-09-20T22:09Z shows `decisions.jsonl`,
-  `status.json`, the ten `feed-*.json`, `cache.json` and `archive.sqlite`, and
-  no audit journal under any name — the "journaled elsewhere" possibility is
-  closed by measurement, not assumed. Permission is excluded twice over:
-  `decisions.jsonl` is `hermes:hermes` like the rest of the directory, and the
-  feed files were rewritten at 22:09Z, so the same identity writes that volume
-  all day. Règle 7 also demands an audit at the START of every session and then
-  at least every 6 hours of continuous operation; the filesystem shows none
-  across the ~26 h since. Worse, in the session of 2026-09-19T20:38Z Hermès
-  **claimed** the write — "13 lignes écrites dans
-  /opt/data/feed-intel/audits.jsonl" — while the file it names is absent from
-  the very listing that disproves it. A self-report is not a receipt; do not
-  count a rule satisfied on the strength of one. Two things remain cheap and
-  unanswered: whether the audit *reasoning* was real (its `failing_sources`
-  counts are checkable against `status.json`), and whether the write landed
-  outside the mounted volume (`find / -name audits.jsonl` inside the container
-  decides that one).
+  is live in production. Hermès' journal at `/opt/data/feed-intel/audits.jsonl`
+  is not settled by the two measurements taken so far, and they disagree. It
+  was **absent** from a full listing of that directory at 2026-09-20T22:09Z —
+  every other entry accounted for, `decisions.jsonl` and `status.json` among
+  them, and no audit file under any name — and it was **present** when the same
+  container was searched with `find / -name audits.jsonl` afterwards. Two
+  readings fit, and they mean opposite things: either the earlier listing was
+  incomplete and the claim of a 2026-09-19T20:38Z write holds, leaving a plain
+  cadence gap (règle 7 asks for an audit at the START of every session and then
+  at least every 6 h of continuous operation); or the file was created between
+  the two commands — in the session where Hermès was *asked* to account for the
+  20:38 one — and the claim is retroactive. Only the filesystem separates them,
+  and it can: `stat` the journal's mtime against `decisions.jsonl`, fixed at
+  2026-09-19T20:38Z. Two probes that do **not** decide it, recorded so nobody
+  spends them again: a live `status.json` is rewritten every cycle, so its
+  failing-source counters cannot be checked against a 26 h-old claim; and the
+  claim's own content is only witness to what its writer believed — règle 7
+  requires an `audit_timestamp` in the journal, which is worth reading but is
+  not proof of when the bytes landed. The filesystem's mtime is.
+- **The Hermès container mounts `bridge_data` too**, not just
+  `feed_intel_data`: `find /` inside it lists
+  `/opt/data/bridge/audit/audits.jsonl`, the bridge's own journal. So a
+  `docker exec hermes` search for a filename will match files that have two
+  different writers, exactly like the two `audits.jsonl` above — check the
+  mount, not the name.
 - **Still unobserved**: (a) a Hermès directive that requests a change
   (`INCREASE_*`) reaching `EXECUTED` with `fill_verification.ok: true` — as
   noted above, the contract's market schema carries no `execution_request`, so
