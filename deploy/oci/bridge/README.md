@@ -124,8 +124,13 @@ symbol and the venue's row is visible instead of looking like a missing
 fill. A failed fill check additionally carries `run_evidence` — the failing
 run's own `state.json` and its rejected tool calls, copied from the run
 directory before it can be rotated away (see "What proves a directive was
-really executed"). `audit/audits.jsonl`
-is the append-only trail for backtesting the loop itself. The status
+really executed"). `audit/audits.jsonl` (bridge view) is the append-only trail
+for backtesting the loop itself: `write_receipt` appends **every** receipt
+there, whatever its status, so the file is a superset of `executions/*.json`.
+Two files share that name and they have different writers — this one lives in
+`bridge_data`; contract règle 7 gives Hermès its **own** feed-audit journal at
+`/opt/data/feed-intel/audits.jsonl` in `feed_intel_data`. Grep the path, never
+the filename. The status
 vocabulary is the *learning signal*: Hermès updates priors from
 `RESEARCH_DONE` findings and `EXECUTED` outcomes (see
 `hermes-contract.md`).
@@ -236,7 +241,7 @@ The loop is closed when a directive **Hermès wrote** has a receipt. The
 order, not that Hermès *delivers* one (règle 8 — delivery is the file appearing
 in `/opt/data/bridge/directives/`).
 
-Where the evidence actually stands (2026-09-19):
+Where the evidence actually stands (2026-09-20):
 
 - **Delivery path: open, by measurement.** Hermès can write the exchange volume
   and holds the rules — both checked, see the `tee` entry under Troubleshooting.
@@ -254,6 +259,27 @@ Where the evidence actually stands (2026-09-19):
   it exists under `deploy/oci/`. Per contract règle 10 the cycle starts with a
   session, so an unchanged inbox between sessions is expected — it is not
   evidence of a broken bridge.
+- **Règle 7 audit trail: the bridge half is proven, Hermès' half is falsified
+  (2026-09-20).** `/var/lib/bridge/audit/audits.jsonl` is 26 241 B and its last
+  line is the 2026-09-19T20:39Z `NO_EXECUTION` receipt, so the bridge's journal
+  is live in production. `/opt/data/feed-intel/audits.jsonl` **does not
+  exist**: the full listing of 2026-09-20T22:09Z shows `decisions.jsonl`,
+  `status.json`, the ten `feed-*.json`, `cache.json` and `archive.sqlite`, and
+  no audit journal under any name — the "journaled elsewhere" possibility is
+  closed by measurement, not assumed. Permission is excluded twice over:
+  `decisions.jsonl` is `hermes:hermes` like the rest of the directory, and the
+  feed files were rewritten at 22:09Z, so the same identity writes that volume
+  all day. Règle 7 also demands an audit at the START of every session and then
+  at least every 6 hours of continuous operation; the filesystem shows none
+  across the ~26 h since. Worse, in the session of 2026-09-19T20:38Z Hermès
+  **claimed** the write — "13 lignes écrites dans
+  /opt/data/feed-intel/audits.jsonl" — while the file it names is absent from
+  the very listing that disproves it. A self-report is not a receipt; do not
+  count a rule satisfied on the strength of one. Two things remain cheap and
+  unanswered: whether the audit *reasoning* was real (its `failing_sources`
+  counts are checkable against `status.json`), and whether the write landed
+  outside the mounted volume (`find / -name audits.jsonl` inside the container
+  decides that one).
 - **Still unobserved**: (a) a Hermès directive that requests a change
   (`INCREASE_*`) reaching `EXECUTED` with `fill_verification.ok: true` — as
   noted above, the contract's market schema carries no `execution_request`, so
