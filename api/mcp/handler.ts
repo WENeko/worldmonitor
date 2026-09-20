@@ -44,7 +44,7 @@ import {
 import { buildUiResourceRead, isUiResourceUri, UI_RESOURCE_LIST_RESPONSE } from './ui/registry';
 import { emitTelemetry, principalIdForLog } from './telemetry';
 import { hashKeySync } from '../../server/_shared/usage-identity';
-import { createMcpUsage, emitMcpRequestEvent, setUsageContext, type McpUsage } from './usage';
+import { createMcpUsage, emitMcpRequestEvent, setUsageContext, setUsageRpc, type McpUsage } from './usage';
 import { safeJsonRpcId, utf8ByteLength } from './utils';
 import type { McpAuthContext, McpHandlerDeps } from './types';
 import type { McpBudget } from './quota';
@@ -381,6 +381,13 @@ function sseHeadersFrom(headers: Headers): Headers {
   // no-store the JSON branches carry; no-transform stays load-bearing for SSE (it
   // blocks proxy gzip/buffering that would corrupt the event-stream framing).
   out.set('Cache-Control', MCP_CACHE_CONTROL);
+  // jsonResponse may advertise Content-Length for the bare JSON body (#8403).
+  // SSE framing (`id:` / `data:` lines) is larger than that byte count — keeping
+  // the header would truncate the stream at the wire (unterminated JSON in the
+  // first event). Drop length/encoding; the stream is chunked.
+  out.delete('Content-Length');
+  out.delete('content-length');
+  out.delete('Transfer-Encoding');
   return out;
 }
 
@@ -841,6 +848,14 @@ async function mcpHandlerInner(
 
   const { id, method } = body;
 
+  // #8403 — attribute JSON-RPC method (and registry-bounded tool name) before
+  // any auth/limit return so Axiom can tell initialize / tools/list /
+  // tools/call apart even when the call is refused.
+  const toolCallName = method === 'tools/call'
+    ? ((body.params as { name?: unknown } | null)?.name)
+    : undefined;
+  setUsageRpc(usage, method, toolCallName);
+
   // Connect-time challenge. An unauthenticated `initialize` on the transport is
   // refused with the same structured 401 + `WWW-Authenticate` an unauthenticated
   // tool call gets. `initialize` is the handshake every interactive MCP client
@@ -896,9 +911,6 @@ async function mcpHandlerInner(
   // `isPublicResourceUri` already uses for metadata-only resource reads.
   // Exact-matched against the registry's own `_freeTier` flag, so a tool
   // outside the roster is never promoted and stays fully gated.
-  const toolCallName = method === 'tools/call'
-    ? ((body.params as { name?: unknown } | null)?.name)
-    : undefined;
   const isFreeTierToolCall = typeof toolCallName === 'string'
     && FREE_TIER_TOOL_NAMES.has(toolCallName);
 
