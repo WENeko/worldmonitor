@@ -15,12 +15,6 @@ export function __resetReverseGeocodeCacheForTests(): void {
 
 const TIMEOUT_MS = 8000;
 
-function shouldMemoizeHttpMiss(status: number): boolean {
-  // 408/425/429 and every 5xx are retryable. Caching them in a page-lifetime
-  // map turns a transient failure into "no country here" until reload.
-  return status !== 408 && status !== 425 && status !== 429 && status < 500;
-}
-
 export async function reverseGeocode(lat: number, lon: number, signal?: AbortSignal): Promise<GeoResult | null> {
   const key = geocodeCacheCell(lat, lon);
   if (cache.has(key)) return cache.get(key) ?? null;
@@ -35,18 +29,19 @@ export async function reverseGeocode(lat: number, lon: number, signal?: AbortSig
       credentials: 'omit',
       signal: controller.signal,
     });
-    if (!res.ok) {
-      if (shouldMemoizeHttpMiss(res.status)) cache.set(key, null);
-      return null;
-    }
+    // Never memoize HTTP failures: the page-lifetime map has no TTL, so a
+    // transient 4xx/5xx must stay retryable. Only a validated country or a
+    // definitive empty response may be cached below.
+    if (!res.ok) return null;
 
     const data = await res.json();
+    if (!data || typeof data.country !== 'string' || typeof data.code !== 'string' || data.error) return null;
     if (!data.country || !data.code) {
-      cache.set(key, null);
+      if (!data.country && !data.code) cache.set(key, null);
       return null;
     }
 
-    const result: GeoResult = { country: data.country, code: data.code, displayName: data.displayName || data.country };
+    const result: GeoResult = { country: data.country, code: data.code, displayName: typeof data.displayName === 'string' && data.displayName ? data.displayName : data.country };
     cache.set(key, result);
     return result;
   } catch {

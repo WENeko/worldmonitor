@@ -6758,6 +6758,20 @@
       ]
     },
     {
+      "host": "open-meteo.caseyjhand.com",
+      "provider": "open-meteo.caseyjhand.com",
+      "kind": "structured",
+      "observed": true,
+      "license": "Community-hosted MCP service. Open-Meteo weather data is CC BY 4.0; free API access is non-commercial only. Commercial access requires a paid Open-Meteo plan and compatible hosting.",
+      "attribution": "Weather data by Open-Meteo.com. MCP server hosted by cyanheads at open-meteo.caseyjhand.com. Preserve the attribution returned with weather results.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "src/services/mcp-store.ts"
+        }
+      ]
+    },
+    {
       "host": "open.alberta.ca",
       "provider": "open.alberta.ca",
       "kind": "structured",
@@ -10222,6 +10236,9 @@
           "path": "scripts/seed-wb-indicators.mjs"
         },
         {
+          "path": "scripts/shared/notify-fields.cjs"
+        },
+        {
           "path": "scripts/validate-seed-migration.mjs"
         },
         {
@@ -10229,6 +10246,9 @@
         },
         {
           "path": "server/_shared/intel-history-embed.ts"
+        },
+        {
+          "path": "server/_shared/notify-fields.ts"
         },
         {
           "path": "server/gateway.ts"
