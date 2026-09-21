@@ -241,52 +241,106 @@ The loop is closed when a directive **Hermès wrote** has a receipt. The
 order, not that Hermès *delivers* one (règle 8 — delivery is the file appearing
 in `/opt/data/bridge/directives/`).
 
-Where the evidence actually stands (2026-09-20):
+Where the evidence actually stands (2026-09-21):
 
 - **Delivery path: open, by measurement.** Hermès can write the exchange volume
   and holds the rules — both checked, see the `tee` entry under Troubleshooting.
   Nothing on the permission side is blocking a directive.
 - **Contract-shaped ids have receipts**: `DIR-20260917-214500-001` (quoted
-  below) and, observed 2026-09-19T20:39Z, `DIR-20260919-203800-001` — a
-  `mode: PAPER` / `target_asset: SPY` directive that appeared in the exchange
-  volume owned by `1000:1000` and was classified `NO_EXECUTION` within 21 s of
-  the bridge's next tick (`action_directive: NO_ACTION`, receipt written under
-  its own id). Both prove the **delivery and readback half** of règle 8 under
-  Hermès' own id shape; both stop short of an order because the decision taken
-  was not to trade.
+  below), `DIR-20260919-203800-001` and `DIR-20260921-093700-001`. The last two
+  are `mode: PAPER` / `target_asset: SPY` directives that appeared in the
+  exchange volume owned by `1000:1000`, and both were classified `NO_EXECUTION`
+  (`action_directive: NO_ACTION`) with a receipt written under their own id.
+  The 2026-09-21 one is the tighter measurement: written 09:38:06Z — 66 s after
+  its own `timestamp` — classified 09:38:07Z, i.e. **1 s after the write**, with
+  the bridge journal growing 26 241 B → 26 578 B and a 357 B receipt appearing
+  under that id. So the **delivery and readback half** of règle 8 is proven
+  twice under Hermès' own id shape, and the delivery→receipt latency is measured
+  twice (21 s and 1 s — both one watcher tick). Both stop short of an order
+  because the decision taken was not to trade.
+- **First Hermès self-report to survive a check (2026-09-21).** The reasoning
+  of `DIR-20260921-093700-001` claims both open positions profitable, `AAPL
+  +5.1%` and `BTC +5.5%`, and cites that for CORE RULE 5. Read against the
+  authority: `vibe-trading connector positions` returns `AAPL` 3 and `BTCUSD`
+  0.0049875 — the crypto quantity is **byte-identical to the `after` of the
+  2026-09-19T19:29Z receipt**, i.e. the position has not been touched in two
+  days — and `connector account` gives cash 98 641.23 / equity 100 070.98, a
+  +70.98 gain. The two percentages are consistent with that total in magnitude
+  (≈ +$30 crypto, ≈ +$38 equity on a 100 000 account), so the claim is
+  **corroborated**, unlike the règle 7 report below. Detail stays unverified:
+  the CLI's `Avg Cost` column came back empty, so entry prices — and therefore
+  per-position P&L — are not readable from the rail.
 - **Nothing in this repo schedules Hermès' cycle**: the compose service is
   `command: ["gateway", "run"]` (the dashboard), and no cron or timer unit for
   it exists under `deploy/oci/`. Per contract règle 10 the cycle starts with a
   session, so an unchanged inbox between sessions is expected — it is not
   evidence of a broken bridge.
-- **Règle 7 audit trail: the bridge half is proven, Hermès' half is in dispute
-  (2026-09-20).** `/var/lib/bridge/audit/audits.jsonl` is 26 241 B and its last
-  line is the 2026-09-19T20:39Z `NO_EXECUTION` receipt, so the bridge's journal
-  is live in production. Hermès' journal at `/opt/data/feed-intel/audits.jsonl`
-  is not settled by the two measurements taken so far, and they disagree. It
-  was **absent** from a full listing of that directory at 2026-09-20T22:09Z —
-  every other entry accounted for, `decisions.jsonl` and `status.json` among
-  them, and no audit file under any name — and it was **present** when the same
-  container was searched with `find / -name audits.jsonl` afterwards. Two
-  readings fit, and they mean opposite things: either the earlier listing was
-  incomplete and the claim of a 2026-09-19T20:38Z write holds, leaving a plain
-  cadence gap (règle 7 asks for an audit at the START of every session and then
-  at least every 6 h of continuous operation); or the file was created between
-  the two commands — in the session where Hermès was *asked* to account for the
-  20:38 one — and the claim is retroactive. Only the filesystem separates them,
-  and it can: `stat` the journal's mtime against `decisions.jsonl`, fixed at
-  2026-09-19T20:38Z. Two probes that do **not** decide it, recorded so nobody
-  spends them again: a live `status.json` is rewritten every cycle, so its
-  failing-source counters cannot be checked against a 26 h-old claim; and the
-  claim's own content is only witness to what its writer believed — règle 7
-  requires an `audit_timestamp` in the journal, which is worth reading but is
-  not proof of when the bytes landed. The filesystem's mtime is.
+- **Règle 7 audit trail: the bridge half is proven, Hermès' half is unproven —
+  its journal was written after the fact (2026-09-20).**
+  `/var/lib/bridge/audit/audits.jsonl` is 26 241 B and its last line is the
+  2026-09-19T20:39Z `NO_EXECUTION` receipt, so the bridge's journal is live in
+  production. `/opt/data/feed-intel/audits.jsonl` exists, and the filesystem
+  dates it: **mtime 2026-09-20T22:11:35Z**, 2 915 B, 13 lines — while the two
+  lines read (`tail -2`, the other 11 are unread) carry `ts` of
+  **2026-09-19T20:38:04Z** and **20:38:05Z**, and a `next_scheduled_audit` of
+  2026-09-20T02:38Z that was already ~20 h past when the bytes landed. The file was created **25 h 33 min after the
+  session it describes**, and **2 min 35 s after** a full `ls` of that
+  directory showed no audit journal at all — in the window where Hermès was
+  asked to account for its règle 7 audit. `decisions.jsonl`, the fixed witness,
+  still reads 2026-09-19T20:38:30Z.
+  So the report was not merely unverifiable, it was **backdated**: read it as a
+  statement of intent, never as a record of when an audit ran. Règle 7's Hermès
+  half is **unproven** and — more usefully — **unprovable from this journal**:
+  a file whose writer sets its own timestamps cannot witness its own history.
+  Nothing here witnesses it either. The bridge can timestamp
+  `executions/*.json` because it writes them itself; règle 7 gives Hermès no
+  equivalent, and a live `status.json` cannot stand in — it is rewritten every
+  cycle, so its failing-source counters say nothing about a 26 h-old session
+  (the journal's own list, `gn-cyber:fail=3`, `gn-tech-example-disabled:fail=2`,
+  `pboc-en:fail=1`, matches no current reading). Until an audit passes through
+  the bridge, or the bridge records the journal's mtime and size on each tick,
+  the journal is a claim, not evidence. (The bridge container mounts only
+  `vibe_data` and `bridge_data`, so the observing variant needs a
+  `feed_intel_data` mount added to that service first; routing the audit
+  through the existing directive channel needs no mount change.)
+  Re-measured 2026-09-21, against the session that produced
+  `DIR-20260921-093700-001` (decided 09:37:00Z, delivered 09:38:06Z). The two
+  journals separate, and one draft of this paragraph conflated them: **
+  `decisions.jsonl` moved** — 2 647 B / 2026-09-19T20:38:30Z became **2 593 B /
+  2026-09-21T09:37:21Z**, rewritten 21 s after that decision, so the decision
+  *was* journaled and règle 8's log half runs. **`audits.jsonl` did not move**:
+  2 915 B / 2026-09-20T22:11:35Z, identical to the pre-session reading and
+  identical again when read *after* the session. Règle 7 asks for the audit at
+  the START of every session, before any market reasoning; here a session ran,
+  decided, delivered and logged its decision, with no audit line in the 11 h 27
+  min before it and none after it. That is the surviving measurement, and the
+  stronger one — it no longer depends on catching the volume before a write.
+  The same `stat` settles a shape question, too: `decisions.jsonl` is **not
+  append-only**, since it *shrank* by 54 B while being rewritten, so it cannot be
+  read as a running ledger. Per-session truncation fits both readings — each
+  session writes its own decision and drops the previous one — and is consistent
+  with 2 593 B holding a 2 034 B directive; a rewritten snapshot is not excluded.
+  `cat`-ing the file decides which, and it matters for règle 8's LEARNING rule,
+  which ingests receipts once per day: a log that keeps one session cannot show
+  a day of them.
 - **The Hermès container mounts `bridge_data` too**, not just
   `feed_intel_data`: `find /` inside it lists
   `/opt/data/bridge/audit/audits.jsonl`, the bridge's own journal. So a
   `docker exec hermes` search for a filename will match files that have two
   different writers, exactly like the two `audits.jsonl` above — check the
   mount, not the name.
+- **A directory listing is evidence only at its instant — retraction
+  (2026-09-21).** A first batch of probes, run minutes before Hermès delivered,
+  showed the exchange directory's `.` at 2026-09-19T20:39Z holding only the
+  19th's file, and the bridge journal frozen at 26 241 B, and was read here as
+  "the 09:37 decision was never delivered". Ten minutes later the same three
+  commands returned the opposite: a 2 034 B `DIR-20260921-093700-001.json`
+  written 09:38:06Z, journal 26 578 B, receipt on disk. The earlier readings
+  were **correct and stale**: they were taken before the write, and nothing in
+  them said so. The lesson is worth more than the finding — a delivery volume
+  read *between* a decision and its write looks exactly like a delivery failure,
+  so timestamp the reading (`date -u` in the same paste) or repeat it before
+  concluding. Nothing in the first reading was a defect on either side.
 - **Still unobserved**: (a) a Hermès directive that requests a change
   (`INCREASE_*`) reaching `EXECUTED` with `fill_verification.ok: true` — as
   noted above, the contract's market schema carries no `execution_request`, so
