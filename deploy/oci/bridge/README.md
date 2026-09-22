@@ -307,22 +307,70 @@ Where the evidence actually stands (2026-09-21):
   `DIR-20260921-093700-001` (decided 09:37:00Z, delivered 09:38:06Z). The two
   journals separate, and one draft of this paragraph conflated them: **
   `decisions.jsonl` moved** — 2 647 B / 2026-09-19T20:38:30Z became **2 593 B /
-  2026-09-21T09:37:21Z**, rewritten 21 s after that decision, so the decision
-  *was* journaled and règle 8's log half runs. **`audits.jsonl` did not move**:
+  2026-09-21T09:37:21Z**, rewritten 21 s after that decision — so *something*
+  was written to it there. That is weaker than "the decision was
+  journaled": the contract never names `decisions.jsonl` — règle 7 names only
+  `audits.jsonl`, and règle 8's LEARNING stores its summary *in memory* — so the
+  file is a gateway-side artifact, and it evidences neither rule on its own.
+  **`audits.jsonl` did not move**:
   2 915 B / 2026-09-20T22:11:35Z, identical to the pre-session reading and
   identical again when read *after* the session. Règle 7 asks for the audit at
   the START of every session, before any market reasoning; here a session ran,
-  decided, delivered and logged its decision, with no audit line in the 11 h 27
-  min before it and none after it. That is the surviving measurement, and the
-  stronger one — it no longer depends on catching the volume before a write.
-  The same `stat` settles a shape question, too: `decisions.jsonl` is **not
-  append-only**, since it *shrank* by 54 B while being rewritten, so it cannot be
-  read as a running ledger. Per-session truncation fits both readings — each
-  session writes its own decision and drops the previous one — and is consistent
-  with 2 593 B holding a 2 034 B directive; a rewritten snapshot is not excluded.
-  `cat`-ing the file decides which, and it matters for règle 8's LEARNING rule,
-  which ingests receipts once per day: a log that keeps one session cannot show
-  a day of them.
+  decided, delivered, and had a record written 21 s later, with no audit
+  journal line in the 11 h 27 min before it and none after it. That is the
+  surviving measurement, and the stronger one — it no longer depends on catching the volume before a write.
+  The same `stat` settles a shape question, too: `decisions.jsonl` **shrank** by
+  54 B, and a pure append cannot lose bytes, so each write replaces the file —
+  it is not a running ledger. What gets replaced is settled by the document
+  below: it refutes the reading that those bytes hold the session's decision —
+  they hold a per-cycle **input** trace, whose size owes nothing to the 2 034 B
+  directive.
+  `wc -l` then corroborates it: **0 newlines for 2 593 bytes** — one line, a
+  single-document snapshot with no separator between cycles. A second reading
+  goes further: `grep -o 'DIR-[0-9]*-[0-9]*-[0-9]*'` matches
+  **nothing** inside it, so the snapshot carries no id in the exchange's shape
+  and a decision cannot be joined to its receipt by id — only by timestamps.
+  The document itself was then read (2026-09-21), and it answers the schema
+  question and explains the absent id at once: it is a **cycle input trace**, not
+  a decision. `head -c 300` renders
+  `{"ts":"2026-09-21T09:37:00.000Z","fingerprint":"macro-cycle-20260921-0937",
+  "inputs":{"hard_data":[{"source":"usgs-quakes","items":4,
+  "newest_age_min":10,"reliability":0.95}],"feeds":[{"sector":"news",
+  "generatedAt":"2026-09-21T09:36:15.977Z","newest_age_min":10,"items":100},
+  {"sector":"geopolitics",…` — it records what the session *read*: `hard_data`,
+  and per-sector `feeds` carrying `newest_age_min` / `items` / `reliability`.
+  Its key is `fingerprint: macro-cycle-<ts>`, not an exchange id, which is why
+  no `DIR-` id appears inside it. That is the same archaeology `feed-intel`'s
+  `archive.sqlite` is documented to answer from the producer's side.
+  And **it does not parse**: `json.load` raises
+  `Expecting ',' delimiter: line 1 column 2588 (char 2587)`. The follow-up probe
+  (2026-09-21, same host) fixes what that signature means, and corrects the
+  first reading of it: the reported offset is a **character**, not a byte — json
+  decodes the file and counts characters, so 2 593 bytes holding 2 587
+  characters says the trace carries multi-byte UTF-8 and `char 2587` is simply
+  **one past the last character**, i.e. end of file, not six bytes before it.
+  (Reproduced here on a reduced document of the same shape: the error lands at
+  `char 339` for 339 characters and 343 bytes.) The file is not damaged inside;
+  it is **complete except for its final closing brace** — `{` 22 against `}` 21,
+  one brace short, `utf8: ok`, and `json.loads(bytes + b'}')` parses, yielding
+  the outer keys `ts`, `fingerprint`, `inputs`. Because one brace appended at EOF
+  is what repairs it, the unmatched brace is the outermost one: the file's own
+  last byte closes `inputs`, so the trace stops there with all of its content
+  present, the closing `reasoning` string being the last value recorded. That is
+  a one-byte-short write at EOF, not a mid-document failure — the data is
+  recoverable, but a reader, Hermès itself or an operator, gets a decode error
+  rather than a degraded read, so the file still evidences no rule.
+  That does not touch the finding above: règle 8's LEARNING ingests the day's
+  `executions/*.json` and `audit/audits.jsonl`, règle 7 names only
+  `audits.jsonl`, and this is a gateway-side artifact outside both. Delivery
+  stays proven twice on disk (21 s, then 1 s). What the reading adds is a
+  **second instance of one pattern** — Hermès' *self-accounting* is unreliable (a
+  journal frozen and rewritten 25 h 33 min late; a trace missing its last byte)
+  while its *delivery* is measured. Two cheap, falsifiable predictions for the
+  next cycle: does the next `decisions.jsonl` carry the same signature — a
+  brace imbalance of exactly one, repaired by appending a single `}` (a
+  deterministic writer defect, not a one-off) — and does `audits.jsonl` move at
+  all?
 - **The Hermès container mounts `bridge_data` too**, not just
   `feed_intel_data`: `find /` inside it lists
   `/opt/data/bridge/audit/audits.jsonl`, the bridge's own journal. So a
