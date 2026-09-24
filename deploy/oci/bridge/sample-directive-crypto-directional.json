@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "directive_id": "DIR-SYNTH-CRYPTO-DIR-20260907-140000-001",
+  "timestamp": "2026-09-07T14:00:00.000Z",
+  "target_asset": "BTC/USD",
+  "macro_bias": "BULLISH",
+  "confidence_score": 0.9,
+  "timeframe_hours": 1,
+  "action_directive": "INCREASE_LONG_SENSITIVITY",
+  "mode": "PAPER_SYNTHETIC_TEST",
+  "reasoning": "Operator-labelled synthetic crypto test on the Alpaca paper account. Unlike sample-directive-crypto-alpaca.json this carries NO execution_request: it is the shape the Hermes contract's market schema emits, where the size is left to the model and only the direction is mandated. It is the only sample that exercises the direction_only branch of verify_fill (_direction_verdict) against the real venue, which until now had local assertions only."
+}

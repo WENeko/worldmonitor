@@ -393,9 +393,13 @@ Where the evidence actually stands (2026-09-21):
   (`INCREASE_*`) reaching `EXECUTED` with `fill_verification.ok: true` — as
   noted above, the contract's market schema carries no `execution_request`, so
   that receipt will be verified **by direction**, not by size; (b) the règle 8
-  half — what Hermès *did* with the receipt. (a) is a file you can read here;
-  (b) lives only in Hermès' own memory and session, so ask it in the dashboard
-  what it recorded for a given id.
+  half — what Hermès *did* with the receipt. The **branch** in (a) is no longer
+  unexercised — `sample-directive-crypto-directional.json` drives it against the
+  broker without waiting for Hermès (see *The directional branch* above); what
+  stays unobserved is the same two fields on a directive **Hermès wrote**, under
+  its own id, which is the version that closes rule 8 as well. (a) is a file you
+  can read here; (b) lives only in Hermès' own memory and session, so ask it in
+  the dashboard what it recorded for a given id.
 
 ```bash
 # 1. in the Hermès dashboard, ask for one cycle, e.g.
@@ -561,6 +565,81 @@ That proves the **execution rail**. Proving that **Hermès** can execute is the
 same two fields on a directive Hermès wrote under its own id — which is the
 remaining open item, and the only version that also closes rule 8.
 
+### The directional branch: exercise it now, without waiting for Hermès
+
+All four crypto fills above carried an `execution_request`, so all four landed on
+the **size** branch of the fill guard. The **direction** branch
+(`_direction_verdict`) — the one the Hermès market schema actually reaches,
+because that schema emits no `execution_request` — has **never** faced the
+broker: it has local assertions only. Waiting for Hermès to clear the 0.75
+confidence threshold is not the only way to close that, and outside the equity
+window it is not a way at all — every directive it has delivered so far targets
+`SPY`, and the equity window is 13:30–20:00 UTC on weekdays while this venue
+trades crypto 24/7. Drop the direction-only sample instead — same rail, same
+pairing, zero new setup:
+
+```bash
+# fresh id: a spent id is skipped as already processed (idempotence is on the
+# receipt, never on the filename)
+python3 -c "
+import json,pathlib,datetime
+now=datetime.datetime.now(datetime.timezone.utc)
+d=json.loads(pathlib.Path('bridge/sample-directive-crypto-directional.json').read_text())
+d['directive_id']='DIR-SYNTH-CRYPTO-DIR-'+now.strftime('%Y%m%d-%H%M%S')+'-001'
+d['timestamp']=now.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+pathlib.Path('/tmp/dir-check.json').write_text(json.dumps(d,indent=2))
+"
+docker cp /tmp/dir-check.json bridge:/var/lib/bridge/directives/
+# ~90 s: one model run, one order, then the receipt — no id to retype
+docker exec bridge sh -c 'cat "$(ls -t /var/lib/bridge/executions/*.json | head -1)"'
+```
+
+`sample-directive-crypto-directional.json` is `sample-directive-crypto-alpaca.json`
+with the `execution_request` **removed** and nothing else changed. What that one
+deletion moves, read off the real functions (2026-09-24, connector
+`alpaca-paper-trade`):
+
+| | `…-crypto-alpaca.json` | `…-crypto-directional.json` |
+|---|---|---|
+| `validate_directive` | `(True, 'ok')` | `(True, 'ok')` |
+| `classify_directive` | `EXECUTE` | `EXECUTE` |
+| `exposure_mandate` | `{symbol, side, qty 0.001, order_type}` | `{'symbol': 'BTC/USD', 'side': 'BUY', 'direction_only': True}` |
+| prompt, order clause | `execute EXACTLY that order (BTC/USD BUY qty 0.001 market)` | **absent** — replaced by `… sized so the position is small (gross exposure well under $5k of the $100k paper account)` |
+| prompt, size | **3 858** chars | **4 023** chars |
+
+Two things in that table are worth keeping:
+
+- **The prompt gets longer, not shorter.** Removing the order clause does not
+  shrink the prompt — the identity caveat and the pair recovery are unchanged,
+  and the sizing clause is longer than the clause it replaces. So a difference
+  in prompt length is not a signal that the directive changed shape.
+- **The size becomes the model's, and the verdict no longer depends on it.**
+  This is the first shape where the fill guard judges something the model chose,
+  and it judges it as a **sign**: the receipt's `detail` reads
+  `expected BTC/USD exposure to rise (was …)`, with no qty and no tolerance.
+  Verified here against the real `_direction_verdict`, at the position the
+  account actually holds (`before` = 0.0049875, the `after` of the
+  2026-09-19T19:29Z receipt):
+
+  | broker `after` | `ok` | `reason` |
+  |---|---|---|
+  | 0.005985 (rose) | `true` | `null` |
+  | 0.0049875 (flat) | `false` | `order_not_filled` |
+  | 0.00399 (fell) | `false` | `wrong_direction` |
+
+  A flat position is `order_not_filled` and a **reversed** one is
+  `wrong_direction` — the two verdicts a size check could never separate. Read
+  the `detail` for which one you got: `delta 0` versus a negative delta with the
+  position moved.
+
+What a pass therefore looks like on the host: `status: EXECUTED`,
+`fill_verification.ok: true`, and a `detail` whose delta is whatever size the
+model picked — **not** a number you supplied. A `FAILED` with
+`42210000 asset "BTC-USD" not found` in `tool_failures` is the venue refusing a
+spelling (the known `BTC-USD` mirror case), not the new guard failing; see the
+spelling notes under *Multi-asset paper* below before blaming the direction
+check.
+
 ### The first real run, observed (2026-09-17T21:46Z)
 
 This is what acceptance looked like — not a placeholder, the actual receipt:
@@ -609,7 +688,10 @@ fractional fill verifies exactly like a whole-share one.
   0.001 filled and verified at 05:27Z, then at 17:15Z, 18:30Z and 18:46Z —
   every one of them outside the 13:30-20:00Z equity window). Drop
   `sample-directive-crypto-alpaca.json` and keep `BRIDGE_CONNECTOR` at its
-  default.
+  default. Its direction-only sibling, `sample-directive-crypto-directional.json`,
+  is that same file with `execution_request` deleted — the shape the Hermès
+  market schema actually emits, and the only sample that drives
+  `_direction_verdict` against the broker (see *The directional branch* above).
 - **Three spellings are in play for a crypto instrument, not one.** A run's own
   `grounding_evidence.json` (2026-09-18T16:55Z) shows all three at once: the
   directive and the prompt say `BTC/USD`; the run identity ledger locked
