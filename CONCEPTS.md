@@ -198,6 +198,22 @@ The dashboard mode where the map becomes a resizable column beside the panel gri
 
 The drop zone under the map, available only in the split layout, where a user can dock panels out of the main grid. Its membership is remembered separately from the main panel order, and zone reconciliation moves the remembered panels in or out when the layout mode changes — which is why the zone's CSS visibility and the reconciliation logic must agree on the same threshold: hiding the container while reconciliation still moves panels into it makes those panels vanish. See also: Split Layout.
 
+## Frontend Bundle Freshness
+
+### Stale Bundle
+
+A loaded tab whose frontend code predates the version now deployed, detected by comparing a build hash baked into the running bundle against the hash published alongside each deploy.
+
+Staleness is a correctness problem rather than a cosmetic one: a tab held across a change to a request or response shape can retry forever against a server its code no longer understands, so the standing response is to force a reload as soon as a mismatch is seen. The mismatch is treated as settled once observed — a deploy is not un-deployed, save for a rollback to the exact running version, whose only cost is one redundant reload. Because trunk moves many times a day, a tab open for tens of minutes is usually stale, which makes the reload common rather than exceptional. See also: Modal-Open Guard.
+
+### Modal-Open Guard
+
+The precondition the bundle-freshness and service-worker automatic reloads consult, which holds the reload back while a dialog the user is working in is on screen. Both defer rather than cancel, so the reload lands on a later trigger once the dialog closes. Chunk-load error recovery does not consult this guard.
+
+It is deliberately narrower than "an overlay is on screen". A surface can declare itself reload-safe, and one that appears without the user asking and holds no entered state is expected to — an onboarding prompt that re-opens on the next load loses nothing to a reload. The broader overlay question is asked separately by the passkey offer, which must not mount beneath a focus trap regardless of whether a reload would be safe. Conflating the two suppressed the freshness reload for every user who had not yet chosen a preset.
+
+Three rules are easy to get wrong. The test is whether a candidate is actually *rendered*, not whether it is present, because several overlays mount once and stay in the document for the whole session; presence alone would hold reloads off forever. The preferred rendering test uses `checkVisibility()`: a candidate without an associated box or beneath an ancestor with `content-visibility: hidden` reads as hidden, while opacity or `visibility` alone does not make it hidden. Persistent overlays use `display: none` when closed; this also works with the `getClientRects()` fallback in older browsers. And the set of things that count is defined by dialog semantics rather than by whether a surface holds unsaved work, so a transient popover can defer a reload too. The guard exists because the reload's trigger is the user returning to the app, which is also how someone returns holding an emailed verification code; reloading then destroys the flow they left to complete. See also: Stale Bundle.
+
 ## Payments Provider Calls
 
 ### Retry Ownership
@@ -352,7 +368,7 @@ The set of headlines a country brief is generated from and may cite — the week
 
 ### Status Qualifier
 
-A tenure or standing word attached to a person's title in generated prose, such as former, acting, incoming, or late. In a brief it is a claim about the world, not decoration, and the source must make the same claim before the brief may. Qualifiers group into classes of synonyms: a source that says ex- licenses former, a source that says former never licenses acting. The check is per story, so a qualifier borrowed from an unrelated headline does not license the claim, and it is deliberately narrow, requiring a qualifier, a person title, and a capitalized name together, so a former Soviet republic or a late Tuesday never trips it. A lead sentence that fails is dropped and the rest of the lead ships; a story description that fails falls back to its headline. Anchor stopwords and title-prefix lists cannot see these words by construction, which is why the gate exists as its own check. See also: Brief Grounding, Vacuous Guard.
+A tenure or standing word attached to a person's title in generated prose, such as former, acting, incoming, or late. In a brief it is a claim about the world, not decoration, and the source must make the same claim before the brief may. Qualifiers group into classes of synonyms: a source that says ex- licenses former, a source that says former never licenses acting. The check is per story, so a qualifier borrowed from an unrelated headline does not license the claim, and it is deliberately narrow, requiring a qualifier, a person title, and a capitalized name together, with only office words between the qualifier and the title, so a former Soviet republic, "former officials said President…", or "late on Tuesday President…" never trips it. Each brief surface keeps its own penalty. A failing lead sentence is dropped and the rest of the lead ships. A failing story description or World Brief story line falls back to its headline. A failing crawlable country brief is withheld whole. A check that works sentence by sentence must also look across a sentence boundary its splitter drew inside a name, as in "former U.S. President". Anchor stopwords and title-prefix lists cannot see these words by construction, which is why the gate exists as its own check. See also: Brief Grounding, Vacuous Guard.
 
 ### Stitching Phrase
 
@@ -1032,7 +1048,7 @@ Its failure mode applies to any live check. An empty detection answer could not 
 
 ### Fallback Stream
 
-A specific broadcast identifier pinned to a Live News channel or webcam slot. Before Live Detection was retired, it played only when detection yielded nothing. Each slot is now an ordered list of sources in `src/config/live-video-sources.ts` (a stream address, a pinned broadcast, or a channel's live embed), tried in order until one is verified live; dead, ended, and unembeddable sources are skipped and never shown as live.
+A specific broadcast identifier pinned to a Live News channel or webcam slot. Before Live Detection was retired, it played only when detection yielded nothing. Each slot is now an ordered list of sources in `src/config/live-video-sources.ts` (a stream address, a pinned broadcast, or a channel's live embed), tried in order until one is verified live; dead, ended, and unembeddable sources are skipped and never shown as live. A slot that lists a channel also tries the video that channel had live when the `seed-live-video-resolved` cron last read its `/live` page, immediately before the channel entry, so a broadcaster that restarts its stream under a new identifier needs no catalog edit.
 
 A Fallback Stream decays with no code change. The provider ends the broadcast, restarts it under a new identifier, deletes it, or reassigns it, and the pinned identifier then points at an error, an ended recording, or another channel's content. Verification keeps an ended or deleted source from playing under a live label, but a dead source is skipped in favour of the next one, so the dashboard shows a problem only once no source in the slot is left. Keeping sources honest takes a recurring liveness check against the provider (`npm run live-video:check -- --all` reports entries that are not live and slots with no entries), not code review. See also: Live Detection.
 

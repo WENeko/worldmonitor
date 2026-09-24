@@ -14,6 +14,15 @@ import {
   CREDIBILITY_HIGH_RISK_CAP,
   computeCredibilityScore,
 } from '../../../shared/news-credibility.js';
+import {
+  CORROBORATION_OUTPUT_SCHEMA,
+  PUBLISHER_ROSTER_OUTPUT_PROPERTIES,
+  assessCorroboration,
+  evidenceFromStory,
+  publisherRoster,
+  toCorroborationJson,
+  toPublisherRosterJson,
+} from '../../../server/_shared/corroboration';
 import { getSourceTier } from '../../../server/_shared/source-tiers';
 import { FLOW_SOURCE_WIRE_VALUES, narrowFlowSource } from '../../../server/_shared/flow-source';
 import { hasRedistributableProviderAttribution } from '../../../shared/provider-redistribution';
@@ -241,9 +250,13 @@ function addNewsSourceProvenance(value: unknown): unknown {
     const corroboration = Number(
       record.uniqueSourceCount ?? record.corroborationSourceCount ?? 1,
     );
+    const evidence = evidenceFromStory(record);
+    const verdict = assessCorroboration(evidence);
     return {
       ...record,
       sourceProvenance: provenance,
+      corroboration: toCorroborationJson(verdict),
+      ...toPublisherRosterJson(publisherRoster(evidence), verdict),
       credibilityScore: servedScore !== null
         ? servedScore
         : computeCredibilityScore({
@@ -1007,7 +1020,7 @@ export const CACHE_TOOLS: ToolDef[] = [
     name: 'get_news_intelligence',
     _uiResourceUri: NEWS_INTELLIGENCE_UI_URI,
     _outputBudgetBytes: 131072,
-    description: 'AI-classified geopolitical threat news summaries, GDELT intelligence signals, cross-source signals including physical-premium regime transitions, and security advisories from WorldMonitor\'s intelligence layer. Each top story carries full corroboration metadata — uniqueSourceCount, corroborationSourceCount, entityCorroboration, sourceTier, the contributing outlet names, every clustered headline, and credibilityScore (0-100 source reliability, distinct from importance).',
+    description: 'AI-classified geopolitical threat news summaries, GDELT intelligence signals, cross-source signals including physical-premium regime transitions, and security advisories from WorldMonitor\'s intelligence layer. Each top story carries full corroboration metadata — uniqueSourceCount, corroborationSourceCount, entityCorroboration, sourceTier, the contributing outlet names, every clustered headline, credibilityScore (0-100 source reliability, distinct from importance), corroboration, and the publishers roster with each publisher\'s declared tier; corroboration.state (single-publisher, tier4-only, corroborated, unknown) describes coverage, not accuracy.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1076,6 +1089,8 @@ export const CACHE_TOOLS: ToolDef[] = [
               },
               required: ['risk', 'type', 'riskDeclared', 'typeDeclared', 'riskReviewed', 'typeReviewed', 'knownBiases', 'summary'],
             },
+            corroboration: CORROBORATION_OUTPUT_SCHEMA,
+            ...PUBLISHER_ROSTER_OUTPUT_PROPERTIES,
           } } },
         },
       },
