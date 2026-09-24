@@ -3,11 +3,37 @@
 # World Monitor remains deployed on Vercel and is not installed here.
 
 services:
+  # Install optional Nous Research skills into the persistent Hermes profile
+  # before the gateway starts. These are deliberately research/market skills:
+  # Vibe-Trading remains the execution authority, while Hermès uses them for
+  # read-only corroboration and RESEARCH commissions.
+  hermes-skills-init:
+    image: nousresearch/hermes-agent:latest
+    restart: "no"
+    volumes:
+      - ~/.hermes:/opt/data
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        for skill in \
+          official/finance/stocks \
+          official/finance/polymarket \
+          official/research/osint-investigation \
+          official/autonomous-ai-agents/dynamic-workflow
+        do
+          /opt/hermes/bin/hermes skills install "$$skill"
+        done
+
   hermes:
     image: nousresearch/hermes-agent:latest
     container_name: hermes
     restart: unless-stopped
     network_mode: host
+    depends_on:
+      hermes-skills-init:
+        condition: service_completed_successfully
 
     volumes:
       - ~/.hermes:/opt/data
