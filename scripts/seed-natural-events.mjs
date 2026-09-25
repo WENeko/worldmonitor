@@ -45,6 +45,7 @@ const NHC_CONE_GEOMETRY_TYPES = new Set(['Polygon', 'MultiPolygon']);
 const NHC_ADVISORY_TIMEZONE_OFFSETS_MIN = {
   UTC: 0,
   GMT: 0,
+  CVT: -1 * 60,
   AST: -4 * 60,
   ADT: -3 * 60,
   EST: -5 * 60,
@@ -707,7 +708,7 @@ async function fetchNhc(fetchFn = globalThis.fetch) {
   const events = [];
   for (const { slot, points, cone, pastPts } of stormData) {
     // Current position = forecast point with tau=0
-    const currentPt = points.features.find(f => f.properties?.tau === 0 || f.properties?.fcstprd === 0);
+    const currentPt = points.features.find(f => (f.properties?.tau ?? f.properties?.fcstprd) === 0);
     if (!currentPt) {
       throw new NhcQueryError(`NHC layer ${slot.forecastPoints} has no current storm point`, {
         code: 'NHC_POINT_RESPONSE_INVALID',
@@ -743,12 +744,12 @@ async function fetchNhc(fetchFn = globalThis.fetch) {
 
     // Build forecast track from forecast points
     const forecastTrack = points.features
-      .filter(f => f.properties?.tau > 0 || f.properties?.fcstprd > 0)
-      .sort((a, b) => (a.properties.tau || a.properties.fcstprd) - (b.properties.tau || b.properties.fcstprd))
+      .filter(f => (f.properties?.tau ?? f.properties?.fcstprd) > 0)
+      .sort((a, b) => (a.properties.tau ?? a.properties.fcstprd) - (b.properties.tau ?? b.properties.fcstprd))
       .map(f => ({
         lat: f.geometry.coordinates[1],
         lon: f.geometry.coordinates[0],
-        hour: f.properties.tau || f.properties.fcstprd || 0,
+        hour: f.properties.tau ?? f.properties.fcstprd,
         windKt: f.properties.maxwind || 0,
         category: f.properties.ssnum || 0,
       }));
