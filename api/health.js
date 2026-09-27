@@ -414,6 +414,7 @@ const STANDALONE_KEYS = {
   // it is monitored here rather than bootstrap-tiered. Without this gate an
   // evicted or stale index stays invisible until the next weekly freeze.
   gdeltCountryArticles: 'gdelt:bulk:country-articles:v1',
+  gdeltDyadTension: 'gdelt:bulk:dyad-tension:v1',
   chinaCoverage:      CHINA_COVERAGE_SUMMARY_KEY,
   // Control-plane heartbeat only. Convex owns every durable scan lease,
   // checkpoint, receipt, and replay decision; this Redis value is disposable.
@@ -1178,6 +1179,14 @@ const SEED_META = {
   },
   researchArxivHnTrending: { key: 'seed-meta:research:arxiv-hn-trending', maxStaleMin: 150 },
   gdeltIntel:       { key: 'seed-meta:intelligence:gdelt-intel',   maxStaleMin: 45 }, // 15min bulk materializer; 45min = 3× cadence and expires before the 24h canonical key.
+  gdeltDyadTension: {
+    key: 'seed-meta:gdelt:bulk:dyad-tension', maxStaleMin: 45,
+    activationKey: 'seed-activated:gdelt:bulk:dyad-tension',
+    cutover: {
+      mode: 'activation-marker', fromKey: null, issue: 8676,
+      activationKey: 'seed-activated:gdelt:bulk:dyad-tension',
+    },
+  },
   // Same materializer tick as gdeltIntel; the 2-day data TTL outlives this
   // gate. Pending until the materializer's first successful index publish
   // writes the durable marker, strict after it (#7748).
@@ -1954,6 +1963,7 @@ const ON_DEMAND_KEYS = new Set([
   // writes the marker after the index and its seed-meta publish; absence is
   // pending until that first tick and strict afterward.
   'gdeltCountryArticles',
+  'gdeltDyadTension',
   // Scheduled producer. The marker is written only after a successful
   // publish of the canonical snapshot. Before that first publish, absence is
   // pending activation; after it, missing or stale data is strict.
@@ -2061,6 +2071,7 @@ const ACTIVATION_MARKERS = {
   // Written by scripts/seed-gdelt-bulk-materializer.mjs after the per-country
   // article index publishes with its seed-meta (#7748).
   gdeltCountryArticles: SEED_META.gdeltCountryArticles.activationKey,
+  gdeltDyadTension: SEED_META.gdeltDyadTension.activationKey,
   physicalPremiums: SEED_META.physicalPremiums.activationKey,
   physicalDivergence: SEED_META.physicalDivergence.activationKey,
   scorecardFiveFactor: SEED_META.scorecardFiveFactor.activationKey,

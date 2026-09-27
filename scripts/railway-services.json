@@ -1546,6 +1546,8 @@
       "scripts/_gdelt-bulk-contract.mjs",
       "scripts/_gdelt-bulk-materializer.mjs",
       "scripts/_gdelt-country-codes.mjs",
+      "scripts/_gdelt-dyad-tension.mjs",
+      "scripts/shared/gdelt-tension-pairs.json",
       "scripts/_html-entities.mjs",
       "scripts/_proxy-utils.cjs",
       "scripts/_seed-contract.mjs",

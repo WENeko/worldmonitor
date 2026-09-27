@@ -8081,13 +8081,44 @@ const PIZZINT_BESTTIME_VENUES = [
   { venueId: 'ven_636b324a746c7a45666534526b347432794e41455465374a496843', name: 'Nighthawk Brewery & Pizza', lat: 38.8631637, lng: -77.0624806 },
   { venueId: 'ven_67314d44325f7774795356526b3474336d515f6e6962724a496843', name: 'Pizzato Pizza', lat: 38.8806865, lng: -77.089827 },
 ];
-// Live busyness this many points above the venue's forecast for the hour is a
-// spike. PizzINT publishes no threshold of its own.
-const PIZZINT_BESTTIME_SPIKE_DELTA = 25;
-const GDELT_BATCH_API = 'https://www.pizzint.watch/api/gdelt/batch';
-const DEFAULT_GDELT_PAIRS = 'usa_russia,russia_ukraine,usa_china,china_taiwan,usa_iran,usa_venezuela';
-const GDELT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 let pizzintSeedInFlight = false;
+
+// World Monitor index, identical for both providers; provider DEFCON is ignored.
+// A candidate needs >=150% of hourly usual AND >=25 busyness points of excess.
+// Require 20 elapsed minutes of fresh, distinct observations with polling gaps
+// of 9–15 minutes. Missing/closed/stale readings or a provider change reset it.
+// Each sustained venue contributes min(25, excess percent / 5) index points.
+// Sum thresholds 25/50/70/85 map to DEFCON 4/3/2/1; otherwise DEFCON 5.
+// See docs/algorithms.mdx. This is a venue-activity index, not military readiness.
+function scorePizzintLocations(locations, previous, now) {
+  const gap = now - (previous?.updatedAt || 0);
+  const priorLocations = Array.isArray(previous?.locations) ? previous.locations : [];
+  let score = 0;
+  for (const location of locations) {
+    const live = location.currentPopularity;
+    const forecast = location.forecastPopularity;
+    location.hasBaseline = Number.isFinite(forecast) && forecast > 0;
+    location.noLiveSignal = !Number.isFinite(live) || live < 0
+      || (!location.isClosedNow && live === 0 && (forecast >= 20 || !(forecast > 0)));
+    const delta = location.hasBaseline ? Math.max(0, live - forecast) : 0;
+    const observedAt = Date.parse(location.recordedAt);
+    const candidate = !location.isClosedNow && !location.noLiveSignal
+      && location.dataFreshness === 'DATA_FRESHNESS_FRESH'
+      && Number.isFinite(observedAt) && observedAt <= now && now - observedAt <= 15 * 60_000
+      && location.percentageOfUsual >= 150 && delta >= 25;
+    const prior = priorLocations.find(l => l.placeId === location.placeId && l.dataSource === location.dataSource);
+    const continues = candidate && gap >= 9 * 60_000 && gap <= 15 * 60_000
+      && prior?.anomalyStartedAt > 0 && prior.anomalyStartedAt <= previous.updatedAt
+      && observedAt > Date.parse(prior.recordedAt);
+    // Internal cache fields survive relay restarts. Old payloads have no start
+    // time and start afresh.
+    location.anomalyStartedAt = candidate ? (continues ? prior.anomalyStartedAt : now) : 0;
+    location.isSpike = candidate && now - location.anomalyStartedAt >= 20 * 60_000;
+    location.spikeMagnitude = location.isSpike ? delta : 0;
+    if (location.isSpike) score += Math.min(25, (location.percentageOfUsual - 100) / 5);
+  }
+  return Math.min(100, score);
+}
 
 function pizzintLocationFromBestTime(venue, reply) {
   const analysis = reply?.analysis || {};
@@ -8097,15 +8128,13 @@ function pizzintLocationFromBestTime(venue, reply) {
   const forecast = analysis.venue_forecasted_busyness;
   const hasForecast = analysis.venue_forecast_busyness_available === true
     && typeof forecast === 'number' && Number.isFinite(forecast) && forecast > 0;
-  const delta = hasForecast ? live - forecast : 0;
   return {
     placeId: venue.venueId,
     name: venue.name,
     address: typeof info.venue_address === 'string' ? info.venue_address : '',
     currentPopularity: live,
     percentageOfUsual: hasForecast ? Math.round((live / forecast) * 100) : 0,
-    isSpike: delta >= PIZZINT_BESTTIME_SPIKE_DELTA,
-    spikeMagnitude: Math.max(0, delta),
+    forecastPopularity: hasForecast ? forecast : 0,
     dataSource: 'besttime',
     recordedAt: new Date(Date.now()).toISOString(),
     dataFreshness: 'DATA_FRESHNESS_FRESH',
@@ -8119,6 +8148,9 @@ function pizzintLocationFromBestTime(venue, reply) {
 // none. The private key travels only in the request URL, which is never logged.
 async function fetchPizzintBestTimeLocations(apiKey) {
   const locations = [];
+  // A rejected request (bad key, quota) must not read as "no live readings".
+  let rejected = 0;
+  let rejection = '';
   for (const venue of PIZZINT_BESTTIME_VENUES) {
     const url = `${PIZZINT_BESTTIME_LIVE_API}?api_key_private=${encodeURIComponent(apiKey)}&venue_id=${encodeURIComponent(venue.venueId)}`;
     try {
@@ -8127,16 +8159,25 @@ async function fetchPizzintBestTimeLocations(apiKey) {
         headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
         signal: AbortSignal.timeout(15_000),
       });
-      if (!resp.ok) continue;
+      if (!resp.ok) {
+        rejected++;
+        if (!rejection) {
+          const body = await resp.json().catch(() => null);
+          const message = typeof body?.message === 'string' ? body.message : '';
+          rejection = `HTTP ${Number(resp.status) || 0}${message ? ` ${message.split(apiKey).join('***').slice(0, 120)}` : ''}`;
+        }
+        continue;
+      }
       const location = pizzintLocationFromBestTime(venue, await resp.json());
       if (location) locations.push(location);
     } catch { /* one venue's failure never blocks the others */ }
   }
+  const rejectedNote = rejected ? `; ${rejected} rejected: ${rejection}` : '';
   if (locations.length === 0) {
-    console.warn(`[PizzINT] BestTime fallback: no live readings (0/${PIZZINT_BESTTIME_VENUES.length} venues); preserving last good observation`);
+    console.warn(`[PizzINT] BestTime fallback: no live readings (0/${PIZZINT_BESTTIME_VENUES.length} venues${rejectedNote}); preserving last good observation`);
     return null;
   }
-  console.log(`[PizzINT] BestTime fallback: ${locations.length}/${PIZZINT_BESTTIME_VENUES.length} venues live`);
+  console.log(`[PizzINT] BestTime fallback: ${locations.length}/${PIZZINT_BESTTIME_VENUES.length} venues live${rejectedNote}`);
   return locations;
 }
 
@@ -8176,8 +8217,11 @@ async function seedPizzint() {
       address: d.address || '',
       currentPopularity: typeof d.current_popularity === 'number' ? d.current_popularity : 0,
       percentageOfUsual: typeof d.percentage_of_usual === 'number' ? d.percentage_of_usual : 0,
-      isSpike: !!d.is_spike,
-      spikeMagnitude: typeof d.spike_magnitude === 'number' ? d.spike_magnitude : 0,
+      // Recover the hourly baseline from PizzINT's published ratio. A zero
+      // ratio cannot identify a baseline; keep it unknown rather than invent one.
+      forecastPopularity: Number.isFinite(d.percentage_of_usual) && d.percentage_of_usual > 0
+        && Number.isFinite(d.current_popularity) && d.current_popularity > 0
+        ? d.current_popularity * 100 / d.percentage_of_usual : 0,
       dataSource: d.data_source || '',
       recordedAt: d.recorded_at || '',
       dataFreshness: d.data_freshness === 'fresh' ? 'DATA_FRESHNESS_FRESH' : 'DATA_FRESHNESS_STALE',
@@ -8186,15 +8230,18 @@ async function seedPizzint() {
       lng: d.lng ?? 0,
     }));
 
-    const openLocations = locations.filter((l) => !l.isClosedNow);
+    const previous = await envelopeRead(PIZZINT_REDIS_KEY);
+    const adjusted = scorePizzintLocations(locations, previous?.pizzint, Date.now());
+    if (locations.every(l => l.noLiveSignal)) {
+      console.warn('[PizzINT] No live signals; preserving last good observation');
+      return;
+    }
+    const openLocations = locations.filter((l) => !l.isClosedNow && !l.noLiveSignal);
     const activeSpikes = locations.filter((l) => l.isSpike).length;
     const avgPop = openLocations.length > 0
       ? openLocations.reduce((s, l) => s + l.currentPopularity, 0) / openLocations.length
       : 0;
 
-    let adjusted = avgPop;
-    if (activeSpikes > 0) adjusted += activeSpikes * 10;
-    adjusted = Math.min(100, adjusted);
     let defconLevel = 5;
     let defconLabel = 'Normal Activity';
     if (adjusted >= 85) { defconLevel = 1; defconLabel = 'Maximum Activity'; }
@@ -8216,43 +8263,10 @@ async function seedPizzint() {
       locations,
     };
 
-    // Fetch GDELT tensions (non-fatal if unavailable)
-    let tensionPairs = [];
-    try {
-      // The endpoint requires a YYYYMMDD window and 400s without one.
-      const gdeltDate = (ms) => new Date(ms).toISOString().slice(0, 10).replace(/-/g, '');
-      const gdeltUrl = `${GDELT_BATCH_API}?pairs=${encodeURIComponent(DEFAULT_GDELT_PAIRS)}&method=gpr`
-        + `&dateStart=${gdeltDate(Date.now() - GDELT_WINDOW_MS)}&dateEnd=${gdeltDate(Date.now())}`;
-      const gdeltResp = await fetch(gdeltUrl, {
-        headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!gdeltResp.ok) console.warn(`[PizzINT] GDELT tensions request rejected (HTTP ${Number(gdeltResp.status) || 0})`);
-      if (gdeltResp.ok) {
-        const gdeltRaw = await gdeltResp.json();
-        tensionPairs = Object.entries(gdeltRaw).map(([pairKey, dataPoints]) => {
-          const countries = pairKey.split('_');
-          const latest = dataPoints[dataPoints.length - 1];
-          const prev = dataPoints.length > 1 ? dataPoints[dataPoints.length - 2] : latest;
-          const change = prev && prev.v > 0 ? ((latest.v - prev.v) / prev.v) * 100 : 0;
-          const trend = change > 5 ? 'TREND_DIRECTION_RISING' : change < -5 ? 'TREND_DIRECTION_FALLING' : 'TREND_DIRECTION_STABLE';
-          return {
-            id: pairKey,
-            countries,
-            label: countries.map((c) => c.toUpperCase()).join(' - '),
-            score: latest?.v ?? 0,
-            trend,
-            changePercent: Math.round(change * 10) / 10,
-            region: 'global',
-          };
-        });
-      }
-    } catch { /* GDELT unavailable — non-fatal */ }
-
-    const payload = { pizzint, tensionPairs };
+    const payload = { pizzint, tensionPairs: [] };
     const ok1 = await envelopeWrite(PIZZINT_REDIS_KEY, payload, PIZZINT_SEED_TTL, { recordCount: locations.length, sourceVersion: fallback ? 'besttime-live' : 'pizzint' });
     const ok2 = ok1 && await upstashSet('seed-meta:intelligence:pizzint', { fetchedAt: Date.now(), recordCount: locations.length }, 604800);
-    console.log(`[PizzINT] Seeded ${locations.length} locations (open:${openLocations.length} spikes:${activeSpikes} defcon:${defconLevel} gdelt:${tensionPairs.length} redis:${ok1 && ok2 ? 'OK' : 'PARTIAL'}) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    console.log(`[PizzINT] Seeded ${locations.length} locations (open:${openLocations.length} spikes:${activeSpikes} defcon:${defconLevel} redis:${ok1 && ok2 ? 'OK' : 'PARTIAL'}) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   } catch (e) {
     console.warn('[PizzINT] Seed error:', e?.message || e);
   } finally {

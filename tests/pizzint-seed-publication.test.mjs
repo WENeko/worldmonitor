@@ -6,6 +6,7 @@ import { __testing__ as health } from '../api/health.js';
 
 const relay = readFileSync(new URL('../scripts/ais-relay.cjs', import.meta.url), 'utf8');
 const envelopeWriter = relay.slice(relay.indexOf('function buildEnvelope('), relay.indexOf('// Envelope-aware read.'));
+const envelopeReader = relay.slice(relay.indexOf('async function envelopeRead('), relay.indexOf('function notifySimpleHash('));
 const producer = relay.slice(relay.indexOf('const PIZZINT_SEED_INTERVAL_MS'), relay.indexOf('function startPizzintSeedLoop()'));
 const emptyResponse = {
   success: true, data: [], events: [], overall_index: 0, defcon_level: 5,
@@ -27,6 +28,10 @@ function harness() {
   const context = vm.createContext({
     Date: Clock, AbortSignal, CHROME_UA: 'test', console: { log() {}, warn: (...args) => state.warnings.push(args) },
     process: { env: state.env },
+    upstashGet: async (key) => {
+      const cached = state.cache.get(key);
+      return cached && cached.expiresAt > state.now ? structuredClone(cached.data) : null;
+    },
     fetch: async (url, init) => {
       state.urls.push(url);
       if (url.includes('besttime.app')) {
@@ -45,7 +50,7 @@ function harness() {
       return true;
     },
   });
-  vm.runInContext(envelopeWriter + producer, context);
+  vm.runInContext(envelopeWriter + envelopeReader + producer, context);
   return { state, seed: () => vm.runInContext('seedPizzint()', context) };
 }
 
@@ -89,7 +94,7 @@ for (const [reason, response] of [
 test('empty upstream response preserves the last observation and its original expiry', async () => {
   const { state, seed } = harness();
   await seed();
-  assert.equal(state.cache.get(payloadKey).data.data.pizzint.defconLevel, 2);
+  assert.equal(state.cache.get(payloadKey).data.data.pizzint.defconLevel, 5);
   const previous = structuredClone(state.cache);
   state.now += 600_000;
   state.source = emptyResponse;
@@ -139,29 +144,23 @@ test('a sustained empty source still expires the payload and fails the real heal
   assert.ok(['warn', 'crit'].includes(health.STATUS_COUNTS[expired.status]));
 });
 
-// The GDELT batch endpoint rejects a request without a window (400 "Missing
-// required query parameters: pairs, method, dateStart, dateEnd") and validates
-// "Invalid date format. Expected YYYYMMDD." — observed live 2026-09-26.
-test('requests GDELT tensions with the YYYYMMDD window the endpoint requires', async () => {
+// Tensions are published by the bulk materializer independently of pizza.
+test('does not request or publish PizzINT GDELT tensions', async () => {
   const { state, seed } = harness();
   state.gdelt = { ok: true, status: 200, json: async () => ({
     usa_iran: [{ t: '20260924', v: 2 }, { t: '20260925', v: 3 }],
   }) };
   await seed();
-  const gdeltUrl = new URL(state.urls.find((url) => url.includes('gdelt/batch')));
-  assert.equal(gdeltUrl.searchParams.get('method'), 'gpr');
-  assert.equal(gdeltUrl.searchParams.get('dateEnd'), '20260925');
-  assert.equal(gdeltUrl.searchParams.get('dateStart'), '20260826');
+  assert.equal(state.urls.some((url) => url.includes('gdelt/batch')), false);
   const payload = JSON.stringify(state.cache.get(payloadKey).data);
-  assert.match(payload, /"id":"usa_iran"/);
-  assert.match(payload, /"changePercent":50/);
+  assert.match(payload, /"tensionPairs":\[\]/);
 });
 
-test('reports a rejected GDELT request by status without logging its body', async () => {
+test('a broken PizzINT GDELT endpoint has no effect on pizza publication', async () => {
   const { state, seed } = harness();
   state.gdelt = { ok: false, status: 400, json: async () => ({ error: 'synthetic-secret' }) };
   await seed();
-  assert.deepEqual(state.warnings, [['[PizzINT] GDELT tensions request rejected (HTTP 400)']]);
+  assert.deepEqual(state.warnings, []);
   assert.ok(state.writes.includes(payloadKey), 'a GDELT failure never blocks the PizzINT publication');
 });
 
@@ -193,7 +192,7 @@ for (const [label, baseline] of [
     const { pizzint } = state.cache.get(payloadKey).data.data;
     assert.equal(pizzint.aggregateActivity, 60);
     assert.equal(pizzint.activeSpikes, 0);
-    assert.equal(pizzint.defconLevel, 3);
+    assert.equal(pizzint.defconLevel, 5);
     for (const location of pizzint.locations) {
       assert.equal(location.percentageOfUsual, 0);
       assert.equal(location.spikeMagnitude, 0);
@@ -221,13 +220,13 @@ test('falls back to BestTime live busyness when PizzINT is empty', async () => {
   const payload = JSON.stringify(data);
   const { pizzint } = data.data ?? data;
   assert.equal(pizzint.locationsMonitored, 2, 'only venues with a live reading are published');
-  assert.equal(pizzint.activeSpikes, 1);
+  assert.equal(pizzint.activeSpikes, 0);
   assert.equal(pizzint.aggregateActivity, 60);
-  assert.equal(pizzint.defconLevel, 2, '60 + 10 per spike = 70');
+  assert.equal(pizzint.defconLevel, 5, 'the first anomaly has not persisted');
   const [spike, calm] = pizzint.locations;
   assert.deepEqual(
     { id: spike.placeId, pop: spike.currentPopularity, pct: spike.percentageOfUsual, spike: spike.isSpike, mag: spike.spikeMagnitude, src: spike.dataSource, fresh: spike.dataFreshness },
-    { id: ids[0], pop: 90, pct: 225, spike: true, mag: 50, src: 'besttime', fresh: 'DATA_FRESHNESS_FRESH' },
+    { id: ids[0], pop: 90, pct: 225, spike: false, mag: 0, src: 'besttime', fresh: 'DATA_FRESHNESS_FRESH' },
   );
   assert.equal(calm.isSpike, false);
   assert.equal(calm.percentageOfUsual, 86);
@@ -293,3 +292,171 @@ test('ignores a BestTime error response even when its body looks like a live rea
   const { pizzint } = state.cache.get(payloadKey).data.data ?? state.cache.get(payloadKey).data;
   assert.deepEqual(pizzint.locations.map((l) => l.placeId), [ids[1]]);
 });
+
+// 2026-09-27: the public key was set as BESTTIME_API_KEY_PRIVATE. BestTime answered
+// every venue HTTP 400 "Invalid private API key", which logged as "no live readings".
+test('reports a rejected BestTime request instead of calling it no live readings', async () => {
+  const { state, seed } = harness();
+  state.source = emptyResponse;
+  state.env.BESTTIME_API_KEY_PRIVATE = BESTTIME_KEY;
+  await seed();
+  const ids = state.besttimeCalls.map(({ url }) => new URL(url).searchParams.get('venue_id'));
+  for (const id of ids) {
+    state.besttime.set(id, { ok: false, status: 400, json: async () => ({ status: 'Error', message: `Error: Invalid private API key ${BESTTIME_KEY}` }) });
+  }
+  state.warnings.length = 0;
+  await seed();
+  assert.deepEqual(state.warnings.at(-1), [
+    `[PizzINT] BestTime fallback: no live readings (0/${ids.length} venues; ${ids.length} rejected: HTTP 400 Error: Invalid private API key ***); preserving last good observation`,
+  ]);
+  assert.doesNotMatch(JSON.stringify(state.warnings), /pri_test_secret_value/);
+});
+
+async function besttimeHarness(readings) {
+  const run = harness();
+  run.state.source = emptyResponse;
+  run.state.env.BESTTIME_API_KEY_PRIVATE = BESTTIME_KEY;
+  await run.seed();
+  const ids = run.state.besttimeCalls.map(({ url }) => new URL(url).searchParams.get('venue_id'));
+  readings.forEach(([live, forecast], i) => run.state.besttime.set(ids[i], liveReading(live, forecast)));
+  return { ...run, ids, status: () => run.state.cache.get(payloadKey).data.data.pizzint };
+}
+
+test('normal Sunday lunch publishes DEFCON 5 even when a venue is 100% busy', async () => {
+  const run = await besttimeHarness([[50, 45], [40, 40], [30, 35], [100, 100]]);
+  await run.seed();
+  assert.equal(run.status().defconLevel, 5);
+  assert.equal(run.status().activeSpikes, 0);
+});
+
+test('September 27 readings cannot raise DEFCON on their first observation', async () => {
+  const run = await besttimeHarness([[70, 45], [0, 40], [65, 35], [100, 100]]);
+  await run.seed();
+  assert.equal(run.status().defconLevel, 5);
+  assert.equal(run.status().activeSpikes, 0);
+});
+
+test('open live zero with forecast 40 is no live signal and excluded from the open average', async () => {
+  const run = await besttimeHarness([[0, 40], [100, 100]]);
+  await run.seed();
+  assert.equal(run.status().locations[0].noLiveSignal, true);
+  assert.equal(run.status().locationsOpen, 1);
+  assert.equal(run.status().aggregateActivity, 100);
+});
+
+test('a real zero against a small baseline remains distinct from an unavailable baseline', async () => {
+  const run = await besttimeHarness([[0, 10], [60, 0]]);
+  await run.seed();
+  const [quiet, unknown] = run.status().locations;
+  assert.equal(quiet.hasBaseline, true);
+  assert.equal(quiet.percentageOfUsual, 0);
+  assert.equal(quiet.noLiveSignal, false);
+  assert.equal(unknown.hasBaseline, false);
+  assert.equal(unknown.noLiveSignal, false);
+  assert.equal(run.status().locationsOpen, 2);
+});
+
+async function advance(run, minutes = 10) {
+  run.state.now += minutes * 60_000;
+  await run.seed();
+}
+
+test('September 27 anomalies sustained for 20 minutes publish DEFCON 4', async () => {
+  const run = await besttimeHarness([[70, 45], [0, 40], [65, 35], [100, 100]]);
+  await run.seed();
+  await advance(run);
+  assert.equal(run.status().defconLevel, 5, '10 elapsed minutes is not 20');
+  await advance(run);
+  assert.equal(run.status().activeSpikes, 2);
+  assert.equal(run.status().defconLevel, 4);
+});
+
+test('three late-night surges at twice forecast sustained for 20 minutes publish DEFCON 3', async () => {
+  const run = await besttimeHarness([[60, 30], [60, 30], [60, 30]]);
+  await run.seed();
+  await advance(run);
+  await advance(run);
+  assert.equal(run.status().activeSpikes, 3);
+  assert.equal(run.status().defconLevel, 3);
+});
+
+test('single-reading blip never raises DEFCON and small baselines do not create spikes', async () => {
+  const run = await besttimeHarness([[70, 30], [10, 5]]);
+  await run.seed();
+  assert.equal(run.status().defconLevel, 5);
+  run.state.besttime.set(run.ids[0], liveReading(30, 30));
+  await advance(run);
+  await advance(run);
+  assert.equal(run.status().activeSpikes, 0);
+  assert.equal(run.status().defconLevel, 5);
+});
+
+test('a missed polling interval resets persistence', async () => {
+  const run = await besttimeHarness([[90, 30], [90, 30], [90, 30]]);
+  await run.seed();
+  await advance(run, 20);
+  assert.equal(run.status().activeSpikes, 0);
+  await advance(run);
+  assert.equal(run.status().activeSpikes, 0);
+  await advance(run);
+  assert.equal(run.status().activeSpikes, 3);
+});
+
+test('equivalent PizzINT and BestTime observations use the same rule, ignoring provider DEFCON', async () => {
+  const best = await besttimeHarness([[60, 30], [60, 30], [60, 30]]);
+  const primary = harness();
+  const setPrimary = () => {
+    primary.state.source = { success: true, defcon_level: 1, overall_index: 100, data: [0, 1, 2].map(i => ({
+      place_id: String(i), current_popularity: 60, percentage_of_usual: 200,
+      is_spike: true, data_freshness: 'fresh', recorded_at: new Date(primary.state.now).toISOString(),
+    })) };
+  };
+  for (let i = 0; i < 3; i++) {
+    setPrimary();
+    await primary.seed();
+    await best.seed();
+    const actual = primary.state.cache.get(payloadKey).data.data.pizzint;
+    assert.equal(actual.defconLevel, best.status().defconLevel);
+    assert.equal(actual.activeSpikes, best.status().activeSpikes);
+    primary.state.now += 600_000;
+    best.state.now += 600_000;
+  }
+  assert.equal(best.status().defconLevel, 3);
+});
+
+test('repeated provider timestamps cannot establish persistence', async () => {
+  const run = harness();
+  run.state.source = { ...validResponse, data: [{ ...validResponse.data[0], recorded_at: new Date(run.state.now).toISOString() }] };
+  await run.seed();
+  await advance(run);
+  assert.equal(run.state.cache.get(payloadKey).data.data.pizzint.locations[0].anomalyStartedAt, run.state.now);
+  await advance(run);
+  assert.equal(run.state.cache.get(payloadKey).data.data.pizzint.activeSpikes, 0);
+});
+
+test('all missing live signals preserve the previous payload and expiry', async () => {
+  const run = await besttimeHarness([[40, 40]]);
+  await run.seed();
+  const previous = structuredClone(run.state.cache);
+  run.state.besttime.set(run.ids[0], liveReading(0, 40));
+  await advance(run);
+  assert.deepEqual(run.state.cache, previous);
+});
+
+for (const currentPopularity of [0, undefined]) {
+  test(`PizzINT ${currentPopularity === 0 ? 'zero without a recoverable baseline' : 'missing live value'} is no data, not quiet`, async () => {
+    const run = harness();
+    await run.seed();
+    const previous = structuredClone(run.state.cache);
+    const missing = { ...validResponse.data[0], current_popularity: currentPopularity, percentage_of_usual: 0 };
+    run.state.source = { success: true, data: [missing] };
+    await advance(run);
+    assert.deepEqual(run.state.cache, previous, 'all missing signals must preserve expiry');
+    run.state.source.data.push({ ...validResponse.data[0], place_id: 'normal', current_popularity: 100, percentage_of_usual: 100 });
+    await advance(run);
+    const status = run.state.cache.get(payloadKey).data.data.pizzint;
+    assert.equal(status.locations[0].noLiveSignal, true);
+    assert.equal(status.locationsOpen, 1);
+    assert.equal(status.aggregateActivity, 100);
+  });
+}
