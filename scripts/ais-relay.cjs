@@ -8070,33 +8070,107 @@ const PIZZINT_SEED_INTERVAL_MS = 10 * 60 * 1000; // 10 min
 const PIZZINT_SEED_TTL = 1800; // 30 min (3× interval)
 const PIZZINT_REDIS_KEY = 'intelligence:pizzint:seed:v1';
 const PIZZINT_API = 'https://www.pizzint.watch/api/dashboard-data';
+// Fallback feed while PizzINT itself is down: BestTime live busyness for the
+// Pentagon-area venues PizzINT tracks. Registered 2026-09-27 via BestTime's
+// forecast endpoint; Domino's (2602 Columbia Pike) and Papa Johns (3400
+// Columbia Pike) have too little visitor volume for BestTime to forecast.
+const PIZZINT_BESTTIME_LIVE_API = 'https://besttime.app/api/v1/forecasts/live';
+const PIZZINT_BESTTIME_VENUES = [
+  { venueId: 'ven_636a594762457274396434526b347433654365726959634a496843', name: 'Extreme Pizza', lat: 38.8602396, lng: -77.0559854 },
+  { venueId: 'ven_41336f327a61637672416e526b34743375584c655132344a496843', name: 'District Pizza Palace', lat: 38.8527414, lng: -77.0531408 },
+  { venueId: 'ven_636b324a746c7a45666534526b347432794e41455465374a496843', name: 'Nighthawk Brewery & Pizza', lat: 38.8631637, lng: -77.0624806 },
+  { venueId: 'ven_67314d44325f7774795356526b3474336d515f6e6962724a496843', name: 'Pizzato Pizza', lat: 38.8806865, lng: -77.089827 },
+];
+// Live busyness this many points above the venue's forecast for the hour is a
+// spike. PizzINT publishes no threshold of its own.
+const PIZZINT_BESTTIME_SPIKE_DELTA = 25;
 const GDELT_BATCH_API = 'https://www.pizzint.watch/api/gdelt/batch';
 const DEFAULT_GDELT_PAIRS = 'usa_russia,russia_ukraine,usa_china,china_taiwan,usa_iran,usa_venezuela';
 const GDELT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 let pizzintSeedInFlight = false;
+
+function pizzintLocationFromBestTime(venue, reply) {
+  const analysis = reply?.analysis || {};
+  const info = reply?.venue_info || {};
+  const live = analysis.venue_live_busyness;
+  if (analysis.venue_live_busyness_available !== true || typeof live !== 'number' || !Number.isFinite(live)) return null;
+  const forecast = analysis.venue_forecasted_busyness;
+  const hasForecast = analysis.venue_forecast_busyness_available === true
+    && typeof forecast === 'number' && Number.isFinite(forecast) && forecast > 0;
+  const delta = hasForecast ? live - forecast : 0;
+  return {
+    placeId: venue.venueId,
+    name: venue.name,
+    address: typeof info.venue_address === 'string' ? info.venue_address : '',
+    currentPopularity: live,
+    percentageOfUsual: hasForecast ? Math.round((live / forecast) * 100) : 0,
+    isSpike: delta >= PIZZINT_BESTTIME_SPIKE_DELTA,
+    spikeMagnitude: Math.max(0, delta),
+    dataSource: 'besttime',
+    recordedAt: new Date(Date.now()).toISOString(),
+    dataFreshness: 'DATA_FRESHNESS_FRESH',
+    isClosedNow: info.venue_open === 'Closed',
+    lat: venue.lat,
+    lng: venue.lng,
+  };
+}
+
+// Returns locations for the venues with a live reading, or null when there is
+// none. The private key travels only in the request URL, which is never logged.
+async function fetchPizzintBestTimeLocations(apiKey) {
+  const locations = [];
+  for (const venue of PIZZINT_BESTTIME_VENUES) {
+    const url = `${PIZZINT_BESTTIME_LIVE_API}?api_key_private=${encodeURIComponent(apiKey)}&venue_id=${encodeURIComponent(venue.venueId)}`;
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!resp.ok) continue;
+      const location = pizzintLocationFromBestTime(venue, await resp.json());
+      if (location) locations.push(location);
+    } catch { /* one venue's failure never blocks the others */ }
+  }
+  if (locations.length === 0) {
+    console.warn(`[PizzINT] BestTime fallback: no live readings (0/${PIZZINT_BESTTIME_VENUES.length} venues); preserving last good observation`);
+    return null;
+  }
+  console.log(`[PizzINT] BestTime fallback: ${locations.length}/${PIZZINT_BESTTIME_VENUES.length} venues live`);
+  return locations;
+}
 
 async function seedPizzint() {
   if (pizzintSeedInFlight) return;
   pizzintSeedInFlight = true;
   const t0 = Date.now();
   try {
-    const resp = await fetch(PIZZINT_API, {
-      headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!resp.ok) {
-      console.warn(`[PizzINT] Seed failed: HTTP ${resp.status}`);
-      return;
+    let raw = null;
+    try {
+      const resp = await fetch(PIZZINT_API, {
+        headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!resp.ok) {
+        console.warn(`[PizzINT] Seed failed: HTTP ${resp.status}`);
+      } else {
+        raw = await resp.json();
+        if (!raw.success || !Array.isArray(raw.data) || raw.data.length === 0) {
+          const reason = !raw.success ? 'unsuccessful_response'
+            : !Array.isArray(raw.data) ? 'non_array_data' : 'empty_array';
+          console.warn(`[PizzINT] No data in API response (${reason}); preserving last good observation`);
+          raw = null;
+        }
+      }
+    } catch (e) {
+      console.warn(`[PizzINT] Seed failed: ${e?.name || 'Error'}`);
+      raw = null;
     }
-    const raw = await resp.json();
-    if (!raw.success || !Array.isArray(raw.data) || raw.data.length === 0) {
-      const reason = !raw.success ? 'unsuccessful_response'
-        : !Array.isArray(raw.data) ? 'non_array_data' : 'empty_array';
-      console.warn(`[PizzINT] No data in API response (${reason}); preserving last good observation`);
-      return;
-    }
+    const besttimeKey = raw ? '' : (process.env.BESTTIME_API_KEY_PRIVATE || '');
+    const fallback = besttimeKey ? await fetchPizzintBestTimeLocations(besttimeKey) : null;
+    if (!raw && !fallback) return;
 
-    const locations = raw.data.map((d) => ({
+    const locations = fallback || raw.data.map((d) => ({
       placeId: d.place_id || '',
       name: d.name || '',
       address: d.address || '',
@@ -8176,7 +8250,7 @@ async function seedPizzint() {
     } catch { /* GDELT unavailable — non-fatal */ }
 
     const payload = { pizzint, tensionPairs };
-    const ok1 = await envelopeWrite(PIZZINT_REDIS_KEY, payload, PIZZINT_SEED_TTL, { recordCount: locations.length, sourceVersion: 'pizzint' });
+    const ok1 = await envelopeWrite(PIZZINT_REDIS_KEY, payload, PIZZINT_SEED_TTL, { recordCount: locations.length, sourceVersion: fallback ? 'besttime-live' : 'pizzint' });
     const ok2 = ok1 && await upstashSet('seed-meta:intelligence:pizzint', { fetchedAt: Date.now(), recordCount: locations.length }, 604800);
     console.log(`[PizzINT] Seeded ${locations.length} locations (open:${openLocations.length} spikes:${activeSpikes} defcon:${defconLevel} gdelt:${tensionPairs.length} redis:${ok1 && ok2 ? 'OK' : 'PARTIAL'}) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   } catch (e) {

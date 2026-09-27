@@ -36,7 +36,7 @@ export class PizzIntIndicator {
       h('div', { className: 'pizzint-footer' },
         h('span', { className: 'pizzint-source' },
           t('components.pizzint.source'), ' ',
-          h('a', { href: 'https://pizzint.watch', target: '_blank', rel: 'noopener' }, 'PizzINT'),
+          h('a', { href: 'https://www.pizzint.watch', target: '_blank', rel: 'noopener' }, 'PizzINT'),
         ),
         h('span', { className: 'pizzint-updated' }),
       ),
@@ -75,6 +75,13 @@ export class PizzIntIndicator {
     const labelEl = this.element.querySelector('.pizzint-defcon-label') as HTMLElement;
     const locationsEl = this.element.querySelector('.pizzint-locations') as HTMLElement;
     const updatedEl = this.element.querySelector('.pizzint-updated') as HTMLElement;
+
+    const sourceEl = this.element.querySelector<HTMLAnchorElement>('.pizzint-source a');
+    if (sourceEl) {
+      const isBestTime = this.status.locations.some(loc => loc.data_source === 'besttime');
+      sourceEl.textContent = isBestTime ? 'BestTime' : 'PizzINT';
+      sourceEl.href = isBestTime ? 'https://besttime.app' : 'https://www.pizzint.watch';
+    }
 
     const color = DEFCON_COLORS[this.status.defconLevel] || '#888';
     defconEl.textContent = t('components.pizzint.defcon', { level: String(this.status.defconLevel) });

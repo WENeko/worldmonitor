@@ -21,12 +21,21 @@ function harness() {
   const state = {
     source: validResponse, writes: [], warnings: [], cache: new Map(), now: 1_790_335_140_000, failPayload: false,
     urls: [], gdelt: { ok: true, status: 200, json: async () => ({}) },
+    env: {}, besttime: new Map(), besttimeCalls: [],
   };
   class Clock extends Date { static now() { return state.now; } }
   const context = vm.createContext({
     Date: Clock, AbortSignal, CHROME_UA: 'test', console: { log() {}, warn: (...args) => state.warnings.push(args) },
-    fetch: async (url) => {
+    process: { env: state.env },
+    fetch: async (url, init) => {
       state.urls.push(url);
+      if (url.includes('besttime.app')) {
+        state.besttimeCalls.push({ url, method: init?.method });
+        const reply = state.besttime.get(new URL(url).searchParams.get('venue_id'));
+        if (reply instanceof Error) throw reply;
+        return reply ?? { ok: true, status: 200, json: async () => liveUnavailable };
+      }
+      if (url.includes('dashboard-data') && state.source instanceof Error) throw state.source;
       return url.includes('dashboard-data') ? { ok: true, json: async () => state.source } : state.gdelt;
     },
     upstashSet: async (key, data, ttl) => {
@@ -39,6 +48,15 @@ function harness() {
   vm.runInContext(envelopeWriter + producer, context);
   return { state, seed: () => vm.runInContext('seedPizzint()', context) };
 }
+
+const liveUnavailable = { status: 'Error', message: 'No live data available.', analysis: { venue_live_busyness_available: false, venue_forecasted_busyness: 20 }, venue_info: { venue_open: 'Open' } };
+const liveReading = (live, forecast, extra = {}) => ({
+  ok: true, status: 200, json: async () => ({
+    status: 'OK',
+    analysis: { venue_live_busyness: live, venue_live_busyness_available: true, venue_forecast_busyness_available: true, venue_forecasted_busyness: forecast, venue_live_forecasted_delta: live - forecast },
+    venue_info: { venue_open: 'Open', venue_address: '1419 S Fern St Arlington VA 22202', ...extra },
+  }),
+});
 
 const payloadKey = 'intelligence:pizzint:seed:v1';
 const metaKey = 'seed-meta:intelligence:pizzint';
@@ -145,4 +163,133 @@ test('reports a rejected GDELT request by status without logging its body', asyn
   await seed();
   assert.deepEqual(state.warnings, [['[PizzINT] GDELT tensions request rejected (HTTP 400)']]);
   assert.ok(state.writes.includes(payloadKey), 'a GDELT failure never blocks the PizzINT publication');
+});
+
+// PizzINT's own backend went empty on 2026-09-25 (dashboard-data `data: []`,
+// neh-index and gdelt/batch 500 "Failed to fetch data from Supabase"). BestTime
+// live busyness for the same Pentagon-area venues replaces the feed while it is
+// down; without a live reading nothing is published, as before.
+const BESTTIME_KEY = 'pri_test_secret_value';
+for (const [label, baseline] of [
+  ['unavailable forecast', { venue_forecast_busyness_available: false, venue_forecasted_busyness: 0, venue_live_forecasted_delta: 60 }],
+  ['missing forecast', { venue_forecast_busyness_available: true }],
+  ['non-finite forecast', { venue_forecast_busyness_available: true, venue_forecasted_busyness: NaN }],
+  ['zero forecast', { venue_forecast_busyness_available: true, venue_forecasted_busyness: 0 }],
+]) {
+  test(`keeps live readings without inventing spikes from ${label}`, async () => {
+    const { state, seed } = harness();
+    state.source = emptyResponse;
+    state.env.BESTTIME_API_KEY_PRIVATE = BESTTIME_KEY;
+    await seed();
+    for (const { url } of state.besttimeCalls) {
+      state.besttime.set(new URL(url).searchParams.get('venue_id'), {
+        ok: true, json: async () => ({
+          analysis: { venue_live_busyness_available: true, venue_live_busyness: 60, ...baseline },
+          venue_info: { venue_open: 'Open' },
+        }),
+      });
+    }
+    await seed();
+    const { pizzint } = state.cache.get(payloadKey).data.data;
+    assert.equal(pizzint.aggregateActivity, 60);
+    assert.equal(pizzint.activeSpikes, 0);
+    assert.equal(pizzint.defconLevel, 3);
+    for (const location of pizzint.locations) {
+      assert.equal(location.percentageOfUsual, 0);
+      assert.equal(location.spikeMagnitude, 0);
+    }
+  });
+}
+
+test('falls back to BestTime live busyness when PizzINT is empty', async () => {
+  const { state, seed } = harness();
+  state.source = emptyResponse;
+  state.env.BESTTIME_API_KEY_PRIVATE = BESTTIME_KEY;
+  await seed();
+  const ids = state.besttimeCalls.map(({ url }) => new URL(url).searchParams.get('venue_id'));
+  assert.ok(ids.length >= 4, 'every registered venue is polled');
+  assert.ok(state.besttimeCalls.every(({ method, url }) => method === 'POST' && new URL(url).pathname === '/api/v1/forecasts/live'));
+  assert.equal(state.cache.has(payloadKey), false, 'no live reading, nothing published');
+  assert.deepEqual(state.warnings.at(-1), [`[PizzINT] BestTime fallback: no live readings (0/${ids.length} venues); preserving last good observation`]);
+
+  state.besttime.set(ids[0], liveReading(90, 40));
+  state.besttime.set(ids[1], liveReading(30, 35));
+  state.besttime.set(ids[2], new Error(`network down ${BESTTIME_KEY}`));
+  state.now += 600_000;
+  await seed();
+  const { data } = state.cache.get(payloadKey);
+  const payload = JSON.stringify(data);
+  const { pizzint } = data.data ?? data;
+  assert.equal(pizzint.locationsMonitored, 2, 'only venues with a live reading are published');
+  assert.equal(pizzint.activeSpikes, 1);
+  assert.equal(pizzint.aggregateActivity, 60);
+  assert.equal(pizzint.defconLevel, 2, '60 + 10 per spike = 70');
+  const [spike, calm] = pizzint.locations;
+  assert.deepEqual(
+    { id: spike.placeId, pop: spike.currentPopularity, pct: spike.percentageOfUsual, spike: spike.isSpike, mag: spike.spikeMagnitude, src: spike.dataSource, fresh: spike.dataFreshness },
+    { id: ids[0], pop: 90, pct: 225, spike: true, mag: 50, src: 'besttime', fresh: 'DATA_FRESHNESS_FRESH' },
+  );
+  assert.equal(calm.isSpike, false);
+  assert.equal(calm.percentageOfUsual, 86);
+  assert.equal(state.cache.get(metaKey).data.recordCount, 2);
+  assert.doesNotMatch(payload + JSON.stringify(state.warnings), /pri_test_secret_value/);
+});
+
+test('never calls BestTime while PizzINT answers or without a key', async () => {
+  const withKey = harness();
+  withKey.state.env.BESTTIME_API_KEY_PRIVATE = BESTTIME_KEY;
+  await withKey.seed();
+  assert.equal(withKey.state.besttimeCalls.length, 0);
+  assert.match(JSON.stringify(withKey.state.cache.get(payloadKey).data), /test-location/);
+
+  const noKey = harness();
+  noKey.state.source = emptyResponse;
+  await noKey.seed();
+  assert.equal(noKey.state.besttimeCalls.length, 0);
+  assert.equal(noKey.state.cache.has(payloadKey), false);
+});
+
+test('marks a live venue that BestTime reports closed and keeps it out of the open average', async () => {
+  const { state, seed } = harness();
+  state.source = { success: false };
+  state.env.BESTTIME_API_KEY_PRIVATE = BESTTIME_KEY;
+  await seed();
+  const ids = state.besttimeCalls.map(({ url }) => new URL(url).searchParams.get('venue_id'));
+  state.besttimeCalls.length = 0;
+  state.besttime.set(ids[0], liveReading(40, 40));
+  state.besttime.set(ids[1], liveReading(80, 20, { venue_open: 'Closed' }));
+  state.now += 600_000;
+  await seed();
+  const { pizzint } = state.cache.get(payloadKey).data.data ?? state.cache.get(payloadKey).data;
+  assert.equal(pizzint.locationsOpen, 1);
+  assert.equal(pizzint.aggregateActivity, 40);
+  assert.equal(pizzint.locations[1].isClosedNow, true);
+});
+
+test('falls back to BestTime when the PizzINT request itself fails', async () => {
+  const { state, seed } = harness();
+  state.source = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+  state.env.BESTTIME_API_KEY_PRIVATE = BESTTIME_KEY;
+  await seed();
+  const ids = state.besttimeCalls.map(({ url }) => new URL(url).searchParams.get('venue_id'));
+  assert.ok(ids.length >= 4, 'a thrown PizzINT fetch still reaches the fallback');
+  state.besttime.set(ids[0], liveReading(50, 40));
+  state.now += 600_000;
+  await seed();
+  const { pizzint } = state.cache.get(payloadKey).data.data ?? state.cache.get(payloadKey).data;
+  assert.equal(pizzint.locationsMonitored, 1);
+});
+
+test('ignores a BestTime error response even when its body looks like a live reading', async () => {
+  const { state, seed } = harness();
+  state.source = emptyResponse;
+  state.env.BESTTIME_API_KEY_PRIVATE = BESTTIME_KEY;
+  await seed();
+  const ids = state.besttimeCalls.map(({ url }) => new URL(url).searchParams.get('venue_id'));
+  state.besttime.set(ids[0], { ...liveReading(90, 40), ok: false, status: 429 });
+  state.besttime.set(ids[1], liveReading(30, 35));
+  state.now += 600_000;
+  await seed();
+  const { pizzint } = state.cache.get(payloadKey).data.data ?? state.cache.get(payloadKey).data;
+  assert.deepEqual(pizzint.locations.map((l) => l.placeId), [ids[1]]);
 });
