@@ -1107,11 +1107,11 @@
       "minutesAgo": "acum {{m}}m",
       "hoursAgo": "acum {{h}}h",
       "defconLabels": {
-        "1": "PISTOL ARMAT — Pregătire maximă",
-        "2": "FAST PACE — Forțele armate gata de luptă",
-        "3": "ROUND HOUSE — Pregătire de forță ridicată",
-        "4": "DOUBLE TAKE — Supraveghere sporită",
-        "5": "FADE OUT — Pregătire minimă"
+        "1": "Activitate Maximă",
+        "2": "Activitate Ridicată",
+        "3": "Activitate Crescută",
+        "4": "Deasupra Normalului",
+        "5": "Activitate Normală"
       }
     },
     "strategicPosture": {

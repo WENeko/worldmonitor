@@ -1330,11 +1330,11 @@
       "minutesAgo": "Vor {{m}}m",
       "hoursAgo": "Vor {{h}}h",
       "defconLabels": {
-        "1": "GESPANNTE PISTOLE – MAXIMALE BEREITSCHAFT",
-        "2": "SCHNELLES TEMPO – STREITKRÄFTE BEREIT",
-        "3": "ROUND HOUSE – EINSATZBEREITSCHAFT DER STREITKRÄFTE ERHÖHEN",
-        "4": "DOUBLE TAKE – ERHÖHTE AUFKLÄRUNGSBEREITSCHAFT",
-        "5": "AUSBLENDUNG – NIEDRIGSTE BEREITSCHAFT"
+        "1": "Maximale Aktivität",
+        "2": "Hohe Aktivität",
+        "3": "Erhöhte Aktivität",
+        "4": "Über dem Normalwert",
+        "5": "Normale Aktivität"
       }
     },
     "playback": {

@@ -23,7 +23,7 @@
   },
   "twoPath": {
     "proTitle": "World Monitor Pro",
-    "proDesc": "Váš AI analytik. Osobní zpravodajský stůl. Platforma, kterou si můžete přizpůsobit. Jeden klíč pro všechny služby.",
+    "proDesc": "Váš AI analytik. Osobní zpravodajský stůl. Platforma, kterou si můžete přizpůsobit.",
     "proF1": "WM Analyst chat — dotazování živých služeb přirozeným jazykem",
     "proF2": "AI digest — denně, dvakrát denně nebo týdně — na Slack, Discord, Telegram, E-mail nebo webhook",
     "proF3": "Custom Widget Builder — HTML/CSS/JS s úpravami pomocí AI",

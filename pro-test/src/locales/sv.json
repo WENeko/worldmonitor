@@ -23,7 +23,7 @@
   },
   "twoPath": {
     "proTitle": "World Monitor Pro",
-    "proDesc": "Din AI-analytiker. Ett personligt underrättelsebord. En plattform du kan bygga på. En nyckel över live-tjänster.",
+    "proDesc": "Din AI-analytiker. Ett personligt underrättelsebord. En plattform du kan bygga på.",
     "proF1": "WM Analyst chat — fråga live-tjänster i naturligt språk",
     "proF2": "AI-digest — dagligen, två gånger om dagen eller veckovis — till Slack, Discord, Telegram, E-post eller webhook",
     "proF3": "Custom Widget Builder — HTML/CSS/JS med AI-assisterad modifiering",

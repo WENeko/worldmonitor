@@ -142,7 +142,7 @@
   },
   "twoPath": {
     "proTitle": "World Monitor Pro",
-    "proDesc": "Your AI analyst. A personal intelligence desk. A platform you can build on. One key across live services.",
+    "proDesc": "Your AI analyst. A personal intelligence desk. A platform you can build on.",
     "proF1": "WM Analyst chat — query live services conversationally",
     "proF2": "AI digest — daily, twice-daily, or weekly — to Slack, Discord, Telegram, Email, or webhook",
     "proF3": "Custom Widget Builder — HTML/CSS/JS with AI-assisted modification",

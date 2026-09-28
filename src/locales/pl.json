@@ -1299,11 +1299,11 @@
       "minutesAgo": "{{m}}m temu",
       "hoursAgo": "{{h}}h temu",
       "defconLabels": {
-        "1": "PISTOLET Z NACIĘCIEM - MAKSYMALNA GOTOWOŚĆ",
-        "2": "SZYBKIE TEMPO – SIŁY ZBROJNE W GOTOWIE",
-        "3": "OKRĄGŁY DOM - ZWIĘKSZ GOTOWOŚĆ SIŁOWĄ",
-        "4": "PODWÓJNE UJĘCIE - ZEGAREK O WIĘKSZEJ INTELIGENCJI",
-        "5": "FADE OUT - NAJNIŻSZA GOTOWOŚĆ"
+        "1": "Maksymalna Aktywność",
+        "2": "Wysoka Aktywność",
+        "3": "Podwyższona Aktywność",
+        "4": "Powyżej Normy",
+        "5": "Normalna Aktywność"
       }
     },
     "playback": {

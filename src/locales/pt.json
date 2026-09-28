@@ -794,11 +794,11 @@
       "minutesAgo": "{{m}}m atrás",
       "hoursAgo": "{{h}}h atrás",
       "defconLabels": {
-        "1": "PISTOLA ARMADA - PRONTIDÃO MÁXIMA",
-        "2": "RITMO RÁPIDO - FORÇAS ARMADAS PRONTAS",
-        "3": "CASA REDONDA - AUMENTA A PRONTIDÃO DA FORÇA",
-        "4": "DOUBLE TAKE - RELÓGIO DE INTELIGÊNCIA AUMENTADA",
-        "5": "FADE OUT - PRONTIDÃO MAIS BAIXA"
+        "1": "Atividade Máxima",
+        "2": "Atividade Alta",
+        "3": "Atividade Elevada",
+        "4": "Acima do Normal",
+        "5": "Atividade Normal"
       }
     },
     "stablecoins": {

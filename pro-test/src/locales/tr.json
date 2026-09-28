@@ -23,7 +23,7 @@
   },
   "twoPath": {
     "proTitle": "World Monitor Pro",
-    "proDesc": "Senin AI analistin. Kişisel bir istihbarat masası. Üzerine inşa edebileceğin bir platform. Canlı hizmetlerde tek anahtarla.",
+    "proDesc": "Senin AI analistin. Kişisel bir istihbarat masası. Üzerine inşa edebileceğin bir platform.",
     "proF1": "WM Analyst sohbeti — canlı hizmetleri konuşarak sorgula",
     "proF2": "AI özeti — günlük, günde iki kez veya haftalık — Slack, Discord, Telegram, E-posta veya webhook'a",
     "proF3": "Custom Widget Builder — HTML/CSS/JS ile AI destekli düzenleme",

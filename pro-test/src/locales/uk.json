@@ -142,7 +142,7 @@
   },
   "twoPath": {
     "proTitle": "World Monitor Pro",
-    "proDesc": "Твій AI-аналітик. Особистий аналітичний стіл. Платформа, на якій можна розробляти. Один ключ для всіх живих сервісів.",
+    "proDesc": "Твій AI-аналітик. Особистий аналітичний стіл. Платформа, на якій можна розробляти.",
     "proF1": "WM Analyst chat — запитуй живі сервіси розмовною мовою",
     "proF2": "AI digest — daily, twice-daily, or weekly — to Slack, Discord, Telegram, Email, or webhook",
     "proF3": "Custom Widget Builder — HTML/CSS/JS with AI-assisted modification",

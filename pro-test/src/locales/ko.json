@@ -23,7 +23,7 @@
   },
   "twoPath": {
     "proTitle": "World Monitor Pro",
-    "proDesc": "당신의 AI 분석가. 개인 인텔리전스 데스크. 구축할 수 있는 플랫폼. 모든 라이브 서비스에서 사용할 하나의 키.",
+    "proDesc": "당신의 AI 분석가. 개인 인텔리전스 데스크. 구축할 수 있는 플랫폼.",
     "proF1": "WM Analyst 채팅 — 라이브 서비스를 자연어로 조회",
     "proF2": "AI 다이제스트 — 매일, 하루 두 번 또는 매주 — Slack, Discord, Telegram, 이메일 또는 웹훅으로",
     "proF3": "커스텀 위젯 빌더 — HTML/CSS/JS에 AI 보조 수정",

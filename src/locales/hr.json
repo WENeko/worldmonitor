@@ -1253,11 +1253,11 @@
       "minutesAgo": "prije {{m}}m",
       "hoursAgo": "prije {{h}}h",
       "defconLabels": {
-        "1": "REVOLVER SPREMAN - MAKSIMALNA SPREMNOST",
-        "2": "BRZ TEMPO - ORUŽANE SNAGE SPREMNE",
-        "3": "KRUŽNI DIM - POVEĆANA SPREMNOST SNAGA",
-        "4": "DVOSTRUKI POGLED - POJAČANO OBAVJEŠTAJNO PRAĆENJE",
-        "5": "BLIJEDI IZLAZ - NAJNIŽA SPREMNOST"
+        "1": "Maksimalna aktivnost",
+        "2": "Velika aktivnost",
+        "3": "Povećana aktivnost",
+        "4": "Iznad normalnog",
+        "5": "Normalna aktivnost"
       }
     },
     "strategicPosture": {

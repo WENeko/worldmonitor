@@ -23,7 +23,7 @@
   },
   "twoPath": {
     "proTitle": "World Monitor Pro",
-    "proDesc": "Tu analista IA. Un escritorio de inteligencia personal. Una plataforma sobre la que puedes construir. Una clave en servicios activos.",
+    "proDesc": "Tu analista IA. Un escritorio de inteligencia personal. Una plataforma sobre la que puedes construir.",
     "proF1": "Chat WM Analyst — consulta servicios activos conversacionalmente",
     "proF2": "Resumen de IA — diario, dos veces al día o semanal — a Slack, Discord, Telegram, Email o webhook",
     "proF3": "Constructor de widgets personalizados — HTML/CSS/JS con modificación asistida por IA",

@@ -1101,11 +1101,11 @@
       "minutesAgo": "{{m}}m 전",
       "hoursAgo": "{{h}}h 전",
       "defconLabels": {
-        "1": "COCKED PISTOL - 최대 경계 태세",
-        "2": "FAST PACE - 군 전투 준비 완료",
-        "3": "ROUND HOUSE - 전투 준비 태세 강화",
-        "4": "DOUBLE TAKE - 정보 감시 강화",
-        "5": "FADE OUT - 최저 경계 태세"
+        "1": "최대 활동",
+        "2": "높은 활동",
+        "3": "상승된 활동",
+        "4": "정상 이상",
+        "5": "정상 활동"
       }
     },
     "strategicPosture": {

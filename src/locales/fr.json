@@ -1058,11 +1058,11 @@
       "minutesAgo": "il y a {{m}} min",
       "hoursAgo": "il y a {{h}} h",
       "defconLabels": {
-        "1": "PISTOLET ARMÉ - PRÉPARATION MAXIMALE",
-        "2": "RYTHME RAPIDE - FORCES ARMÉES PRÊTES",
-        "3": "MAISON RONDE - AUGMENTER LA PRÉPARATION DE LA FORCE",
-        "4": "DOUBLE PRISE - VEILLE À INTELLIGENCE AUGMENTÉE",
-        "5": "FADE OUT - PRÉPARATION LA PLUS FAIBLE"
+        "1": "Activité Maximale",
+        "2": "Activité Élevée",
+        "3": "Activité Augmentée",
+        "4": "Au-dessus de la Normale",
+        "5": "Activité Normale"
       }
     },
     "strategicPosture": {

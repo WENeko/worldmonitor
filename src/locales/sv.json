@@ -793,11 +793,11 @@
       "minutesAgo": "{{m}}m sedan",
       "hoursAgo": "{{h}}h sedan",
       "defconLabels": {
-        "1": "SPÄND PISTOL - MAXIMAL BEREDSKAP",
-        "2": "SNABBT FAST - FÖRVARARNA KLART",
-        "3": "RUNDT HUS - ÖKA KRAFTBEREDDIGHETEN",
-        "4": "DUBBEL TAKE - ÖKAD INTELLIGENSKLOCK",
-        "5": "FADE OUT - LÄGSTA BEREDSKAP"
+        "1": "Maximal aktivitet",
+        "2": "Hög aktivitet",
+        "3": "Förhöjd aktivitet",
+        "4": "Över normalt",
+        "5": "Normal aktivitet"
       }
     },
     "stablecoins": {

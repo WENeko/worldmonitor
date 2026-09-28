@@ -1101,11 +1101,11 @@
       "minutesAgo": "{{m}}分前",
       "hoursAgo": "{{h}}時間前",
       "defconLabels": {
-        "1": "COCKED PISTOL — 最大即応態勢",
-        "2": "FAST PACE — 軍即応態勢",
-        "3": "ROUND HOUSE — 即応態勢強化",
-        "4": "DOUBLE TAKE — 情報監視強化",
-        "5": "FADE OUT — 最低即応態勢"
+        "1": "最大活動",
+        "2": "高い活動",
+        "3": "活動増加",
+        "4": "通常以上",
+        "5": "通常の活動"
       }
     },
     "strategicPosture": {

@@ -793,11 +793,11 @@
       "minutesAgo": "{{m}}m geleden",
       "hoursAgo": "{{h}}u geleden",
       "defconLabels": {
-        "1": "GEREGISTREERD PISTOOL - MAXIMALE KLAARHEID",
-        "2": "SNEL TEMPO - STRIJDKRACHTEN KLAAR",
-        "3": "ROND HUIS - VERHOOG DE KRACHTBEREIDING",
-        "4": "DUBBEL NEMEN - VERHOOGDE INTELLIGENTIE HORLOGE",
-        "5": "FADE OUT - LAAGSTE KLAARHEID"
+        "1": "Maximale activiteit",
+        "2": "Hoge activiteit",
+        "3": "Verhoogde activiteit",
+        "4": "Boven normaal",
+        "5": "Normale activiteit"
       }
     },
     "stablecoins": {

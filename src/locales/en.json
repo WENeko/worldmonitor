@@ -1245,11 +1245,11 @@
       "minutesAgo": "{{m}}m ago",
       "hoursAgo": "{{h}}h ago",
       "defconLabels": {
-        "1": "COCKED PISTOL - MAXIMUM READINESS",
-        "2": "FAST PACE - ARMED FORCES READY",
-        "3": "ROUND HOUSE - INCREASE FORCE READINESS",
-        "4": "DOUBLE TAKE - INCREASED INTELLIGENCE WATCH",
-        "5": "FADE OUT - LOWEST READINESS"
+        "1": "Maximum Activity",
+        "2": "High Activity",
+        "3": "Elevated Activity",
+        "4": "Above Normal",
+        "5": "Normal Activity"
       }
     },
     "strategicPosture": {

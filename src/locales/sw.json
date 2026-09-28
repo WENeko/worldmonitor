@@ -1245,11 +1245,11 @@
       "minutesAgo": "Dakika {{m}} zilizopita",
       "hoursAgo": "Saa {{h}} zilizopita",
       "defconLabels": {
-        "1": "BASTOLA ILIYOGONGWA - MAXIMUM READINESS",
-        "2": "KASI YA KASI - VIKOSI VYA SILAHA TAYARI",
-        "3": "NYUMBA YA DUNDE - ONGEZA NGUVU UTAYARI",
-        "4": "DOUBLE TAKE - ONGEZA AKILI SAA",
-        "5": "FADE OUT - UTAYARI WA CHINI KABISA"
+        "1": "Shughuli za Juu Sana",
+        "2": "Shughuli Kubwa",
+        "3": "Shughuli Iliyoongezwa",
+        "4": "Zaidi ya Kawaida",
+        "5": "Shughuli ya Kawaida"
       }
     },
     "strategicPosture": {

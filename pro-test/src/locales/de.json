@@ -23,7 +23,7 @@
   },
   "twoPath": {
     "proTitle": "World Monitor Pro",
-    "proDesc": "Ihr KI-Analyst. Ein persönlicher Intelligence-Desk. Eine Plattform zum Aufbau darauf. Ein Key über alle Live-Services.",
+    "proDesc": "Ihr KI-Analyst. Ein persönlicher Intelligence-Desk. Eine Plattform zum Aufbau darauf.",
     "proF1": "WM Analyst Chat – Live-Services im Gespräch abfragen",
     "proF2": "KI-Digest — täglich, zweimal täglich oder wöchentlich — an Slack, Discord, Telegram, E-Mail oder Webhook",
     "proF3": "Custom Widget Builder — HTML/CSS/JS mit KI-unterstützter Anpassung",

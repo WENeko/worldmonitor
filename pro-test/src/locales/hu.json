@@ -23,7 +23,7 @@
   },
   "twoPath": {
     "proTitle": "World Monitor Pro",
-    "proDesc": "Az Ön AI elemzője. Egy személyes hírszerzési asztal. Egy platform, amelyre fejleszthetsz. Egy kulcs az összes élő szolgáltatáson.",
+    "proDesc": "Az Ön AI elemzője. Egy személyes hírszerzési asztal. Egy platform, amelyre fejleszthetsz.",
     "proF1": "WM Analyst chat — élő szolgáltatások lekérdezése természetes nyelvon",
     "proF2": "AI digest — naponta, naponta kétszer vagy hetente — Slackre, Discordra, Telegramra, e-mailre vagy webhookra",
     "proF3": "Custom Widget Builder — HTML/CSS/JS AI-asszisztált módosítással",

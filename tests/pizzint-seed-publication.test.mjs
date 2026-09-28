@@ -24,10 +24,11 @@ function harness() {
     source: validResponse, writes: [], warnings: [], logs: [], cache: new Map(), now: 1_790_335_140_000, failPayload: false,
     urls: [], gdelt: { ok: true, status: 200, json: async () => ({}) },
     env: {}, besttime: new Map(), besttimeCalls: [], historyCalls: [], failHistory: false, historyError: null,
+    timeouts: [], besttimeGate: null,
   };
   class Clock extends Date { static now() { return state.now; } }
   const context = vm.createContext({
-    Date: Clock, AbortSignal, CHROME_UA: 'test', console: { log: (...args) => state.logs.push(args), warn: (...args) => state.warnings.push(args) },
+    Date: Clock, AbortSignal: { timeout: (ms) => { state.timeouts.push(ms); return AbortSignal.timeout(ms); } }, CHROME_UA: 'test', console: { log: (...args) => state.logs.push(args), warn: (...args) => state.warnings.push(args) },
     process: { env: state.env },
     upstashGet: async (key) => {
       const cached = state.cache.get(key);
@@ -37,6 +38,7 @@ function harness() {
       state.urls.push(url);
       if (url.includes('besttime.app')) {
         state.besttimeCalls.push({ url, method: init?.method });
+        if (state.besttimeGate) await state.besttimeGate;
         const reply = state.besttime.get(new URL(url).searchParams.get('venue_id'));
         if (reply instanceof Error) throw reply;
         return reply ?? { ok: true, status: 200, json: async () => liveUnavailable };
@@ -266,7 +268,7 @@ test('falls back to BestTime live busyness when PizzINT is empty', async () => {
   assert.ok(ids.length >= 4, 'every registered venue is polled');
   assert.ok(state.besttimeCalls.every(({ method, url }) => method === 'POST' && new URL(url).pathname === '/api/v1/forecasts/live'));
   assert.equal(state.cache.has(payloadKey), false, 'no live reading, nothing published');
-  assert.deepEqual(state.warnings.at(-1), [`[PizzINT] BestTime fallback: no live readings (0/${ids.length} venues); accepted=0 unavailable=${ids.length} invalid=0 http=0 transport=0 json=0; preserving last good observation`]);
+  assert.deepEqual(state.warnings.at(-1), [`[PizzINT] BestTime fallback: no live readings (0/${ids.length} venues); accepted=0 unavailable=${ids.length} invalid=0 http=0 timeout=0 transport=0 json=0; preserving last good observation`]);
 
   state.besttime.set(ids[0], liveReading(90, 40));
   state.besttime.set(ids[1], liveReading(30, 35));
@@ -276,7 +278,10 @@ test('falls back to BestTime live busyness when PizzINT is empty', async () => {
   const { data } = state.cache.get(payloadKey);
   const payload = JSON.stringify(data);
   const { pizzint } = data.data ?? data;
-  assert.equal(pizzint.locationsMonitored, 2, 'only venues with a live reading are published');
+  assert.equal(pizzint.locationsMonitored, ids.length, 'every registered venue is published, live or not');
+  assert.deepEqual(pizzint.locations.map(l => l.placeId), ids, 'in registry order');
+  assert.deepEqual(pizzint.locations.slice(2).map(l => l.noLiveSignal), ids.slice(2).map(() => true), 'failed and unavailable venues read as no data');
+  assert.equal(pizzint.locationsOpen, 2);
   assert.equal(pizzint.activeSpikes, 0);
   assert.equal(pizzint.aggregateActivity, 60);
   assert.equal(pizzint.defconLevel, 5, 'the first anomaly has not persisted');
@@ -333,7 +338,8 @@ test('falls back to BestTime when the PizzINT request itself fails', async () =>
   state.now += 600_000;
   await seed();
   const { pizzint } = state.cache.get(payloadKey).data.data ?? state.cache.get(payloadKey).data;
-  assert.equal(pizzint.locationsMonitored, 1);
+  assert.equal(pizzint.locationsMonitored, ids.length);
+  assert.equal(pizzint.locationsOpen, 1);
 });
 
 test('ignores a BestTime error response even when its body looks like a live reading', async () => {
@@ -347,7 +353,9 @@ test('ignores a BestTime error response even when its body looks like a live rea
   state.now += 600_000;
   await seed();
   const { pizzint } = state.cache.get(payloadKey).data.data ?? state.cache.get(payloadKey).data;
-  assert.deepEqual(pizzint.locations.map((l) => l.placeId), [ids[1]]);
+  assert.deepEqual(pizzint.locations.filter((l) => !l.noLiveSignal).map((l) => l.placeId), [ids[1]]);
+  assert.equal(pizzint.locations[0].currentPopularity, 0, 'the error body never becomes a reading');
+  assert.equal(pizzint.locations[0].noLiveSignal, true);
 });
 
 // 2026-09-27: the public key was set as BESTTIME_API_KEY_PRIVATE. BestTime answered
@@ -364,7 +372,7 @@ test('reports a rejected BestTime request instead of calling it no live readings
   state.warnings.length = 0;
   await seed();
   assert.deepEqual(state.warnings.at(-1), [
-    `[PizzINT] BestTime fallback: no live readings (0/${ids.length} venues); accepted=0 unavailable=0 invalid=0 http=${ids.length} transport=0 json=0; preserving last good observation`,
+    `[PizzINT] BestTime fallback: no live readings (0/${ids.length} venues); accepted=0 unavailable=0 invalid=0 http=${ids.length} timeout=0 transport=0 json=0; preserving last good observation`,
   ]);
   assert.doesNotMatch(JSON.stringify(state.warnings), /pri_test_secret_value/);
 });
@@ -629,7 +637,7 @@ test('the registered archive health label reports run-then-stopped, not never-ru
   assert.equal(stopped.seedAgeMin, 180);
 });
 
-for (const category of ['accepted', 'unavailable', 'invalid', 'http', 'transport', 'json']) {
+for (const category of ['accepted', 'unavailable', 'invalid', 'http', 'timeout', 'transport', 'json']) {
   test(`BestTime poll counts ${category} without emitting provider content`, async () => {
     const { state, seed } = harness();
     state.source = emptyResponse;
@@ -643,6 +651,7 @@ for (const category of ['accepted', 'unavailable', 'invalid', 'http', 'transport
       unavailable: { ok: true, json: async () => ({ analysis: { venue_live_busyness_available: false }, message: secret }) },
       invalid: { ok: true, json: async () => ({ analysis: { venue_live_busyness_available: true, venue_live_busyness: secret } }) },
       http: { ok: false, status: 400, json: async () => { errorBodyReads++; return { message: secret }; } },
+      timeout: new DOMException(secret, 'TimeoutError'),
       transport: new Error(secret),
       json: { ok: true, json: async () => { throw new SyntaxError(secret); } },
     };
@@ -652,7 +661,7 @@ for (const category of ['accepted', 'unavailable', 'invalid', 'http', 'transport
     const previous = structuredClone(state.cache);
     await seed();
     assert.equal(errorBodyReads, 0, 'HTTP error bodies must not be read');
-    const counts = ['accepted', 'unavailable', 'invalid', 'http', 'transport', 'json']
+    const counts = ['accepted', 'unavailable', 'invalid', 'http', 'timeout', 'transport', 'json']
       .map(name => `${name}=${name === category ? ids.length : 0}`).join(' ');
     const prefix = category === 'accepted'
       ? `${ids.length}/${ids.length} venues live`
@@ -671,23 +680,23 @@ test('BestTime mixed poll counts reset without changing partial publication or h
   state.env.BESTTIME_API_KEY_PRIVATE = BESTTIME_KEY;
   await seed();
   const ids = state.besttimeCalls.map(({ url }) => new URL(url).searchParams.get('venue_id'));
-  assert.equal(ids.length, 4);
+  assert.equal(ids.length, 6);
   state.besttime.set(ids[0], liveReading(30, 35));
   state.besttime.set(ids[1], { ok: false, status: 429 });
   state.besttime.set(ids[2], { ok: true, json: async () => { throw new SyntaxError('secret'); } });
   state.logs.length = 0;
   await seed();
   assert.deepEqual(state.logs.find(args => String(args[0]).includes('BestTime fallback:')), [
-    '[PizzINT] BestTime fallback: 1/4 venues live; accepted=1 unavailable=1 invalid=0 http=1 transport=0 json=1',
+    '[PizzINT] BestTime fallback: 1/6 venues live; accepted=1 unavailable=3 invalid=0 http=1 timeout=0 transport=0 json=1',
   ]);
   assert.equal(state.cache.get(metaKey).data.recordCount, 1);
-  assert.equal(state.historyCalls.at(-1).locations.length, 2);
+  assert.equal(state.historyCalls.at(-1).locations.length, 4, 'the live venue and the three unavailable venues');
   state.besttime.clear();
   state.warnings.length = 0;
   const previous = structuredClone(state.cache.get(payloadKey));
   await seed();
   assert.deepEqual(state.warnings.at(-1), [
-    '[PizzINT] BestTime fallback: no live readings (0/4 venues); accepted=0 unavailable=4 invalid=0 http=0 transport=0 json=0; preserving last good observation',
+    '[PizzINT] BestTime fallback: no live readings (0/6 venues); accepted=0 unavailable=6 invalid=0 http=0 timeout=0 transport=0 json=0; preserving last good observation',
   ]);
   assert.deepEqual(state.cache.get(payloadKey), previous);
 });
@@ -711,7 +720,7 @@ for (const cancelFails of [false, true]) {
     await seed();
     assert.equal(cancellations, ids.length);
     assert.deepEqual(state.warnings.at(-1), [
-      `[PizzINT] BestTime fallback: no live readings (0/${ids.length} venues); accepted=0 unavailable=0 invalid=0 http=${ids.length} transport=0 json=0; preserving last good observation`,
+      `[PizzINT] BestTime fallback: no live readings (0/${ids.length} venues); accepted=0 unavailable=0 invalid=0 http=${ids.length} timeout=0 transport=0 json=0; preserving last good observation`,
     ]);
     assert.deepEqual(state.cache, previous);
     assert.doesNotMatch(JSON.stringify(state.warnings), /secret\.invalid|pri_test_secret_value/);
@@ -739,7 +748,7 @@ for (const kind of ['abort', 'read', 'malformed']) {
     const previous = structuredClone(state.cache);
     await seed();
     assert.deepEqual(state.warnings.at(-1), [
-      `[PizzINT] BestTime fallback: no live readings (0/${ids.length} venues); accepted=0 unavailable=0 invalid=0 http=0 transport=${kind === 'malformed' ? 0 : ids.length} json=${kind === 'malformed' ? ids.length : 0}; preserving last good observation`,
+      `[PizzINT] BestTime fallback: no live readings (0/${ids.length} venues); accepted=0 unavailable=0 invalid=0 http=0 timeout=0 transport=${kind === 'malformed' ? 0 : ids.length} json=${kind === 'malformed' ? ids.length : 0}; preserving last good observation`,
     ]);
     assert.deepEqual(state.cache, previous);
     assert.doesNotMatch(JSON.stringify(state.warnings), /secret\.invalid|pri_test_secret_value/);
@@ -865,4 +874,114 @@ test('a stale-only publication with no live history leaves no quiet allowance', 
   const heartbeat = run.state.cache.get(metaKey).data.fetchedAt;
   await advance(run);
   assert.equal(run.state.cache.get(metaKey).data.fetchedAt, heartbeat, 'recordCount > 0 must not resurrect the legacy fallback');
+});
+
+const DOMINOS = 'ven_4d2d7454795a336a723962526b3474784b54634d7352694a496843';
+
+test('polls every venue concurrently with a 30-second timeout each', async () => {
+  const { state, seed } = harness();
+  state.source = emptyResponse;
+  state.env.BESTTIME_API_KEY_PRIVATE = BESTTIME_KEY;
+  let release;
+  state.besttimeGate = new Promise((resolve) => { release = resolve; });
+  const pending = seed();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(state.besttimeCalls.length, 6, 'every venue is requested before any reply arrives');
+  release();
+  await pending;
+  assert.deepEqual(state.timeouts.slice(-6), [30_000, 30_000, 30_000, 30_000, 30_000, 30_000]);
+});
+
+for (const [where, reply] of [
+  ['request', new DOMException('slow', 'TimeoutError')],
+  ['body read', new Response(new ReadableStream({
+    pull(controller) { queueMicrotask(() => controller.error(new DOMException('slow', 'TimeoutError'))); },
+  }))],
+]) {
+  test(`a ${where} timeout is counted as timeout, not transport`, async () => {
+    const run = await besttimeHarness([[40, 40]]);
+    run.state.besttime.set(run.ids[1], reply);
+    run.state.logs.length = 0;
+    await advance(run);
+    assert.deepEqual(run.state.logs.find(args => String(args[0]).includes('BestTime fallback:')), [
+      '[PizzINT] BestTime fallback: 1/6 venues live; accepted=1 unavailable=4 invalid=0 http=0 timeout=1 transport=0 json=0',
+    ]);
+  });
+}
+
+test("Domino's is registered live-only: no baseline, never a spike, and BestTime's missing hours do not close it", async () => {
+  const run = await besttimeHarness([[40, 40]]);
+  assert.equal(run.ids[4], DOMINOS);
+  run.state.besttime.set(DOMINOS, liveReading(95, 0, { venue_open: 'Closed' }));
+  for (let tick = 0; tick < 3; tick++) await advance(run);
+  const dominos = run.status().locations.find(l => l.placeId === DOMINOS);
+  assert.equal(dominos.name, "Domino's Pizza");
+  assert.equal(dominos.currentPopularity, 95);
+  assert.equal(dominos.isClosedNow, false);
+  assert.equal(dominos.hasBaseline, false);
+  assert.equal(dominos.noLiveSignal, false);
+  assert.equal(dominos.isSpike, false);
+  assert.equal(run.status().locationsOpen, 2);
+  assert.equal(run.status().defconLevel, 5);
+});
+
+test('an unavailable reply marked Closed publishes the venue as closed, except for a live-only venue', async () => {
+  const run = await besttimeHarness([[40, 40]]);
+  const closedReply = { ok: true, status: 200, json: async () => ({ ...liveUnavailable, venue_info: { venue_open: 'Closed' } }) };
+  run.state.besttime.set(run.ids[1], closedReply);
+  run.state.besttime.set(DOMINOS, closedReply);
+  await advance(run);
+  const byId = new Map(run.status().locations.map(l => [l.placeId, l]));
+  assert.equal(byId.get(run.ids[1]).isClosedNow, true);
+  assert.equal(byId.get(DOMINOS).isClosedNow, false);
+  assert.equal(byId.get(DOMINOS).noLiveSignal, true);
+  assert.equal(byId.get(run.ids[2]).isClosedNow, false, 'an open venue without live data is no data, not closed');
+  assert.equal(byId.get(run.ids[2]).noLiveSignal, true);
+});
+
+test('venue placeholders carry numeric fields and no provider text', async () => {
+  const run = await besttimeHarness([[40, 40]]);
+  run.state.besttime.set(run.ids[1], new Error(`socket ${BESTTIME_KEY}`));
+  run.state.besttime.set(run.ids[2], { ok: false, status: 409 });
+  await advance(run);
+  assert.equal(run.status().locations.length, 6);
+  for (const location of run.status().locations.slice(1)) {
+    assert.equal(location.currentPopularity, 0);
+    assert.equal(location.percentageOfUsual, 0);
+    assert.equal(location.forecastPopularity, 0);
+    assert.equal(location.dataSource, 'besttime');
+    assert.equal(location.isSpike, false);
+  }
+  assert.doesNotMatch(JSON.stringify(run.state.cache.get(payloadKey)), /pri_test_secret_value|socket/);
+  assert.equal(run.state.cache.get(metaKey).data.recordCount, 1, 'recordCount counts live readings, not placeholders');
+});
+
+const PAPA_JOHNS = 'ven_493038537a313933526546526b347432696f537a5538694a496843';
+
+test('Papa Johns (2440 Wilson Blvd) is a forecast venue: baseline, spikes, and BestTime closed hours apply', async () => {
+  const run = await besttimeHarness([[40, 40]]);
+  assert.equal(run.ids[5], PAPA_JOHNS);
+  run.state.besttime.set(PAPA_JOHNS, liveReading(90, 30));
+  for (let tick = 0; tick < 3; tick++) await advance(run);
+  const papaJohns = run.status().locations.find(l => l.placeId === PAPA_JOHNS);
+  assert.equal(papaJohns.name, 'Papa Johns Pizza');
+  assert.equal(papaJohns.hasBaseline, true);
+  assert.equal(papaJohns.percentageOfUsual, 300);
+  assert.equal(papaJohns.isSpike, true, 'three sustained readings at 3x usual');
+  const closedReply = { ok: true, status: 200, json: async () => ({ ...liveUnavailable, venue_info: { venue_open: 'Closed' } }) };
+  run.state.besttime.set(PAPA_JOHNS, closedReply);
+  await advance(run);
+  assert.equal(run.status().locations.find(l => l.placeId === PAPA_JOHNS).isClosedNow, true);
+});
+
+test('a live-only venue ignores any forecast BestTime returns, so it never gains a baseline or spikes', async () => {
+  const run = await besttimeHarness([[40, 40]]);
+  run.state.besttime.set(DOMINOS, liveReading(95, 30));
+  for (let tick = 0; tick < 3; tick++) await advance(run);
+  const dominos = run.status().locations.find(l => l.placeId === DOMINOS);
+  assert.equal(dominos.forecastPopularity, 0);
+  assert.equal(dominos.percentageOfUsual, 0);
+  assert.equal(dominos.hasBaseline, false);
+  assert.equal(dominos.isSpike, false);
+  assert.equal(run.status().activeSpikes, 0);
 });

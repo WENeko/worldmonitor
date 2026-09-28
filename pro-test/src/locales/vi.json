@@ -23,7 +23,7 @@
   },
   "twoPath": {
     "proTitle": "World Monitor Pro",
-    "proDesc": "AI phân tích viên của bạn. Một bàn làm việc tình báo cá nhân. Một nền tảng bạn có thể phát triển trên đó. Một khóa trên các dịch vụ trực tiếp.",
+    "proDesc": "AI phân tích viên của bạn. Một bàn làm việc tình báo cá nhân. Một nền tảng bạn có thể phát triển trên đó.",
     "proF1": "WM Analyst chat — truy vấn các dịch vụ trực tiếp một cách thoại",
     "proF2": "AI digest — hàng ngày, hai lần mỗi ngày hoặc hàng tuần — đến Slack, Discord, Telegram, Email hoặc webhook",
     "proF3": "Custom Widget Builder — HTML/CSS/JS với chỉnh sửa hỗ trợ AI",

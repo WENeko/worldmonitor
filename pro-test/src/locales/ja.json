@@ -23,7 +23,7 @@
   },
   "twoPath": {
     "proTitle": "World Monitor Pro",
-    "proDesc": "AIアナリスト。個人用インテリジェンスデスク。構築できるプラットフォーム。ひとつのキーで全ライブサービスに対応。",
+    "proDesc": "AIアナリスト。個人用インテリジェンスデスク。構築できるプラットフォーム。",
     "proF1": "WM Analyst chat — ライブサービスを会話形式でクエリ可能",
     "proF2": "AI ダイジェスト — 日次、1日2回、または週次 — Slack、Discord、Telegram、メール、Webhook へ",
     "proF3": "カスタムウィジェットビルダー — HTML/CSS/JS を AI 支援で編集",

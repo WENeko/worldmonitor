@@ -23,7 +23,7 @@
   },
   "twoPath": {
     "proTitle": "World Monitor Pro",
-    "proDesc": "你的AI分析師。個人情報工作臺。一個可擴充套件的平臺。一個金鑰統一接入所有即時服務。",
+    "proDesc": "你的AI分析師。個人情報工作臺。一個可擴充套件的平臺。",
     "proF1": "WM Analyst 聊天——對話式查詢即時服務",
     "proF2": "AI 摘要 — 每日、每日兩次或每週 — 至 Slack、Discord、Telegram、郵件或 webhook",
     "proF3": "自訂小工具構建器 — HTML/CSS/JS,AI 輔助修改",

@@ -23,7 +23,7 @@
   },
   "twoPath": {
     "proTitle": "World Monitor Pro",
-    "proDesc": "Analistul tău AI. O birou de intelligence personal. O platformă pe care poți construi. O cheie pe serviciile live.",
+    "proDesc": "Analistul tău AI. O birou de intelligence personal. O platformă pe care poți construi.",
     "proF1": "WM Analyst chat — interogare conversațională a serviciilor live",
     "proF2": "Digest IA — zilnic, de două ori pe zi sau săptămânal — pe Slack, Discord, Telegram, Email sau webhook",
     "proF3": "Custom Widget Builder — HTML/CSS/JS cu modificare asistată de IA",

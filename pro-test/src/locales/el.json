@@ -23,7 +23,7 @@
   },
   "twoPath": {
     "proTitle": "World Monitor Pro",
-    "proDesc": "Ο δικός σας AI αναλυτής. Ένα προσωπικό γραφείο intelligence. Μια πλατφόρμα που μπορείτε να δημιουργήσετε. Ένα κλειδί σε όλες τις live υπηρεσίες.",
+    "proDesc": "Ο δικός σας AI αναλυτής. Ένα προσωπικό γραφείο intelligence. Μια πλατφόρμα που μπορείτε να δημιουργήσετε.",
     "proF1": "WM Analyst chat — δυνατότητα αναζήτησης σε live υπηρεσίες με συνομιλία",
     "proF2": "AI digest — καθημερινά, δύο φορές την ημέρα ή εβδομαδιαία — σε Slack, Discord, Telegram, Email ή webhook",
     "proF3": "Custom Widget Builder — HTML/CSS/JS με τροποποίηση υποβοηθούμενη από AI",

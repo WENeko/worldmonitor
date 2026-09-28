@@ -8069,7 +8069,7 @@ function startChokepointFlowsSeedLoop() {
 // Fetches from pizzint.watch on Railway (datacenter IPs blocked
 // from Vercel Edge). Vercel handler reads from seed key only.
 // ─────────────────────────────────────────────────────────────
-// 15 min is the BestTime paid-plan budget: 4 venues × 96 polls/day.
+// 15 min is the BestTime paid-plan budget: 96 polls/day per venue.
 const PIZZINT_SEED_INTERVAL_MS = 15 * 60 * 1000;
 const PIZZINT_SEED_TTL = 2700; // 45 min (3× interval)
 const PIZZINT_SEED_META_KEY = 'seed-meta:intelligence:pizzint';
@@ -8081,14 +8081,21 @@ const PIZZINT_REDIS_KEY = 'intelligence:pizzint:seed:v1';
 const PIZZINT_API = 'https://www.pizzint.watch/api/dashboard-data';
 // Fallback feed while PizzINT itself is down: BestTime live busyness for the
 // Pentagon-area venues PizzINT tracks. Registered 2026-09-27 via BestTime's
-// forecast endpoint; Domino's (2602 Columbia Pike) and Papa Johns (3400
-// Columbia Pike) have too little visitor volume for BestTime to forecast.
+// forecast endpoint; Papa Johns (2440 Wilson Blvd) on 2026-09-28, the branch
+// PizzINT tracks (3400 Columbia Pike was a wrong address). Domino's
+// (3535 S Ball St) has too little visitor volume to forecast; its id came from
+// a live lookup by name and address on 2026-09-28, so it is liveOnly: no
+// baseline, and without a forecast BestTime has no opening hours for it (the
+// Columbia Pike branch reported Closed at lunchtime).
 const PIZZINT_BESTTIME_LIVE_API = 'https://besttime.app/api/v1/forecasts/live';
+const PIZZINT_BESTTIME_TIMEOUT_MS = 30_000;
 const PIZZINT_BESTTIME_VENUES = [
   { venueId: 'ven_636a594762457274396434526b347433654365726959634a496843', name: 'Extreme Pizza', lat: 38.8602396, lng: -77.0559854 },
   { venueId: 'ven_41336f327a61637672416e526b34743375584c655132344a496843', name: 'District Pizza Palace', lat: 38.8527414, lng: -77.0531408 },
   { venueId: 'ven_636b324a746c7a45666534526b347432794e41455465374a496843', name: 'Nighthawk Brewery & Pizza', lat: 38.8631637, lng: -77.0624806 },
   { venueId: 'ven_67314d44325f7774795356526b3474336d515f6e6962724a496843', name: 'Pizzato Pizza', lat: 38.8806865, lng: -77.089827 },
+  { venueId: 'ven_4d2d7454795a336a723962526b3474784b54634d7352694a496843', name: "Domino's Pizza", lat: 38.8430908, lng: -77.0507832, liveOnly: true },
+  { venueId: 'ven_493038537a313933526546526b347432696f537a5538694a496843', name: 'Papa Johns Pizza', lat: 38.8903112, lng: -77.0883773 },
 ];
 let pizzintSeedInFlight = false;
 
@@ -8136,7 +8143,8 @@ function pizzintLocationFromBestTime(venue, reply) {
   const live = analysis.venue_live_busyness;
   if (analysis.venue_live_busyness_available !== true || typeof live !== 'number' || !Number.isFinite(live)) return null;
   const forecast = analysis.venue_forecasted_busyness;
-  const hasForecast = analysis.venue_forecast_busyness_available === true
+  // A live-only venue never takes a baseline, even if BestTime starts sending one.
+  const hasForecast = !venue.liveOnly && analysis.venue_forecast_busyness_available === true
     && typeof forecast === 'number' && Number.isFinite(forecast) && forecast > 0;
   return {
     placeId: venue.venueId,
@@ -8148,70 +8156,104 @@ function pizzintLocationFromBestTime(venue, reply) {
     dataSource: 'besttime',
     recordedAt: new Date(Date.now()).toISOString(),
     dataFreshness: 'DATA_FRESHNESS_FRESH',
-    isClosedNow: info.venue_open === 'Closed',
+    isClosedNow: pizzintBestTimeClosed(venue, reply),
+    lat: venue.lat,
+    lng: venue.lng,
+  };
+}
+
+function pizzintBestTimeClosed(venue, reply) {
+  return !venue.liveOnly && reply?.venue_info?.venue_open === 'Closed';
+}
+
+// One venue's outcome. Never throws; every failure is a fixed category.
+async function pollPizzintBestTimeVenue(apiKey, venue) {
+  const url = `${PIZZINT_BESTTIME_LIVE_API}?api_key_private=${encodeURIComponent(apiKey)}&venue_id=${encodeURIComponent(venue.venueId)}`;
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
+      signal: AbortSignal.timeout(PIZZINT_BESTTIME_TIMEOUT_MS),
+    });
+    if (!resp.ok) {
+      try { await resp.body?.cancel(); } catch { /* Keep the HTTP outcome if cleanup fails. */ }
+      return { outcome: 'http' };
+    }
+    let reply;
+    try {
+      reply = await resp.json();
+    } catch (error) {
+      return { outcome: error?.name === 'SyntaxError' ? 'json' : error?.name === 'TimeoutError' ? 'timeout' : 'transport' };
+    }
+    const location = pizzintLocationFromBestTime(venue, reply);
+    if (location) return { outcome: 'accepted', location, reply };
+    return { outcome: reply?.analysis?.venue_live_busyness_available === false ? 'unavailable' : 'invalid', reply };
+  } catch (error) {
+    return { outcome: error?.name === 'TimeoutError' ? 'timeout' : 'transport' };
+  }
+}
+
+// A registered venue without a live reading this poll. Zero live and zero
+// forecast make the scorer mark it noLiveSignal (shown as NO DATA) unless the
+// provider reported it closed.
+function pizzintBestTimePlaceholder(venue, reply) {
+  return {
+    placeId: venue.venueId,
+    name: venue.name,
+    address: typeof reply?.venue_info?.venue_address === 'string' ? reply.venue_info.venue_address : '',
+    currentPopularity: 0,
+    percentageOfUsual: 0,
+    forecastPopularity: 0,
+    dataSource: 'besttime',
+    recordedAt: '',
+    dataFreshness: 'DATA_FRESHNESS_STALE',
+    isClosedNow: pizzintBestTimeClosed(venue, reply),
     lat: venue.lat,
     lng: venue.lng,
   };
 }
 
 // The private key travels only in the request URL, which is never logged.
+// locations: venues with a live reading. published: every registered venue in
+// registry order, with placeholders for the rest (the same objects, so scoring
+// one scores both).
 async function fetchPizzintBestTimeLocations(apiKey) {
+  const polls = await Promise.all(PIZZINT_BESTTIME_VENUES.map(venue => pollPizzintBestTimeVenue(apiKey, venue)));
+  const counts = { accepted: 0, unavailable: 0, invalid: 0, http: 0, timeout: 0, transport: 0, json: 0 };
   const locations = [];
+  const published = [];
   const historyLocations = [];
-  const counts = { accepted: 0, unavailable: 0, invalid: 0, http: 0, transport: 0, json: 0 };
-  for (const venue of PIZZINT_BESTTIME_VENUES) {
-    const url = `${PIZZINT_BESTTIME_LIVE_API}?api_key_private=${encodeURIComponent(apiKey)}&venue_id=${encodeURIComponent(venue.venueId)}`;
-    try {
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!resp.ok) {
-        counts.http++;
-        try { await resp.body?.cancel(); } catch { /* Keep the HTTP outcome if cleanup fails. */ }
-        continue;
-      }
-      let reply;
-      try {
-        reply = await resp.json();
-      } catch (error) {
-        if (error?.name === 'SyntaxError') counts.json++;
-        else counts.transport++;
-        continue;
-      }
-      const location = pizzintLocationFromBestTime(venue, reply);
-      if (location) {
-        counts.accepted++;
-        locations.push(location);
-        historyLocations.push(location);
-      } else {
-        if (reply?.analysis?.venue_live_busyness_available === false) counts.unavailable++;
-        else counts.invalid++;
-        historyLocations.push({
-          placeId: venue.venueId,
-          currentPopularity: null,
-          forecastPopularity: reply?.analysis?.venue_forecast_busyness_available === true && Number.isFinite(reply?.analysis?.venue_forecasted_busyness) ? reply.analysis.venue_forecasted_busyness : null,
-          dataSource: 'besttime',
-          recordedAt: '',
-          dataFreshness: 'DATA_FRESHNESS_FRESH',
-          isClosedNow: reply?.venue_info?.venue_open === 'Closed',
-          noLiveSignal: true,
-        });
-      }
-    } catch {
-      counts.transport++;
+  PIZZINT_BESTTIME_VENUES.forEach((venue, i) => {
+    const { outcome, location, reply } = polls[i];
+    counts[outcome]++;
+    if (location) {
+      locations.push(location);
+      published.push(location);
+      historyLocations.push(location);
+      return;
     }
-  }
+    published.push(pizzintBestTimePlaceholder(venue, reply));
+    if (!reply) return;
+    historyLocations.push({
+      placeId: venue.venueId,
+      currentPopularity: null,
+      forecastPopularity: reply?.analysis?.venue_forecast_busyness_available === true && Number.isFinite(reply?.analysis?.venue_forecasted_busyness) ? reply.analysis.venue_forecasted_busyness : null,
+      dataSource: 'besttime',
+      recordedAt: '',
+      dataFreshness: 'DATA_FRESHNESS_FRESH',
+      isClosedNow: pizzintBestTimeClosed(venue, reply),
+      noLiveSignal: true,
+    });
+  });
   const summary = Object.entries(counts).map(([category, count]) => `${category}=${count}`).join(' ');
   // Every venue answered cleanly; with no accepted reading, all reported unavailable.
   const answered = counts.accepted + counts.unavailable === PIZZINT_BESTTIME_VENUES.length;
   if (locations.length === 0) {
     console.warn(`[PizzINT] BestTime fallback: no live readings (0/${PIZZINT_BESTTIME_VENUES.length} venues); ${summary}; preserving last good observation`);
-    return historyLocations.length ? { locations, historyLocations, answered } : null;
+    return historyLocations.length ? { locations, published, historyLocations, answered } : null;
   }
   console.log(`[PizzINT] BestTime fallback: ${locations.length}/${PIZZINT_BESTTIME_VENUES.length} venues live; ${summary}`);
-  return { locations, historyLocations, answered };
+  return { locations, published, historyLocations, answered };
 }
 
 function pizzintLastLiveAt(meta) {
@@ -8283,7 +8325,9 @@ async function seedPizzint() {
     }));
 
     const previous = await envelopeRead(PIZZINT_REDIS_KEY);
-    const adjusted = scorePizzintLocations(locations, previous?.pizzint, Date.now());
+    // Every registered venue is published; only live readings decide whether to publish.
+    const published = fallback?.published || locations;
+    const adjusted = scorePizzintLocations(published, previous?.pizzint, Date.now());
     archive = recordPizzintHistory({
       provider: fallback ? 'besttime' : 'pizzint',
       locations: fallback?.historyLocations || locations,
@@ -8310,8 +8354,8 @@ async function seedPizzint() {
       console.warn('[PizzINT] No live signals; preserving last good observation');
       return;
     }
-    const openLocations = locations.filter((l) => !l.isClosedNow && !l.noLiveSignal);
-    const activeSpikes = locations.filter((l) => l.isSpike).length;
+    const openLocations = published.filter((l) => !l.isClosedNow && !l.noLiveSignal);
+    const activeSpikes = published.filter((l) => l.isSpike).length;
     const avgPop = openLocations.length > 0
       ? openLocations.reduce((s, l) => s + l.currentPopularity, 0) / openLocations.length
       : 0;
@@ -8330,11 +8374,11 @@ async function seedPizzint() {
       defconLabel,
       aggregateActivity: Math.round(avgPop),
       activeSpikes,
-      locationsMonitored: locations.length,
+      locationsMonitored: published.length,
       locationsOpen: openLocations.length,
       updatedAt: Date.now(),
       dataFreshness: hasFresh ? 'DATA_FRESHNESS_FRESH' : 'DATA_FRESHNESS_STALE',
-      locations,
+      locations: published,
     };
 
     const payload = { pizzint, tensionPairs: [] };

@@ -218,8 +218,24 @@ not retain tension responses for cache fallback. Healthy ingestion does not mean
 that the 90-day scoring history is ready.
 The probe stays pending until the first successful data and metadata publication
 sets its durable activation marker. It then enforces freshness permanently.
-Pizza outages do not hide available tensions. Initial rollout builds history
-through normal worker runs; it does not backfill exports.
+Pizza outages do not hide available tensions.
+
+Each worker run also repairs history. It walks the past days in the window
+that are missing or lack any of their 96 cohorts, newest first, and rebuilds
+up to two of them from that day's GDELT export files. A rebuilt day replaces
+the stored day. It is never added to it, so the partial first day of
+collection counts once. Only days before the replay cursor's day are repaired,
+so the live merge never adds to a rebuilt day. The worker downloads a day only
+when the GDELT master file list names all 96 of its exports, and checks each
+file against the listed size and MD5. A day with an upstream gap is skipped
+without downloading it and does not count toward the two. A day whose download
+or verification fails is recorded in the snapshot's `repairFailures` and
+skipped for six hours, so it cannot hold the run's slots while older days wait.
+A later successful rebuild clears its record. The repair has a 60-second budget
+per run. When the budget runs out, the worker aborts in-flight downloads and
+starts no new ones. A failure or an overrun keeps the days that finished and
+never delays or fails the live publication. An empty window fills in about 45
+runs, about 11 hours.
 
 ## Related Assets
 

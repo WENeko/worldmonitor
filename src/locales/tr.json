@@ -1104,11 +1104,11 @@
       "minutesAgo": "{{m}}dk once",
       "hoursAgo": "{{h}}sa once",
       "defconLabels": {
-        "1": "KURBALI TABANCA - MAKSIMUM HAZIRLIK",
-        "2": "HIZLI TEMPO - SILAHLI KUVVETLER HAZIR",
-        "3": "YUVARLAK EV - KUVVET HAZIRLIGINI ARTIR",
-        "4": "CIFT KONTROL - ARTIRILMIS ISTIHBARAT GOZETIMI",
-        "5": "SOLMA - EN DUSUK HAZIRLIK"
+        "1": "Maksimum Aktivite",
+        "2": "Yüksek Aktivite",
+        "3": "Artan Aktivite",
+        "4": "Normalin Üstünde",
+        "5": "Normal Aktivite"
       }
     },
     "strategicPosture": {

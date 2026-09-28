@@ -1245,11 +1245,11 @@
       "minutesAgo": "{{m}}p ezelőtt",
       "hoursAgo": "{{h}}ó ezelőtt",
       "defconLabels": {
-        "1": "FEGYVEREZETT PISZTOLY - MAXIMÁLIS KÉSZENLÉT",
-        "2": "GYORS ÜTEM - FEGYVERES ERŐK KÉSZEN ÁLLNAK",
-        "3": "KEREK HÁZ - MEGNÖVELT ERŐKÉSZENLÉT",
-        "4": "KETTŐS NÉZET - MEGNÖVELT HÍRSZERZÉSI MEGFIGYELÉS",
-        "5": "ELHALVÁNYULÁS - LEGALACSONYABB KÉSZENLÉT"
+        "1": "Maximális aktivitás",
+        "2": "Magas aktivitás",
+        "3": "Emelt szintű aktivitás",
+        "4": "Az átlag felett",
+        "5": "Normál aktivitás"
       }
     },
     "strategicPosture": {
