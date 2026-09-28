@@ -89,6 +89,7 @@ const {
   summarizeServedCoverage,
 } = require('./_ingestion-coverage.cjs');
 const { maintainClosedMarketEquityKeys: maintainClosedMarketEquityKeysWithDeps } = require('./shared/closed-market-equity-maintenance.cjs');
+const { recordPizzintHistory } = require('./shared/pizzint-history.cjs');
 const { getUsEquitySession, isMultiMarketEquityTradingDay } = require('./shared/market-hours.cjs');
 const { mergeLastGoodQuotes, planYahooRefresh, resolveMergedQuotesAsOf } = require('./shared/market-quote-refresh.cjs');
 // ESM module loaded via require(esm) (Node >= 22.12; relay image is node:24).
@@ -717,6 +718,8 @@ function upstashEval(script, keys, args) {
       timeout: 5000,
     }, (resp) => {
       let data = '';
+      resp.on('error', () => resolve(null));
+      resp.on('aborted', () => resolve(null));
       resp.on('data', (chunk) => { data += chunk; });
       resp.on('end', () => {
         try { resolve(JSON.parse(data)?.result); } catch { resolve(null); }
@@ -8066,8 +8069,14 @@ function startChokepointFlowsSeedLoop() {
 // Fetches from pizzint.watch on Railway (datacenter IPs blocked
 // from Vercel Edge). Vercel handler reads from seed key only.
 // ─────────────────────────────────────────────────────────────
-const PIZZINT_SEED_INTERVAL_MS = 10 * 60 * 1000; // 10 min
-const PIZZINT_SEED_TTL = 1800; // 30 min (3× interval)
+// 15 min is the BestTime paid-plan budget: 4 venues × 96 polls/day.
+const PIZZINT_SEED_INTERVAL_MS = 15 * 60 * 1000;
+const PIZZINT_SEED_TTL = 2700; // 45 min (3× interval)
+const PIZZINT_SEED_META_KEY = 'seed-meta:intelligence:pizzint';
+// Venues that answer cleanly without a live reading (closed, or not reporting
+// yet) keep the heartbeat fresh, but only this long after the last live
+// reading, so a venue that never comes back still surfaces as stale.
+const PIZZINT_QUIET_MAX_MS = 24 * 60 * 60 * 1000;
 const PIZZINT_REDIS_KEY = 'intelligence:pizzint:seed:v1';
 const PIZZINT_API = 'https://www.pizzint.watch/api/dashboard-data';
 // Fallback feed while PizzINT itself is down: BestTime live busyness for the
@@ -8085,8 +8094,9 @@ let pizzintSeedInFlight = false;
 
 // World Monitor index, identical for both providers; provider DEFCON is ignored.
 // A candidate needs >=150% of hourly usual AND >=25 busyness points of excess.
-// Require 20 elapsed minutes of fresh, distinct observations with polling gaps
-// of 9–15 minutes. Missing/closed/stale readings or a provider change reset it.
+// Require three consecutive fresh, distinct observations: each gap must be
+// 0.9–1.5× the polling interval, so 1.8× elapsed means at least three readings.
+// Missing/closed/stale readings or a provider change reset it.
 // Each sustained venue contributes min(25, excess percent / 5) index points.
 // Sum thresholds 25/50/70/85 map to DEFCON 4/3/2/1; otherwise DEFCON 5.
 // See docs/algorithms.mdx. This is a venue-activity index, not military readiness.
@@ -8104,16 +8114,16 @@ function scorePizzintLocations(locations, previous, now) {
     const observedAt = Date.parse(location.recordedAt);
     const candidate = !location.isClosedNow && !location.noLiveSignal
       && location.dataFreshness === 'DATA_FRESHNESS_FRESH'
-      && Number.isFinite(observedAt) && observedAt <= now && now - observedAt <= 15 * 60_000
+      && Number.isFinite(observedAt) && observedAt <= now && now - observedAt <= PIZZINT_SEED_INTERVAL_MS
       && location.percentageOfUsual >= 150 && delta >= 25;
     const prior = priorLocations.find(l => l.placeId === location.placeId && l.dataSource === location.dataSource);
-    const continues = candidate && gap >= 9 * 60_000 && gap <= 15 * 60_000
+    const continues = candidate && gap >= 0.9 * PIZZINT_SEED_INTERVAL_MS && gap <= 1.5 * PIZZINT_SEED_INTERVAL_MS
       && prior?.anomalyStartedAt > 0 && prior.anomalyStartedAt <= previous.updatedAt
       && observedAt > Date.parse(prior.recordedAt);
     // Internal cache fields survive relay restarts. Old payloads have no start
     // time and start afresh.
     location.anomalyStartedAt = candidate ? (continues ? prior.anomalyStartedAt : now) : 0;
-    location.isSpike = candidate && now - location.anomalyStartedAt >= 20 * 60_000;
+    location.isSpike = candidate && now - location.anomalyStartedAt >= 1.8 * PIZZINT_SEED_INTERVAL_MS;
     location.spikeMagnitude = location.isSpike ? delta : 0;
     if (location.isSpike) score += Math.min(25, (location.percentageOfUsual - 100) / 5);
   }
@@ -8144,13 +8154,11 @@ function pizzintLocationFromBestTime(venue, reply) {
   };
 }
 
-// Returns locations for the venues with a live reading, or null when there is
-// none. The private key travels only in the request URL, which is never logged.
+// The private key travels only in the request URL, which is never logged.
 async function fetchPizzintBestTimeLocations(apiKey) {
   const locations = [];
-  // A rejected request (bad key, quota) must not read as "no live readings".
-  let rejected = 0;
-  let rejection = '';
+  const historyLocations = [];
+  const counts = { accepted: 0, unavailable: 0, invalid: 0, http: 0, transport: 0, json: 0 };
   for (const venue of PIZZINT_BESTTIME_VENUES) {
     const url = `${PIZZINT_BESTTIME_LIVE_API}?api_key_private=${encodeURIComponent(apiKey)}&venue_id=${encodeURIComponent(venue.venueId)}`;
     try {
@@ -8160,31 +8168,75 @@ async function fetchPizzintBestTimeLocations(apiKey) {
         signal: AbortSignal.timeout(15_000),
       });
       if (!resp.ok) {
-        rejected++;
-        if (!rejection) {
-          const body = await resp.json().catch(() => null);
-          const message = typeof body?.message === 'string' ? body.message : '';
-          rejection = `HTTP ${Number(resp.status) || 0}${message ? ` ${message.split(apiKey).join('***').slice(0, 120)}` : ''}`;
-        }
+        counts.http++;
+        try { await resp.body?.cancel(); } catch { /* Keep the HTTP outcome if cleanup fails. */ }
         continue;
       }
-      const location = pizzintLocationFromBestTime(venue, await resp.json());
-      if (location) locations.push(location);
-    } catch { /* one venue's failure never blocks the others */ }
+      let reply;
+      try {
+        reply = await resp.json();
+      } catch (error) {
+        if (error?.name === 'SyntaxError') counts.json++;
+        else counts.transport++;
+        continue;
+      }
+      const location = pizzintLocationFromBestTime(venue, reply);
+      if (location) {
+        counts.accepted++;
+        locations.push(location);
+        historyLocations.push(location);
+      } else {
+        if (reply?.analysis?.venue_live_busyness_available === false) counts.unavailable++;
+        else counts.invalid++;
+        historyLocations.push({
+          placeId: venue.venueId,
+          currentPopularity: null,
+          forecastPopularity: reply?.analysis?.venue_forecast_busyness_available === true && Number.isFinite(reply?.analysis?.venue_forecasted_busyness) ? reply.analysis.venue_forecasted_busyness : null,
+          dataSource: 'besttime',
+          recordedAt: '',
+          dataFreshness: 'DATA_FRESHNESS_FRESH',
+          isClosedNow: reply?.venue_info?.venue_open === 'Closed',
+          noLiveSignal: true,
+        });
+      }
+    } catch {
+      counts.transport++;
+    }
   }
-  const rejectedNote = rejected ? `; ${rejected} rejected: ${rejection}` : '';
+  const summary = Object.entries(counts).map(([category, count]) => `${category}=${count}`).join(' ');
+  // Every venue answered cleanly; with no accepted reading, all reported unavailable.
+  const answered = counts.accepted + counts.unavailable === PIZZINT_BESTTIME_VENUES.length;
   if (locations.length === 0) {
-    console.warn(`[PizzINT] BestTime fallback: no live readings (0/${PIZZINT_BESTTIME_VENUES.length} venues${rejectedNote}); preserving last good observation`);
-    return null;
+    console.warn(`[PizzINT] BestTime fallback: no live readings (0/${PIZZINT_BESTTIME_VENUES.length} venues); ${summary}; preserving last good observation`);
+    return historyLocations.length ? { locations, historyLocations, answered } : null;
   }
-  console.log(`[PizzINT] BestTime fallback: ${locations.length}/${PIZZINT_BESTTIME_VENUES.length} venues live${rejectedNote}`);
-  return locations;
+  console.log(`[PizzINT] BestTime fallback: ${locations.length}/${PIZZINT_BESTTIME_VENUES.length} venues live; ${summary}`);
+  return { locations, historyLocations, answered };
+}
+
+function pizzintLastLiveAt(meta) {
+  if (meta && 'lastLiveAt' in meta) return Number(meta.lastLiveAt) || 0;
+  // Metadata written before lastLiveAt existed: its fetchedAt was a live publish.
+  return meta?.recordCount > 0 ? Number(meta.fetchedAt) || 0 : 0;
+}
+
+// A clean poll with no live reading is quiet hours, not an outage: advance the
+// heartbeat without touching the live payload. api/health.js lists pizzint in
+// EMPTY_DATA_OK_KEYS, so the expired payload then reads OK while this runs, and
+// STALE_SEED once it stops (provider errors, a dead loop, or 24h without a live
+// reading).
+async function recordPizzintQuietPoll() {
+  const lastLiveAt = pizzintLastLiveAt(await upstashGet(PIZZINT_SEED_META_KEY));
+  const now = Date.now();
+  if (!lastLiveAt || now - lastLiveAt >= PIZZINT_QUIET_MAX_MS) return;
+  await upstashSet(PIZZINT_SEED_META_KEY, { fetchedAt: now, recordCount: 0, lastLiveAt }, 604800);
 }
 
 async function seedPizzint() {
   if (pizzintSeedInFlight) return;
   pizzintSeedInFlight = true;
   const t0 = Date.now();
+  let archive;
   try {
     let raw = null;
     try {
@@ -8211,7 +8263,7 @@ async function seedPizzint() {
     const fallback = besttimeKey ? await fetchPizzintBestTimeLocations(besttimeKey) : null;
     if (!raw && !fallback) return;
 
-    const locations = fallback || raw.data.map((d) => ({
+    const locations = fallback?.locations || raw.data.map((d) => ({
       placeId: d.place_id || '',
       name: d.name || '',
       address: d.address || '',
@@ -8232,6 +8284,28 @@ async function seedPizzint() {
 
     const previous = await envelopeRead(PIZZINT_REDIS_KEY);
     const adjusted = scorePizzintLocations(locations, previous?.pizzint, Date.now());
+    archive = recordPizzintHistory({
+      provider: fallback ? 'besttime' : 'pizzint',
+      locations: fallback?.historyLocations || locations,
+      capturedAt: new Date(Date.now()).toISOString(),
+    }, upstashEval).catch((e) => {
+      // A FIXED vocabulary, never the raw message: upstream error text can carry
+      // the request URL and its embedded credential, which is why the publication
+      // suite throws 'secret archive failure' and asserts it never reaches a log.
+      // The category still tells an operator whether the next poll can recover --
+      // bounds and validation repeat forever (a 25th upstream venue tripping
+      // MAX_LOCATIONS, say), write_rejected may be a one-off. Compared by name
+      // rather than instanceof so it survives a cross-realm error.
+      const category = e?.name === 'RangeError' ? 'bounds'
+        : e?.name === 'TypeError' ? 'validation'
+        : e?.message === 'history_write_failed' ? 'write_rejected' : 'unknown';
+      console.warn('[PizzINT] History archive failed:', category);
+    });
+    if (locations.length === 0) {
+      // BestTime reported every venue as having no live data right now.
+      if (fallback?.answered) await recordPizzintQuietPoll();
+      return;
+    }
     if (locations.every(l => l.noLiveSignal)) {
       console.warn('[PizzINT] No live signals; preserving last good observation');
       return;
@@ -8265,11 +8339,14 @@ async function seedPizzint() {
 
     const payload = { pizzint, tensionPairs: [] };
     const ok1 = await envelopeWrite(PIZZINT_REDIS_KEY, payload, PIZZINT_SEED_TTL, { recordCount: locations.length, sourceVersion: fallback ? 'besttime-live' : 'pizzint' });
-    const ok2 = ok1 && await upstashSet('seed-meta:intelligence:pizzint', { fetchedAt: Date.now(), recordCount: locations.length }, 604800);
+    // A stale-only publication carries lastLiveAt forward; it is not a live reading.
+    const lastLiveAt = hasFresh ? Date.now() : pizzintLastLiveAt(await upstashGet(PIZZINT_SEED_META_KEY));
+    const ok2 = ok1 && await upstashSet(PIZZINT_SEED_META_KEY, { fetchedAt: Date.now(), recordCount: locations.length, lastLiveAt }, 604800);
     console.log(`[PizzINT] Seeded ${locations.length} locations (open:${openLocations.length} spikes:${activeSpikes} defcon:${defconLevel} redis:${ok1 && ok2 ? 'OK' : 'PARTIAL'}) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   } catch (e) {
     console.warn('[PizzINT] Seed error:', e?.message || e);
   } finally {
+    await archive;
     pizzintSeedInFlight = false;
   }
 }

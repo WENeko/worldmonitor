@@ -123,6 +123,39 @@ test('built welcome page ships the real hero in #root before JavaScript', { skip
   assert.match(rootContent, /<img[^>]+src="\/pro\/assets\/worldmonitor-7-mar-2026-[^"]+\.jpg"[^>]+fetchPriority="high"/);
 });
 
+test('built welcome root hides no SSR content and links every primary reference page', { skip }, () => {
+  const { content: rootContent } = welcomeRoot();
+  // Content styled invisible or off-position before hydration reads to crawlers as cloaking.
+  const hiddenContentNodes = [...rootContent.matchAll(/<[a-z][a-z0-9:-]*\b[^>]*\bstyle="([^"]*)"[^>]*>/gi)]
+    .filter(([tag, style]) =>
+      !/\baria-hidden="true"/i.test(tag)
+      && /(?:opacity:\s*0(?![\d.])|transform:\s*translate(?:3d|[xyz])?\()/i.test(style),
+    )
+    .map(([tag]) => tag);
+  assert.deepEqual(hiddenContentNodes, [], 'the welcome root must not hide or translate SSR content before hydration');
+  assert.match(rootContent, /ACLED/);
+  assert.match(rootContent, /NASA FIRMS/);
+  // Exact href of a real anchor: a substring match would accept data-href=,
+  // non-anchor elements, or a longer path such as /countries/old.
+  const anchorHrefs = new Set(
+    [...rootContent.matchAll(/<a\b[^>]*>/gi)]
+      .map(([tag]) => /\shref="([^"]*)"/i.exec(tag)?.[1])
+      .filter((href) => href !== undefined),
+  );
+  for (const href of [
+    '/countries/',
+    '/chokepoints/',
+    '/crises/',
+    '/tools/',
+    '/blog/',
+    'https://www.worldmonitor.app/docs/documentation',
+    '/pro#pricing',
+    'https://github.com/koala73/worldmonitor',
+  ]) {
+    assert.ok(anchorHrefs.has(href), `visible welcome content should contain an <a href="${href}">`);
+  }
+});
+
 test('built welcome page prerenders task routes and agent discovery links', { skip }, () => {
   const { content: rootContent } = welcomeRoot();
   const heroIndex = rootContent.indexOf('By the time it&#x27;s news,');
