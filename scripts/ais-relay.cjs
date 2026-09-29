@@ -8262,16 +8262,18 @@ function pizzintLastLiveAt(meta) {
   return meta?.recordCount > 0 ? Number(meta.fetchedAt) || 0 : 0;
 }
 
-// A clean poll with no live reading is quiet hours, not an outage: advance the
+// A clean poll with no usable live reading is quiet hours, not an outage: advance the
 // heartbeat without touching the live payload. api/health.js lists pizzint in
 // EMPTY_DATA_OK_KEYS, so the expired payload then reads OK while this runs, and
 // STALE_SEED once it stops (provider errors, a dead loop, or 24h without a live
 // reading).
-async function recordPizzintQuietPoll() {
+// Also used for a publication without a live signal. Returns false only when the
+// write itself fails; a heartbeat withheld by the cap is not a failure.
+async function recordPizzintQuietPoll(recordCount = 0) {
   const lastLiveAt = pizzintLastLiveAt(await upstashGet(PIZZINT_SEED_META_KEY));
   const now = Date.now();
-  if (!lastLiveAt || now - lastLiveAt >= PIZZINT_QUIET_MAX_MS) return;
-  await upstashSet(PIZZINT_SEED_META_KEY, { fetchedAt: now, recordCount: 0, lastLiveAt }, 604800);
+  if (!lastLiveAt || now - lastLiveAt >= PIZZINT_QUIET_MAX_MS) return true;
+  return upstashSet(PIZZINT_SEED_META_KEY, { fetchedAt: now, recordCount, lastLiveAt }, 604800);
 }
 
 async function seedPizzint() {
@@ -8352,6 +8354,9 @@ async function seedPizzint() {
     }
     if (locations.every(l => l.noLiveSignal)) {
       console.warn('[PizzINT] No live signals; preserving last good observation');
+      // BestTime still answered every venue cleanly (e.g. a closing venue reading
+      // 0), so the source is healthy; the 24h lastLiveAt cap catches dead sensors.
+      if (fallback?.answered) await recordPizzintQuietPoll();
       return;
     }
     const openLocations = published.filter((l) => !l.isClosedNow && !l.noLiveSignal);
@@ -8383,9 +8388,13 @@ async function seedPizzint() {
 
     const payload = { pizzint, tensionPairs: [] };
     const ok1 = await envelopeWrite(PIZZINT_REDIS_KEY, payload, PIZZINT_SEED_TTL, { recordCount: locations.length, sourceVersion: fallback ? 'besttime-live' : 'pizzint' });
-    // A stale-only publication carries lastLiveAt forward; it is not a live reading.
-    const lastLiveAt = hasFresh ? Date.now() : pizzintLastLiveAt(await upstashGet(PIZZINT_SEED_META_KEY));
-    const ok2 = ok1 && await upstashSet(PIZZINT_SEED_META_KEY, { fetchedAt: Date.now(), recordCount: locations.length, lastLiveAt }, 604800);
+    // Only an open venue's fresh reading is live. A publication of closed zeros or
+    // stale readings carries lastLiveAt and takes the capped quiet heartbeat, and
+    // from BestTime only when every venue answered cleanly.
+    const hasLiveSignal = published.some((l) => !l.noLiveSignal && !l.isClosedNow && l.dataFreshness === 'DATA_FRESHNESS_FRESH');
+    const ok2 = ok1 && (hasLiveSignal
+      ? await upstashSet(PIZZINT_SEED_META_KEY, { fetchedAt: Date.now(), recordCount: locations.length, lastLiveAt: Date.now() }, 604800)
+      : !fallback || fallback.answered ? await recordPizzintQuietPoll(locations.length) : true);
     console.log(`[PizzINT] Seeded ${locations.length} locations (open:${openLocations.length} spikes:${activeSpikes} defcon:${defconLevel} redis:${ok1 && ok2 ? 'OK' : 'PARTIAL'}) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   } catch (e) {
     console.warn('[PizzINT] Seed error:', e?.message || e);

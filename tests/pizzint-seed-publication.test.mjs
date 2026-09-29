@@ -530,10 +530,11 @@ test('repeated provider timestamps cannot establish persistence', async () => {
 test('all missing live signals preserve the previous payload and expiry', async () => {
   const run = await besttimeHarness([[40, 40]]);
   await run.seed();
-  const previous = structuredClone(run.state.cache);
+  const previous = structuredClone(run.state.cache.get(payloadKey));
   run.state.besttime.set(run.ids[0], liveReading(0, 40));
   await advance(run);
-  assert.deepEqual(run.state.cache, previous, 'a suspected dead sensor is no data, not quiet');
+  assert.deepEqual(run.state.cache.get(payloadKey), previous, 'a suspected dead sensor publishes nothing');
+  assert.equal(run.state.cache.get(metaKey).data.fetchedAt, run.state.now, 'BestTime answered, so the heartbeat advances');
 });
 
 for (const currentPopularity of [0, undefined]) {
@@ -864,16 +865,16 @@ test('a stale-only publication does not renew the quiet allowance', async () => 
   assert.equal(run.state.cache.get(metaKey).data.lastLiveAt, lastLiveAt, 'lastLiveAt is carried, not renewed');
 });
 
-test('a stale-only publication with no live history leaves no quiet allowance', async () => {
+test('a stale-only publication with no live history writes no heartbeat', async () => {
   const run = harness();
   run.state.source = { success: true, data: [{ ...validResponse.data[0], data_freshness: 'stale' }] };
   await run.seed();
-  assert.equal(run.state.cache.get(metaKey).data.lastLiveAt, 0);
+  assert.ok(run.state.cache.has(payloadKey), 'the stale observation is still published');
+  assert.equal(run.state.cache.has(metaKey), false, 'a source with no live reading ever has no heartbeat');
   run.state.source = emptyResponse;
   run.state.env.BESTTIME_API_KEY_PRIVATE = BESTTIME_KEY;
-  const heartbeat = run.state.cache.get(metaKey).data.fetchedAt;
   await advance(run);
-  assert.equal(run.state.cache.get(metaKey).data.fetchedAt, heartbeat, 'recordCount > 0 must not resurrect the legacy fallback');
+  assert.equal(run.state.cache.has(metaKey), false);
 });
 
 const DOMINOS = 'ven_4d2d7454795a336a723962526b3474784b54634d7352694a496843';
@@ -984,4 +985,84 @@ test('a live-only venue ignores any forecast BestTime returns, so it never gains
   assert.equal(dominos.hasBaseline, false);
   assert.equal(dominos.isSpike, false);
   assert.equal(run.status().activeSpikes, 0);
+});
+
+// 2026-09-29 01:05-01:50 UTC: every poll was accepted=1 unavailable=5, and the one
+// accepted reading was a suspected dead sensor (live 0 against a forecast >= 20).
+// BestTime answered cleanly, yet pizzint went STALE_SEED.
+test('a clean poll whose only readings are suspected dead sensors keeps health OK', async () => {
+  const run = await quietAfterLive();
+  const payload = structuredClone(run.state.cache.get(payloadKey));
+  run.state.besttime.set(run.ids[0], liveReading(0, 40));
+  for (let tick = 0; tick < 5; tick++) await advance(run);
+  assert.ok(run.state.now >= payload.expiresAt, 'the live payload expired');
+  const meta = run.state.cache.get(metaKey).data;
+  assert.equal(meta.fetchedAt, run.state.now);
+  assert.equal(meta.recordCount, 0);
+  assert.equal(meta.lastLiveAt, payload.data.data.pizzint.updatedAt, 'a dead-sensor reading is not a live reading');
+  assert.equal(classifyPizzint(run.state).status, 'OK');
+});
+
+test('a dead-sensor poll with any failing venue does not advance the heartbeat', async () => {
+  const run = await quietAfterLive();
+  const heartbeat = run.state.cache.get(metaKey).data.fetchedAt;
+  run.state.besttime.set(run.ids[0], liveReading(0, 40));
+  run.state.besttime.set(run.ids[1], { ok: false, status: 429 });
+  await advance(run);
+  assert.equal(run.state.cache.get(metaKey).data.fetchedAt, heartbeat);
+});
+
+test('dead-sensor polls still go stale 24 hours after the last live reading', async () => {
+  const run = await quietAfterLive();
+  const lastLiveAt = run.state.now;
+  run.state.besttime.set(run.ids[0], liveReading(0, 40));
+  while (run.state.now - lastLiveAt < 24 * 60 * 60_000) await advance(run);
+  for (let tick = 0; tick < 4; tick++) await advance(run);
+  assert.equal(classifyPizzint(run.state).status, 'STALE_SEED');
+});
+
+// CodeRabbit on #8696: BestTime accepts a closed venue's live 0. The scorer does not
+// mark it noLiveSignal (closed venues are exempt), so the poll published and
+// renewed lastLiveAt, defeating the 24h cap. Only an open venue's fresh reading is live.
+const closedZero = () => liveReading(0, 40, { venue_open: 'Closed' });
+
+test('a publication whose only readings are closed zeros does not renew lastLiveAt', async () => {
+  const run = await quietAfterLive();
+  const lastLiveAt = run.state.cache.get(metaKey).data.lastLiveAt;
+  run.state.besttime.set(run.ids[0], closedZero());
+  await advance(run);
+  const { pizzint } = run.state.cache.get(payloadKey).data.data;
+  assert.equal(pizzint.locations[0].isClosedNow, true, 'the closed venue is still published as CLOSED');
+  assert.equal(pizzint.updatedAt, run.state.now);
+  const meta = run.state.cache.get(metaKey).data;
+  assert.equal(meta.fetchedAt, run.state.now, 'inside the 24h window the heartbeat advances');
+  assert.equal(meta.lastLiveAt, lastLiveAt, 'a closed zero is not a live reading');
+});
+
+test('closed-zero publications still go stale 24 hours after the last live reading', async () => {
+  const run = await quietAfterLive();
+  const lastLiveAt = run.state.now;
+  run.state.besttime.set(run.ids[0], closedZero());
+  while (run.state.now - lastLiveAt < 24 * 60 * 60_000) await advance(run);
+  for (let tick = 0; tick < 4; tick++) await advance(run);
+  assert.ok(run.state.cache.has(payloadKey), 'closed venues keep publishing');
+  assert.equal(classifyPizzint(run.state).status, 'STALE_SEED');
+});
+
+test('an open venue with a fresh reading renews lastLiveAt even beside closed zeros', async () => {
+  const run = await quietAfterLive();
+  run.state.besttime.set(run.ids[0], closedZero());
+  run.state.besttime.set(run.ids[1], liveReading(30, 35));
+  await advance(run);
+  assert.equal(run.state.cache.get(metaKey).data.lastLiveAt, run.state.now);
+});
+
+test('a closed-zero publication with a failing venue publishes but withholds the heartbeat', async () => {
+  const run = await quietAfterLive();
+  const heartbeat = run.state.cache.get(metaKey).data.fetchedAt;
+  run.state.besttime.set(run.ids[0], closedZero());
+  run.state.besttime.set(run.ids[1], { ok: false, status: 429 });
+  await advance(run);
+  assert.equal(run.state.cache.get(payloadKey).data.data.pizzint.updatedAt, run.state.now, 'the closed venue is still published');
+  assert.equal(run.state.cache.get(metaKey).data.fetchedAt, heartbeat, 'BestTime did not answer cleanly');
 });

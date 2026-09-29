@@ -373,6 +373,73 @@ describe('marketingBeforeSend — stale chunk after deploy', () => {
   });
 });
 
+describe('marketingBeforeSend — Puppeteer crawler and page-evaluated /sw.js', () => {
+  const inNull = "Cannot use 'in' operator to search for 'data' in null";
+
+  it('drops an error whose stack runs through a Puppeteer evaluate frame (WORLDMONITOR-169)', () => {
+    // The crawler fired a synthetic compositionend into Clerk's React handler.
+    const dropped: PolicyEvent = {
+      exception: {
+        values: [{
+          type: 'TypeError',
+          value: inNull,
+          stacktrace: {
+            frames: [
+              {
+                filename: 'file:///C:/snapshot/common-browser-driver/common/browser/adapters/puppeteer-adapter.js',
+                function: 'async pptr:evaluate;PuppeteerPage.evaluate%20',
+              },
+              { filename: '/pro/assets/clerk-a1b2c3.js', function: 'rb' },
+            ],
+          },
+        }],
+      },
+    };
+    assert.equal(marketingBeforeSend(dropped), null);
+  });
+
+  it('keeps a "puppeteer"-named frame that lacks the pptr: source URL', () => {
+    const kept: PolicyEvent = {
+      exception: {
+        values: [{
+          type: 'TypeError',
+          value: inNull,
+          stacktrace: {
+            frames: [
+              { filename: '/pro/assets/puppeteer-helpers-a1b2c3.js', function: 'puppeteerLikeDriver' },
+              { filename: '/pro/assets/index-a1b2c3.js', function: 'rb' },
+            ],
+          },
+        }],
+      },
+    };
+    assert.equal(marketingBeforeSend(kept), kept);
+  });
+
+  it('keeps the same error when no Puppeteer frame is in the stack', () => {
+    const kept = event(inNull, ['/pro/assets/clerk-a1b2c3.js', '/pro/assets/index-a1b2c3.js']);
+    assert.equal(marketingBeforeSend(kept), kept);
+  });
+
+  it('drops an error whose only frames are the root /sw.js (WORLDMONITOR-168)', () => {
+    assert.equal(
+      marketingBeforeSend(event("Cannot read properties of null (reading 'src')", [
+        'https://www.worldmonitor.app/sw.js',
+        'https://www.worldmonitor.app/sw.js',
+      ])),
+      null,
+    );
+  });
+
+  it('keeps a /sw.js frame that shares the stack with marketing code', () => {
+    const kept = event("Cannot read properties of null (reading 'src')", [
+      'https://www.worldmonitor.app/sw.js',
+      '/pro/assets/index-a1b2c3.js',
+    ]);
+    assert.equal(marketingBeforeSend(kept), kept);
+  });
+});
+
 describe('marketingBeforeSend — injected-script recursion', () => {
   it('drops the document-framed stack overflow (WORLDMONITOR-103)', () => {
     // Verbatim production event: Chrome Mobile iOS, every frame on the

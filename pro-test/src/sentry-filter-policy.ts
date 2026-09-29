@@ -37,6 +37,7 @@ type PolicyPrimitive = number | string | boolean | bigint | symbol | null | unde
 /** Minimal structural view of the Sentry event fields this policy reads. */
 interface PolicyFrame {
   filename?: string;
+  function?: string;
 }
 interface PolicyException {
   type?: string;
@@ -409,6 +410,14 @@ export const MARKETING_IGNORE_ERRORS: RegExp[] = [
 const SENTRY_CHUNK_FRAME = /\/assets\/sentry-[A-Za-z0-9_-]+\.js/;
 /** Marketing bundle output. `pro-test/vite.config.ts` sets `base: '/pro/'`. */
 const MARKETING_ASSET_FRAME = /\/pro\/assets\/[A-Za-z0-9_-]+\.js/;
+/**
+ * Code evaluated by Puppeteer, which tags it with a `pptr:` source URL. The
+ * scheme, not the word `puppeteer`, is the key: a colon cannot occur in a bundle
+ * asset path or a function name, so a frame of ours can never carry it.
+ */
+const PUPPETEER_FRAME = /\bpptr:/;
+/** The root service-worker script, which only a worker should ever run. */
+const SERVICE_WORKER_SCRIPT_FRAME = /^(?:https?:\/\/[^/]+)?\/sw\.js$/;
 /** A whole message that is nothing but a short identifier. */
 const BARE_SYMBOL_MESSAGE = /^[a-zA-Z_$]+$/;
 /**
@@ -582,6 +591,21 @@ export function marketingBeforeSend<T extends PolicyEvent>(event: T): T | null {
   const hasFirstParty = nonInfraFrames.some(
     (f) => /\.(ts|tsx)$/.test(f.filename ?? '') || MARKETING_ASSET_FRAME.test(f.filename ?? ''),
   );
+
+  // A Puppeteer-driven crawler dispatching synthetic events. Puppeteer tags the
+  // code it evaluates with a `pptr:` source URL, so its frame sits in the stack
+  // of everything that script sets off, including Clerk handlers it fires with
+  // `isTrusted: false` events. No real user runs Puppeteer, so no frame gate
+  // applies (WORLDMONITOR-169). Mirrors the dashboard's `beforeSend`.
+  if (frames.some((f) => PUPPETEER_FRAME.test(`${f.function ?? ''} ${f.filename ?? ''}`))) return null;
+
+  // The service worker's own script evaluated in a page. `/sw.js` is only ever
+  // registered as a worker, where this client cannot see it, so an all-`/sw.js`
+  // stack comes from a client that loaded it as a page script
+  // (WORLDMONITOR-168). Mirrors the dashboard's `beforeSend`.
+  if (nonInfraFrames.length > 0 && nonInfraFrames.every((f) => SERVICE_WORKER_SCRIPT_FRAME.test(f.filename ?? ''))) {
+    return null;
+  }
 
   // Stale-chunk-after-deploy: the browser fires these as synthetic TypeErrors
   // at fetch/link time, not at any first-party call site, so they arrive with
