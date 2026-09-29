@@ -66,14 +66,14 @@ describe('widget relay spend identity trust', () => {
 
 // Execute the production handler without the relay's unconditional server startup.
 // Only the SDK import is substituted; requests, tool results and SSE use real code.
-async function runWidgetAgent(responses, { tier = 'basic', failFetch = false, failSearch = false, sdkTransport = false, expireDuringFetch = false } = {}) {
+async function runWidgetAgent(responses, { tier = 'basic', failFetch = false, failSearch = false, sdkTransport = false, expireDuringFetch = false, sessionToken = 'wms_fixture', fetchStatus = 200, fetchBody = '{"value":42}' } = {}) {
   const relay = src('scripts/ais-relay.cjs');
   const extract = name => {
     const match = relay.match(new RegExp(`(?:async )?function ${name}\\([^]*?\\n\\}`));
     assert.ok(match, `Missing relay function ${name}`);
     return match[0];
   };
-  const requests = [], effects = [], logs = [], frames = [];
+  const requests = [], effects = [], logs = [], frames = [], fetchInits = [], invalidated = [];
   let ended = 0;
   let expire;
   const nextResponse = request => {
@@ -94,18 +94,21 @@ async function runWidgetAgent(responses, { tier = 'basic', failFetch = false, fa
     PRO_WIDGET_KEY: 'test', WIDGET_ANTHROPIC_KEY: 'test',
     WIDGET_PRO_MAX_HTML: 100000, WIDGET_MAX_HTML: 50000,
     WIDGET_PRO_SYSTEM_PROMPT: 'test', WIDGET_SYSTEM_PROMPT: 'test',
-    isWidgetEndpointAllowed: endpoint => endpoint === '/api/test',
+    isWidgetEndpointAllowed: endpoint => endpoint === '/api/test' || endpoint === '/api/bootstrap',
     performWidgetWebSearch: async query => {
       effects.push(`search:${query}`);
       if (failSearch) throw new Error('Search fixture failure');
       return { results: [{ title: 'Fixture' }] };
     },
-    fetch: async url => {
+    fetch: async (url, init) => {
       effects.push(url);
+      fetchInits.push(init);
       if (expireDuringFetch) expire();
       if (failFetch) throw new Error('Fetch fixture failure');
-      return { text: async () => '{"value":42}' };
+      return { status: fetchStatus, text: async () => (typeof fetchBody === 'function' ? fetchBody(url) : fetchBody) };
     },
+    getWidgetDataSessionToken: async () => sessionToken,
+    invalidateWidgetDataSession: token => invalidated.push(token),
     importAnthropic: async () => ({ default: sdkTransport ? class extends Anthropic {
       constructor(options) {
         super({ ...options, maxRetries: 0, fetch: async (_url, init) => {
@@ -141,7 +144,7 @@ async function runWidgetAgent(responses, { tier = 'basic', failFetch = false, fa
     return match[0];
   }).join('\n');
   const handler = extract('handleWidgetAgentRequest').replace("import('@anthropic-ai/sdk')", 'importAnthropic()');
-  const run = vm.runInNewContext(`${limit}\n${toolDefinitions}\n${extract('sendWidgetSSE')}\n${extract('sanitizeToolContent')}\n${extract('classifyWidgetAgentError')}\n${handler}\nhandleWidgetAgentRequest`, context);
+  const run = vm.runInNewContext(`${limit}\n${toolDefinitions}\n${extract('sendWidgetSSE')}\n${extract('filterWidgetToolInjection')}\n${extract('sanitizeToolContent')}\n${extract('compactWidgetToolJson')}\n${extract('classifyWidgetAgentError')}\n${handler}\nhandleWidgetAgentRequest`, context);
   const res = {
     writableEnded: false, writeHead() {},
     write(frame) { frames.push(frame); },
@@ -149,7 +152,7 @@ async function runWidgetAgent(responses, { tier = 'basic', failFetch = false, fa
   };
   await run({ headers: {}, on() {}, socket: {} }, res);
   const events = frames.map(frame => JSON.parse(frame.match(/data: (.*)/)[1]));
-  return { requests, effects, logs, events, ended };
+  return { requests, effects, fetchInits, invalidated, logs, events, ended };
 }
 
 const widgetText = '<!-- title: Quakes --><!-- widget-html --><div>42</div><!-- /widget-html -->';
@@ -406,6 +409,33 @@ describe('widget data-tool contracts', () => {
     });
   }
 
+  it('lists exactly the FRED series the RPC accepts', () => {
+    const shared = src('server/worldmonitor/economic/v1/_fred-shared.ts');
+    const allowed = [...shared.match(/ALLOWED_FRED_SERIES = new Set<string>\(\[([\s\S]*?)\]\)/)[1].matchAll(/'([A-Z0-9]+)'/g)].map(m => m[1]).sort();
+    assert.ok(allowed.length > 10);
+    for (const prompt of prompts) {
+      const line = prompt.match(/get-fred-series \(params: series_id — ONLY one of: ([^;]+);/);
+      assert.ok(line, 'get-fred-series must list its accepted series');
+      assert.deepEqual(line[1].split(',').map(x => x.trim()).sort(), allowed);
+    }
+  });
+
+  it('forbids inventing time windows and says quote sparklines are undated', () => {
+    for (const prompt of prompts) {
+      assert.match(prompt, /## Time windows — never invent dates/);
+      assert.match(prompt, /sparkline of recent prices with no dates.*interval varies by source/i);
+      assert.doesNotMatch(prompt, /Today \(intraday\)/, 'a sparkline may be seven daily closes, not intraday');
+      assert.match(prompt, /not in the data.*say so in the widget/i);
+      assert.match(prompt, /Never fill missing history from search_web/);
+      assert.match(prompt, /could not be fetched.*never substitute remembered, estimated or example values/i);
+      assert.match(prompt, /data widget is never refused, even when its data turns out to be unavailable/);
+      assert.ok(prompt.indexOf('never refused') < prompt.indexOf('When refusing, output ONLY this'), 'the carve-out must sit beside the refusal template');
+      assert.match(prompt, /params\.symbols/);
+      assert.match(prompt, /get-gold-intelligence/);
+    }
+    assert.match(fetchTool.description, /_widget/);
+  });
+
   it('keeps the basic and Pro data-embedding contracts distinct', () => {
     assert.match(prompts[0], /Embed this data directly into the widget HTML/);
     assert.match(prompts[0], /display-only HTML\. No <script>/);
@@ -420,11 +450,12 @@ describe('widget data-tool contracts', () => {
     const resultStart = relay.indexOf(resultInsertion, start);
     assert.ok(start > 0 && resultStart > start);
     const end = resultStart + resultInsertion.length;
-    const helpers = relay.slice(relay.indexOf('function sanitizeToolContent('), relay.indexOf('const WIDGET_FETCH_TOOL'));
+    const helpers = relay.slice(relay.indexOf('function filterWidgetToolInjection('), relay.indexOf('const WIDGET_FETCH_TOOL'));
     const context = vm.createContext({
       URL, AbortSignal, fetch, response: { stop_reason: 'tool_use', content: [block] }, messages: [], res: {},
       cancelled: false, finalizing: false, toolCallCount: 0, toolExecutionCount: 0,
       WIDGET_MAX_TOOL_CALLS: 3,
+      getWidgetDataSessionToken: async () => 'wms_contract', invalidateWidgetDataSession() {},
       sendWidgetSSE() {}, WIDGET_EXA_KEY: 'fixture', WIDGET_BRAVE_KEY: 'fixture', console,
     });
     const searchStart = relay.indexOf('async function performWidgetWebSearch(');
@@ -440,6 +471,7 @@ describe('widget data-tool contracts', () => {
     const result = await toolResult(fetchBlock('/api/bootstrap', { keys: 'marketQuotes,cryptoQuotes' }), async (url, init) => {
       assert.equal(url, 'https://api.worldmonitor.app/api/bootstrap?keys=marketQuotes%2CcryptoQuotes');
       assert.equal(init.method ?? 'GET', 'GET');
+      assert.equal(init.headers['X-WorldMonitor-Key'], 'wms_contract');
       return { text: async () => body };
     });
     assert.equal(result, body);
@@ -495,6 +527,221 @@ describe('widget data-tool contracts', () => {
 // ---------------------------------------------------------------------------
 // 1. Relay security
 // ---------------------------------------------------------------------------
+describe('widget-agent relay — data fetch credentials', () => {
+  const oneFetch = () => [widgetResponse('tool_use', [widgetTool('1')]), widgetResponse('end_turn')];
+
+  it('authenticates data fetches with an anonymous WorldMonitor session', async () => {
+    const result = await runWidgetAgent(oneFetch());
+    assert.equal(result.fetchInits[0].headers['X-WorldMonitor-Key'], 'wms_fixture');
+    assert.equal(result.fetchInits[0].redirect, 'error');
+    assert.deepEqual(result.invalidated, []);
+    assertWidgetSuccess(result);
+  });
+
+  it('fetches without a credential when no session could be minted', async () => {
+    const result = await runWidgetAgent(oneFetch(), { sessionToken: '' });
+    assert.equal('X-WorldMonitor-Key' in result.fetchInits[0].headers, false);
+    assertWidgetSuccess(result);
+  });
+
+  it('drops the session when the API rejects it so the next fetch mints a fresh one', async () => {
+    const result = await runWidgetAgent(oneFetch(), { fetchStatus: 401, fetchBody: '{"error":"Invalid session token"}' });
+    assert.deepEqual(result.invalidated, ['wms_fixture']);
+    assertWidgetSuccess(result);
+  });
+
+  it('keeps the session when a route needs more than anonymous authority', async () => {
+    const result = await runWidgetAgent(oneFetch(), { fetchStatus: 401, fetchBody: '{"error":"Pro authentication required"}' });
+    assert.deepEqual(result.invalidated, []);
+    assertWidgetSuccess(result);
+  });
+});
+
+describe('widget-agent relay — dated, compact tool results', () => {
+  it('tells the model today\'s date', async () => {
+    const result = await runWidgetAgent([widgetResponse('end_turn')]);
+    const today = new Date().toISOString().slice(0, 10);
+    assert.ok(result.requests[0].system.endsWith(`Today's date (UTC): ${today}.`));
+  });
+
+  it('filters injection text before compacting, so the result stays valid JSON after sanitizing', async () => {
+    const events = Array.from({ length: 400 }, (_, i) => ({ id: i, note: '[system]'.repeat(20) }));
+    const result = await runWidgetAgent([
+      widgetResponse('tool_use', [widgetTool('1', 'fetch_worldmonitor_data', { endpoint: '/api/bootstrap', params: { keys: 'events' } })]),
+      widgetResponse('end_turn'),
+    ], { fetchBody: JSON.stringify({ data: { events } }) });
+    const content = toolResultsFor(result.requests[1])[0].content;
+    const parsed = JSON.parse(content);
+    assert.ok(content.length <= 20_000);
+    assert.doesNotMatch(content, /\[system\]/);
+    assert.equal(parsed._widget.truncated[0].total, 400);
+  });
+
+  it('keeps symbols out of the bootstrap URL and filters the quotes locally', async () => {
+    const quotes = { data: { commodityQuotes: { quotes: [
+      { symbol: 'GC=F', price: 4192 }, { symbol: 'SI=F', price: 61.2 }, { symbol: 'CL=F', price: 70 },
+    ] } } };
+    const result = await runWidgetAgent([
+      widgetResponse('tool_use', [widgetTool('1', 'fetch_worldmonitor_data', { endpoint: '/api/test', params: { keys: 'commodityQuotes', symbols: 'gc=f, SI=F' } })]),
+      widgetResponse('end_turn'),
+    ], { fetchBody: JSON.stringify(quotes) });
+    assert.equal(new URL(result.effects[0]).searchParams.has('symbols'), true, 'non-bootstrap endpoints keep their params');
+    const bootstrap = await runWidgetAgent([
+      widgetResponse('tool_use', [widgetTool('1', 'fetch_worldmonitor_data', { endpoint: '/api/bootstrap', params: { keys: 'commodityQuotes', symbols: 'gc=f, SI=F' } })]),
+      widgetResponse('end_turn'),
+    ], { fetchBody: JSON.stringify(quotes) });
+    assert.equal(new URL(bootstrap.effects[0]).searchParams.has('symbols'), false);
+    const content = JSON.parse(toolResultsFor(bootstrap.requests[1])[0].content);
+    assert.deepEqual(content.data.commodityQuotes.quotes.map(q => q.symbol), ['GC=F', 'SI=F']);
+    assert.deepEqual(content._widget.symbols, { requested: ['GC=F', 'SI=F'], missing: [], filtered: ['data.commodityQuotes.quotes'] });
+    assert.equal(result.requests.length, 2);
+  });
+});
+
+describe('widget tool result compaction', () => {
+  const relay = src('scripts/ais-relay.cjs');
+  const match = relay.match(/function compactWidgetToolJson\([\s\S]*?\n\}/);
+  const compact = (text, symbols) => {
+    assert.ok(match, 'Missing compactWidgetToolJson');
+    return vm.runInNewContext(`${match[0]}\ncompactWidgetToolJson`)(text, symbols);
+  };
+
+  it('returns non-JSON text unchanged', () => {
+    assert.equal(compact('<!DOCTYPE html>x'), '<!DOCTYPE html>x');
+    assert.equal(compact('{"error":"Pro authentication required"}'), '{"error":"Pro authentication required"}');
+  });
+
+  it('samples long numeric series to 48 points, keeping first and last, and says so', () => {
+    const series = Array.from({ length: 580 }, (_, i) => i);
+    const out = JSON.parse(compact(JSON.stringify({ data: { q: { quotes: [{ symbol: 'GC=F', sparkline: series }] } } })));
+    const sampled = out.data.q.quotes[0].sparkline;
+    assert.equal(sampled.length, 48);
+    assert.equal(sampled[0], 0);
+    assert.equal(sampled.at(-1), 579);
+    assert.match(out._widget.sampledSeries, /48 points.*no dates/);
+  });
+
+  it('keeps short series and small payloads byte-identical', () => {
+    const text = JSON.stringify({ data: { q: { quotes: [{ symbol: 'A', sparkline: [1, 2, 3] }] } } });
+    assert.equal(compact(text), text);
+  });
+
+  it('drops whole records from the largest list to fit the budget and reports what it kept', () => {
+    const events = Array.from({ length: 400 }, (_, i) => ({ id: i, place: `place-${i}`, detail: 'x'.repeat(150) }));
+    const text = JSON.stringify({ data: { earthquakes: { earthquakes: events, fetchedAt: 1 } } });
+    const out = compact(text);
+    assert.ok(out.length <= 20_000, `compacted to ${out.length}`);
+    const parsed = JSON.parse(out);
+    const kept = parsed.data.earthquakes.earthquakes;
+    assert.equal(kept[0].id, 0);
+    assert.deepEqual(parsed._widget.truncated, [{ path: 'data.earthquakes.earthquakes', kept: kept.length, total: 400 }]);
+    assert.equal(parsed.data.earthquakes.fetchedAt, 1);
+  });
+
+  it('returns a valid JSON note when nothing reducible brings the payload under budget', () => {
+    for (const payload of [
+      { data: { report: { text: 'x'.repeat(30_000) } } },
+      { data: { list: [{ blob: 'y'.repeat(30_000) }, { blob: 'z' }] } },
+    ]) {
+      const out = compact(JSON.stringify(payload));
+      assert.ok(out.length <= 20_000);
+      assert.match(JSON.parse(out)._widget.error, /exceeds .* after compaction; data omitted/);
+    }
+  });
+
+  it('filters only the lists that contain a requested symbol and names them', () => {
+    const text = JSON.stringify({ data: {
+      commodityQuotes: { quotes: [{ symbol: 'GC=F' }, { symbol: 'CL=F' }] },
+      marketQuotes: { quotes: [{ symbol: 'NVDA' }, { symbol: 'AAPL' }] },
+    } });
+    const out = JSON.parse(compact(text, ['GC=F']));
+    assert.deepEqual(out.data.commodityQuotes.quotes.map(q => q.symbol), ['GC=F']);
+    assert.deepEqual(out.data.marketQuotes.quotes.map(q => q.symbol), ['NVDA', 'AAPL']);
+    assert.deepEqual(out._widget.symbols.filtered, ['data.commodityQuotes.quotes']);
+  });
+
+  it('filters quote lists only, leaving other symbol-bearing lists such as sectors whole', () => {
+    const text = JSON.stringify({ data: {
+      sectors: { sectors: [{ symbol: 'XLK' }, { symbol: 'XLE' }], valuationCoverage: { valuationDiagnostics: [{ symbol: 'XLK' }, { symbol: 'XLE' }] } },
+      marketQuotes: { quotes: [{ symbol: 'XLK' }, { symbol: 'NVDA' }] },
+    } });
+    const out = JSON.parse(compact(text, ['XLK']));
+    assert.equal(out.data.sectors.sectors.length, 2);
+    assert.equal(out.data.sectors.valuationCoverage.valuationDiagnostics.length, 2);
+    assert.deepEqual(out.data.marketQuotes.quotes.map(q => q.symbol), ['XLK']);
+    assert.deepEqual(out._widget.symbols.filtered, ['data.marketQuotes.quotes']);
+  });
+
+  it('reports requested symbols the data does not have', () => {
+    const out = JSON.parse(compact(JSON.stringify({ data: { q: { quotes: [{ symbol: 'GC=F' }] } } }), ['GC=F', 'XAU']));
+    assert.deepEqual(out.data.q.quotes.map(q => q.symbol), ['GC=F']);
+    assert.deepEqual(out._widget.symbols, { requested: ['GC=F', 'XAU'], missing: ['XAU'], filtered: ['data.q.quotes'] });
+  });
+});
+
+describe('widget-agent relay — anonymous data session', () => {
+  const relay = src('scripts/ais-relay.cjs');
+  const start = relay.indexOf('let widgetDataSession = null;');
+  const end = relay.indexOf('\n}\n', relay.indexOf('function invalidateWidgetDataSession(')) + 3;
+
+  function load(mint) {
+    const calls = [];
+    let now = 1_000_000;
+    const context = vm.createContext({
+      console: { warn() {} },
+      Date: { now: () => now },
+      AbortSignal,
+      fetch: async (url, init) => { calls.push({ url, init }); return mint(calls.length); },
+    });
+    assert.ok(start > 0 && end > start, 'Missing widget data session helpers');
+    vm.runInContext(relay.slice(start, end), context);
+    return { context, calls, advance: ms => { now += ms; } };
+  }
+  const minted = (token, exp) => ({ ok: true, status: 200, json: async () => ({ ok: true, token, exp }) });
+
+  it('mints once with a POST to /api/wm-session and reuses the token until near expiry', async () => {
+    const { context, calls, advance } = load(n => minted(`wms_${n}`, 1_000_000 + 12 * 3600_000));
+    assert.equal(await context.getWidgetDataSessionToken(), 'wms_1');
+    assert.equal(await context.getWidgetDataSessionToken(), 'wms_1');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://api.worldmonitor.app/api/wm-session');
+    assert.equal(calls[0].init.method, 'POST');
+    advance(12 * 3600_000 - 60_000);
+    assert.equal(await context.getWidgetDataSessionToken(), 'wms_2');
+  });
+
+  it('shares one in-flight mint between concurrent callers', async () => {
+    const { context, calls } = load(n => minted(`wms_${n}`, 1_000_000 + 3600_000));
+    const tokens = await Promise.all([context.getWidgetDataSessionToken(), context.getWidgetDataSessionToken()]);
+    assert.deepEqual(tokens, ['wms_1', 'wms_1']);
+    assert.equal(calls.length, 1);
+  });
+
+  it('re-mints after the current token is invalidated, but ignores a stale invalidation', async () => {
+    const { context, calls } = load(n => minted(`wms_${n}`, 1_000_000 + 3600_000));
+    await context.getWidgetDataSessionToken();
+    context.invalidateWidgetDataSession('wms_other');
+    assert.equal(await context.getWidgetDataSessionToken(), 'wms_1');
+    context.invalidateWidgetDataSession('wms_1');
+    assert.equal(await context.getWidgetDataSessionToken(), 'wms_2');
+    assert.equal(calls.length, 2);
+  });
+
+  it('returns an empty token when minting fails, then retries on the next call', async () => {
+    const { context, calls } = load(n => n === 1
+      ? { ok: false, status: 429, json: async () => ({}) }
+      : minted('wms_ok', 1_000_000 + 3600_000));
+    assert.equal(await context.getWidgetDataSessionToken(), '');
+    assert.equal(await context.getWidgetDataSessionToken(), 'wms_ok');
+    assert.equal(calls.length, 2);
+  });
+
+  it('rejects a mint response that is not a wms_ session token', async () => {
+    const { context } = load(() => minted('sk-not-a-session', 1_000_000 + 3600_000));
+    assert.equal(await context.getWidgetDataSessionToken(), '');
+  });
+});
+
 describe('widget-agent relay — security', () => {
   const relay = src('scripts/ais-relay.cjs');
 
@@ -1673,8 +1920,8 @@ describe('PRO widget — relay auth and configuration', () => {
 
   it('PRO system prompt allows cdn.jsdelivr.net for Chart.js', () => {
     // Use lastIndexOf to find the constant definition
-    const promptIdx = relay.lastIndexOf('WIDGET_PRO_SYSTEM_PROMPT');
-    const promptRegion = relay.slice(promptIdx, promptIdx + 6000);
+    const promptIdx = relay.indexOf('const WIDGET_PRO_SYSTEM_PROMPT = `');
+    const promptRegion = relay.slice(promptIdx, relay.indexOf('`;', promptIdx));
     assert.ok(
       promptRegion.includes('cdn.jsdelivr.net') || promptRegion.includes('chart.js') || promptRegion.includes('Chart.js'),
       'PRO system prompt must mention cdn.jsdelivr.net/Chart.js as allowed CDN',

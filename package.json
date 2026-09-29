@@ -329,6 +329,12 @@
     "fast-uri": "3.1.7",
     "markdown-it": "14.2.0",
     "fflate@0.7": "0.7.5",
-    "fflate@0.8": "0.8.3"
+    "fflate@0.8": "0.8.3",
+    "@luma.gl/gltf": {
+      "@loaders.gl/core": "4.5.2",
+      "@loaders.gl/gltf": "4.5.2",
+      "@loaders.gl/textures": "4.5.2"
+    },
+    "metro": "0.83.8"
   }
 }
