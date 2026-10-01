@@ -367,6 +367,18 @@ export const MARKETING_IGNORE_ERRORS: RegExp[] = [
   // surface has none, so the caller is Clerk's sign-in UI. Anchored to the whole
   // sentence for the same reason: bare `NotSupportedError` stays reportable.
   /^(?:Error: )?NotSupportedError: Error connecting to Web Authentication service\.$/,
+  // The same WebAuthn surface failing at the OS end. WORLDMONITOR-11B is the
+  // shape: `NotReadableError: An unknown error occurred while talking to the
+  // credential manager.` on Chrome 149 / Linux and Chrome Mobile 150 / Android
+  // 10 at `/pro`, via `onunhandledrejection` with zero frames, breadcrumbs
+  // ending at Clerk's `POST /v1/client/sign_ins`. It is Chromium's CredMan
+  // bridge wording for an unavailable or wedged OS credential service, so only
+  // a WebAuthn CALLER can hit it, and the scan pinned for the entries above
+  // shows this surface has none. The dashboard has suppressed it since the
+  // first 11B event, but that event came from this surface, so the dashboard
+  // rule never applied here. Anchored to the whole sentence: bare
+  // `NotReadableError` is also a failed file or media read.
+  /^(?:Error: )?NotReadableError: An unknown error occurred while talking to the credential manager\.$/,
   // The same WebAuthn surface as the entry above, reached from the other
   // direction: a SECOND credential request issued while one is still
   // outstanding. WORLDMONITOR-11T is the shape: `Error: OperationError: A

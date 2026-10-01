@@ -25,7 +25,7 @@ The older `get_news_intelligence` tool and its summary widget remain available w
 | Time selection | Existing map time controls | UI or `apply_news_view.time_range` |
 | Pan, zoom, country focus | `MapContainer` and its renderers | Map gestures or `apply_news_view` |
 | Renderer selection | Existing 2D/3D controls and fallback policy | UI or `apply_news_view.renderer`; receipt includes the effective renderer |
-| News locations | `MapContainer.setNewsLocations` | Uses only coordinates supplied by the digest; selecting an unlocated article reports `mapFocused: false` |
+| News locations | `MapContainer.setNewsLocations` | Prefers finite coordinates supplied by the digest. Missing or non-finite coordinates use an unambiguous headline location, labelled approximate. Selecting an article without supplied coordinates still reports `mapFocused: false` |
 | Natural hazards and fires | Existing map renderers and shared event/fire converters | `map_layers` selects bounded global `get_natural_disasters` snapshots through the host; UI checkboxes and agent actions share the same path |
 | Cables, pipelines, chokepoints, military bases | Existing renderer reference data | `map_layers` enables landmarks without claiming live activity |
 | Summary and translation | `NewsPanel`, existing news RPC | Authenticated MCP analysis call |
@@ -36,7 +36,9 @@ The older `get_news_intelligence` tool and its summary widget remain available w
 
 The closed `map_layers` selector replaces the selected natural, fires, cables, pipelines, waterways and bases layers. An empty array clears them. Hazard selection and the map refresh button request at most 100 rows per selected source through the existing host MCP connection. They do not poll or forward credentials into the frame. These are global snapshots, independent of country filters for news; existing map time controls can hide older markers. Snapshot receipts report accepted/skipped/received rows and load time, which is not a claim about provider freshness or total global coverage. Invalid positions and timestamps are skipped. Missing, denied, unavailable or entirely invalid source lists leave the previous map intact; valid empty lists clear the selected source, including the SVG earthquake renderer's explicit replacement path.
 
-Reference layers show existing landmarks, not live activity. Live military aircraft/vessels, aviation, weather and other domains remain under #5198. Other built-in domain controls are hidden. The existing SVG renderer intentionally omits news-location markers; it still supports geographic focus and hazard markers. WebGL and globe retain their existing renderer and entitlement behavior.
+Headline location inference excludes organization hubs and prefers a single explicit place name. Without an explicit place, it uses a single matching geographic hub. Ambiguous and unlocated headlines remain unmapped. Inferred marker details include the approximate location name; these positions do not establish where an event occurred.
+
+Reference layers show existing landmarks, not live activity. Live military aircraft/vessels, aviation, weather and other domains remain under #5198. Other built-in domain controls are hidden. SVG, WebGL, and globe support news-location markers and retain their existing renderer and entitlement behavior.
 
 ## Packaging and sandbox
 
@@ -44,7 +46,9 @@ Reference layers show existing landmarks, not live activity. Live military aircr
 
 `ui://worldmonitor/news-dashboard.html` reads the static build from the canonical origin, or the trusted Vercel deployment hostname for previews. Reads reject redirects, non-HTML/error pages, oversized documents, and missing plugin roots. Resource metadata declares the asset/base-map origins and base URI. Static plugin assets and public map data allow cross-origin reads. No nested website iframe or arbitrary request proxy is used.
 
-MapLibre receives a plugin-only module-worker URL. A small data-URL bootstrap imports its bundled worker because Chromium blocks module workers created from opaque-origin blob URLs. The CSP declaration includes this requirement. News clustering reuses the existing synchronous algorithm over the endpoint's bounded category buckets; the website keeps its worker path.
+MapLibre receives its fetched, self-contained worker bundle as a plugin-only blob URL ending in `#maplibre.cjs`. MapLibre's `.cjs` dispatch selects a classic worker, which starts in Chromium's opaque sandbox and meets ChatGPT's `worker-src blob:` policy. The blob is revoked when the view closes. The browser regression enforces that blob-only policy. News clustering reuses the existing synchronous algorithm over the endpoint's bounded category buckets; the website keeps its worker path.
+
+The plugin document withholds the host referrer when it loads public visual assets. Cloudflare rejects globe textures requested with ChatGPT's external referrer; requests without that referrer retain the public CORS headers. Category filtering also enforces `display: none` for hidden plugin panels, overriding the shared flex layout.
 
 ## Verification and remaining acceptance
 

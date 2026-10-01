@@ -1192,7 +1192,8 @@ function buildSentryInitOptions(): Parameters<SentryNs['init']>[0] {
           // credentials` appears nowhere else in src/ or api/. So a
           // no-first-party occurrence is third-party SDK / OS noise, while a
           // future first-party WebAuthn call site would keep a source-mapped
-          // .ts frame and still surface (WORLDMONITOR-11B).
+          // .ts frame and still surface. WORLDMONITOR-11B's events came from
+          // `/pro`, whose separate filter list carries its own entry.
           || /An unknown error occurred while talking to the credential manager/.test(msg)
           // The overlapping-request half of the same WebAuthn surface. Chrome
           // serialises `navigator.credentials` requests per page and rejects
