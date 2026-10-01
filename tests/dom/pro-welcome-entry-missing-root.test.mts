@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
 
 // Runs the real welcome entry (`pro-test/src/welcome-main.tsx`) rather than the
 // `prepareWelcomeRoot` helper alone, so the test fails if the entry ever reads
@@ -11,10 +13,6 @@ const react = vi.hoisted(() => ({
 }));
 const i18n = vi.hoisted(() => ({ settled: undefined as Promise<unknown> | undefined }));
 
-vi.mock('react-dom/client', () => ({
-  createRoot: react.createRoot.mockImplementation(() => ({ render: react.render })),
-  hydrateRoot: react.hydrateRoot,
-}));
 vi.mock('../../pro-test/src/WelcomeApp.tsx', () => ({ default: () => null }));
 vi.mock('../../pro-test/src/sentry', () => ({ initSentry: vi.fn() }));
 vi.mock('../../pro-test/src/debugbear-rum', () => ({ initDebugBearRum: vi.fn() }));
@@ -38,9 +36,14 @@ vi.mock('../../pro-test/src/i18n', () => ({
 // A variable specifier keeps tsconfig.dom-tests.json (no `jsx` setting) from
 // type-checking pro-test's TSX graph; Vitest still transforms and runs it.
 const WELCOME_ENTRY = '../../pro-test/src/welcome-main.tsx';
+const REACT_CLIENT = createRequire(resolve('pro-test/package.json')).resolve('react-dom/client');
 
 async function runWelcomeEntry(): Promise<void> {
   vi.resetModules();
+  vi.doMock(REACT_CLIENT, () => ({
+    createRoot: react.createRoot.mockImplementation(() => ({ render: react.render })),
+    hydrateRoot: react.hydrateRoot,
+  }));
   i18n.settled = undefined;
   await import(/* @vite-ignore */ WELCOME_ENTRY);
   expect(i18n.settled, 'the entry chains its mount onto initI18n').toBeDefined();

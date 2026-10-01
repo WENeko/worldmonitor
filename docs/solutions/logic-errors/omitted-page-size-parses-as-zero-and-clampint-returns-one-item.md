@@ -64,7 +64,7 @@ No unguarded `clampInt(req.pageSize, …)` call remains in `server/`. The two le
 | arXiv | Export query had no `sortBy=submittedDate&sortOrder=descending`, so arXiv returned its default (oldest-relevant) order | Sort newest first |
 | US interest rates | Seeder required SOFR history to start `2018-04-02`; FRED's first point is `2018-04-03`, so validation failed every run as a graceful exit 0 | Expect `2018-04-03` |
 
-Production after the deploy: prediction markets 1 → 50, arXiv 1 (2020) → 50 (newest September 2026), Hacker News 0 → 30, trending 0 → 50. US interest rates fills on the next `seed-bundle-macro` run.
+Production after the deploy: prediction markets 1 → 50, arXiv 1 (2020) → 50 (newest September 2026), Hacker News 0 → 30, trending 0 → 50. US interest rates seeded on the 2026-10-01 `seed-bundle-macro` run: 12 series with dated history, SOFR from 2018-04-03 (2,121 points), `unavailable: false`.
 
 ## Why This Works
 

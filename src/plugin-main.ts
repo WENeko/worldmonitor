@@ -1,7 +1,7 @@
 import './bootstrap/zod-csp';
 import mapLibreWorkerAsset from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import './styles/base-layer.css';
-import { pluginNewsViewSchema, PLUGIN_NEWS_VIEW_INPUT_SCHEMA, type PluginNewsView } from '../shared/plugin-news-view';
+import { pluginNewsViewSchema, PLUGIN_NEWS_VIEW_INPUT_SCHEMA, PLUGIN_MAP_LAYERS, type PluginNewsView } from '../shared/plugin-news-view';
 import { countryMentionTerms, mentionsCountry } from '../shared/country-mention.js';
 import { clusterNews } from '@/services/clustering';
 import './styles/plugin.css';
@@ -16,6 +16,8 @@ import { protoItemToNewsItem } from '@/services/news-digest-items';
 import { getCountryMapFocus } from '@/app/country-map-focus';
 import { preloadCountryGeometry } from '@/services/country-geometry';
 import { initI18n } from '@/services/i18n';
+import { LAYER_REGISTRY } from '@/config/map-layer-definitions';
+import { loadPluginHazardSnapshot, type PluginHazardSnapshot } from '@/services/plugin-map-snapshot';
 
 const panels = new Map<string, NewsPanel>();
 const status = document.getElementById('pluginStatus')!;
@@ -33,6 +35,8 @@ let sourceSelect: HTMLSelectElement;
 let categorySelect: HTMLSelectElement;
 let serverTools = false;
 let openLinks = false;
+let hazardSnapshot: PluginHazardSnapshot | undefined;
+let mapStatus: HTMLElement;
 const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
 const send = (message: object) => window.parent.postMessage({ jsonrpc: '2.0', ...message }, '*');
 
@@ -67,9 +71,13 @@ function renderResult(result: unknown): void {
     return;
   }
   digest = data;
+  renderDigest();
   if (data.requestedView) {
-    void applyView(data.requestedView).catch(() => { status.textContent = 'The requested view could not be applied.'; });
-  } else renderDigest();
+    void applyView(data.requestedView).catch(error => {
+      status.textContent = 'The requested view could not be applied. Showing news with the previous filters.';
+      mapStatus.textContent = error instanceof Error ? error.message : 'The requested map view is unavailable.';
+    });
+  }
 }
 
 function renderDigest(): void {
@@ -133,7 +141,13 @@ async function applyView(input: unknown, reset = false): Promise<object> {
 }
 
 async function updateView(next: PluginNewsView, reset: boolean): Promise<object> {
-  const intended = { ...(reset ? {} : view), ...next };
+  const intended = { ...(reset ? { map_layers: view.map_layers } : view), ...next };
+  const selectedLayers = intended.map_layers ?? [];
+  let snapshot: PluginHazardSnapshot | undefined;
+  if (next.map_layers?.some(layer => layer === 'natural' || layer === 'fires')) {
+    if (!serverTools) throw new Error('Hazard snapshots are unavailable in this host.');
+    snapshot = await loadPluginHazardSnapshot(selectedLayers, args => request('tools/call', { name: 'get_natural_disasters', arguments: args }));
+  }
   let renderer: object | undefined;
   if (next.renderer) {
     const result = next.renderer === 'globe' ? await map.switchToGlobe() : await map.switchToFlat();
@@ -167,11 +181,28 @@ async function updateView(next: PluginNewsView, reset: boolean): Promise<object>
     const token = map.setCenter(next.map_latitude, next.map_longitude, next.map_zoom);
     await map.whenViewportSettled(token);
   }
+  if (snapshot) {
+    if (snapshot.earthquakes) map.setEarthquakes(snapshot.earthquakes, { replaceEmpty: true });
+    if (snapshot.events) map.setNaturalEvents(snapshot.events);
+    if (snapshot.fires) map.setFires(snapshot.fires);
+    hazardSnapshot = snapshot;
+  }
+  const layers = { ...map.getState().layers };
+  for (const layer of PLUGIN_MAP_LAYERS) layers[layer] = selectedLayers.includes(layer);
+  map.setLayers(layers);
+  const effectiveLayers = PLUGIN_MAP_LAYERS.filter(layer => map.getState().layers[layer]);
+  intended.map_layers = effectiveLayers;
   view = intended;
+  for (const input of document.querySelectorAll<HTMLInputElement>('#pluginMapLayers input')) input.checked = effectiveLayers.includes(input.value as typeof PLUGIN_MAP_LAYERS[number]);
+  const activeSources = [...(effectiveLayers.includes('natural') ? ['earthquakes', 'events'] : []), ...(effectiveLayers.includes('fires') ? ['fires'] : [])];
+  const coverage = Object.fromEntries(Object.entries(hazardSnapshot?.coverage ?? {}).filter(([key]) => activeSources.includes(key)));
+  mapStatus.textContent = effectiveLayers.some(layer => layer === 'natural' || layer === 'fires')
+    ? `Global hazard snapshot (up to ${hazardSnapshot?.limitPerSource ?? 100}/source): ${Object.entries(coverage).map(([key, value]) => `${key}: ${value.accepted} valid, ${value.skipped} skipped`).join('; ')}. Country filters apply to news; time controls apply to the map.`
+    : effectiveLayers.length ? 'Landmarks from WorldMonitor reference data; these do not show live activity.' : '';
   if (reset && !next.country) map.clearCountryHighlight();
   renderDigest();
   if (next.query !== undefined) { search.open(); search.applyQuery(next.query); }
-  const receipt = { applied: true, view, center: map.getCenter(), map: map.getState(), ...(renderer ? { renderer } : {}) };
+  const receipt = { applied: true, view, center: map.getCenter(), map: map.getState(), ...(hazardSnapshot && activeSources.length ? { hazardSnapshot: { coverage, loadedAt: hazardSnapshot.loadedAt, scope: 'global', limitPerSource: hazardSnapshot.limitPerSource } } : {}), ...(renderer ? { renderer } : {}) };
   if (modelContext) void request('ui/update-model-context', { content: [{ type: 'text', text: JSON.stringify(receipt) }] }).catch(() => {});
   return receipt;
 }
@@ -195,6 +226,36 @@ async function start(): Promise<void> {
   if (!workerResponse.ok) throw new Error(`Map worker could not load (${workerResponse.status})`);
   const workerUrl = URL.createObjectURL(new Blob([await workerResponse.text()], { type: 'text/javascript' }));
   map = new MapContainer(document.getElementById('mapContainer')!, { zoom: 1, pan: { x: 0, y: 0 }, view: 'global', layers, timeRange: 'all' }, false, { mapLibreWorkerUrl: workerUrl });
+  const layerControls = document.createElement('fieldset');
+  layerControls.id = 'pluginMapLayers';
+  const legend = document.createElement('legend');
+  legend.textContent = 'Map layers';
+  layerControls.appendChild(legend);
+  for (const layer of PLUGIN_MAP_LAYERS) {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.value = layer;
+    input.addEventListener('change', () => {
+      const selected = PLUGIN_MAP_LAYERS.filter(key => layerControls.querySelector<HTMLInputElement>(`input[value="${key}"]`)!.checked);
+      void applyView({ map_layers: selected }).catch(error => {
+        for (const control of layerControls.querySelectorAll<HTMLInputElement>('input')) control.checked = view.map_layers?.includes(control.value as typeof PLUGIN_MAP_LAYERS[number]) ?? false;
+        mapStatus.textContent = error instanceof Error ? error.message : 'Map layers could not be loaded. Previous map data remains visible.';
+      });
+    });
+    label.append(input, LAYER_REGISTRY[layer].fallbackLabel);
+    layerControls.appendChild(label);
+  }
+  const refreshMap = document.createElement('button');
+  refreshMap.type = 'button';
+  refreshMap.className = 'search-btn';
+  refreshMap.textContent = 'Refresh map data';
+  refreshMap.addEventListener('click', () => { void applyView({ map_layers: view.map_layers ?? [] }).catch(error => { mapStatus.textContent = error instanceof Error ? error.message : 'Map refresh failed. Previous map data remains visible.'; }); });
+  layerControls.appendChild(refreshMap);
+  mapStatus = document.createElement('div');
+  mapStatus.id = 'pluginMapStatus';
+  mapStatus.setAttribute('role', 'status');
+  document.getElementById('mapContainer')!.before(layerControls, mapStatus);
   document.getElementById('mapDimensionToggle')!.addEventListener('click', async event => {
     const button = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('button[data-mode]') : null;
     if (!button) return;
@@ -244,7 +305,7 @@ async function start(): Promise<void> {
       else call.resolve(message.result);
     }
     if (message.method === 'tools/list') send({ id: message.id, result: { tools: [
-      { name: 'apply_news_view', description: 'Apply news filters and map view; returns the effective state after the map settles.', inputSchema: PLUGIN_NEWS_VIEW_INPUT_SCHEMA },
+      { name: 'apply_news_view', description: 'Apply news filters, selected hazard/reference map layers and map view; returns the effective state and bounded global snapshot coverage after the map settles.', inputSchema: PLUGIN_NEWS_VIEW_INPUT_SCHEMA },
       { name: 'focus_news_article', description: 'Focus an article already present in the current news snapshot and its supplied geographic location. Reports when no location is available.', inputSchema: { type: 'object', properties: { link: { type: 'string' } }, required: ['link'] } },
     ] } });
     if (message.method === 'tools/call') {

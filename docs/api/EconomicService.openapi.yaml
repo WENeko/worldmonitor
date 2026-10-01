@@ -3931,6 +3931,14 @@ paths:
                   example: true
                   schema:
                     type: boolean
+                - name: limit
+                  in: query
+                  description: Maximum recent observations per series, up to 366. Omit or use zero for the full stored history.
+                  required: false
+                  example: 25
+                  schema:
+                    type: integer
+                    format: int32
                 - name: jmespath
                   in: query
                   description: |-
@@ -4072,6 +4080,14 @@ paths:
                   example: true
                   schema:
                     type: boolean
+                - name: limit
+                  in: query
+                  description: Maximum recent observations per series, up to 366. Omit or use zero for the full stored history.
+                  required: false
+                  example: 25
+                  schema:
+                    type: integer
+                    format: int32
                 - name: jmespath
                   in: query
                   description: |-
@@ -4193,6 +4209,14 @@ paths:
                   example: true
                   schema:
                     type: boolean
+                - name: limit
+                  in: query
+                  description: Maximum recent observations per series, up to 366. Omit or use zero for the full stored history.
+                  required: false
+                  example: 25
+                  schema:
+                    type: integer
+                    format: int32
                 - name: jmespath
                   in: query
                   description: |-
@@ -4320,6 +4344,14 @@ paths:
                   example: "US"
                   schema:
                     type: string
+                - name: limit
+                  in: query
+                  description: Maximum recent observations per series, up to 366. Omit or use zero for the full stored history.
+                  required: false
+                  example: 25
+                  schema:
+                    type: integer
+                    format: int32
                 - name: jmespath
                   in: query
                   description: |-
@@ -4455,6 +4487,14 @@ paths:
                   example: true
                   schema:
                     type: boolean
+                - name: limit
+                  in: query
+                  description: Maximum recent observations per series, up to 366. Omit or use zero for the full stored history.
+                  required: false
+                  example: 25
+                  schema:
+                    type: integer
+                    format: int32
                 - name: jmespath
                   in: query
                   description: |-
@@ -6733,6 +6773,12 @@ components:
                 history:
                     type: boolean
                     description: When true, return every stored month. When false, return only the latest month.
+                limit:
+                    type: integer
+                    maximum: 366
+                    minimum: 0
+                    format: int32
+                    description: Maximum recent observations per series, up to 366. Omit or use zero for the full stored history.
             description: GetUsCpiMonthlyRequest chooses the latest print or the full monthly history.
         GetUsCpiMonthlyResponse:
             type: object
@@ -6791,6 +6837,12 @@ components:
                 history:
                     type: boolean
                     description: When true, return every stored business day since 1990. When false, return the latest day.
+                limit:
+                    type: integer
+                    maximum: 366
+                    minimum: 0
+                    format: int32
+                    description: Maximum recent observations per series, up to 366. Omit or use zero for the full stored history.
             description: GetUsTreasuryParYieldCurveRequest chooses the latest business day or the daily history.
         GetUsTreasuryParYieldCurveResponse:
             type: object
@@ -6875,6 +6927,12 @@ components:
                 history:
                     type: boolean
                     description: When true, return every stored observation. When false, return the latest point of each series.
+                limit:
+                    type: integer
+                    maximum: 366
+                    minimum: 0
+                    format: int32
+                    description: Maximum recent observations per series, up to 366. Omit or use zero for the full stored history.
             description: GetUsInterestRatesRequest chooses the latest prints or the full history.
         GetUsInterestRatesResponse:
             type: object
@@ -6923,6 +6981,12 @@ components:
                 country:
                     type: string
                     description: Optional ISO 3166-1 alpha-2 filter. When set, only that country is returned.
+                limit:
+                    type: integer
+                    maximum: 366
+                    minimum: 0
+                    format: int32
+                    description: Maximum recent observations per series, up to 366. Omit or use zero for the full stored history.
             description: GetWorldCpiMonthlyRequest chooses the latest print or the stored history.
         GetWorldCpiMonthlyResponse:
             type: object
@@ -6995,6 +7059,12 @@ components:
                 history:
                     type: boolean
                     description: True for every stored business day; false for the latest day.
+                limit:
+                    type: integer
+                    maximum: 366
+                    minimum: 0
+                    format: int32
+                    description: Maximum recent observations per series, up to 366. Omit or use zero for the full stored history.
             required:
                 - country
             description: GetGovernmentYieldCurveRequest selects one sovereign market and window.

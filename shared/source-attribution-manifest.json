@@ -7715,6 +7715,9 @@
         },
         {
           "path": "server/worldmonitor/market/v1/get-country-stock-index.ts"
+        },
+        {
+          "path": "server/worldmonitor/market/v1/get-price-history.ts"
         }
       ]
     },

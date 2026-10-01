@@ -544,6 +544,7 @@ describe('widget data-tool contracts', () => {
     for (const prompt of prompts) {
       assert.match(prompt, /## Time windows — never invent dates/);
       assert.match(prompt, /sparkline of recent prices with no dates.*interval varies by source/i);
+      assert.match(prompt, /not a dated history; for dated daily closes use \/api\/market\/v1\/get-price-history/);
       assert.doesNotMatch(prompt, /Today \(intraday\)/, 'a sparkline may be seven daily closes, not intraday');
       assert.match(prompt, /not in the data.*say so in the widget/i);
       assert.match(prompt, /Never fill missing history from search_web/);
@@ -758,7 +759,23 @@ describe('widget tool result compaction', () => {
     assert.equal(sampled.length, 48);
     assert.equal(sampled[0], 0);
     assert.equal(sampled.at(-1), 579);
-    assert.match(out._widget.sampledSeries, /48 points.*no dates/);
+    assert.match(out._widget.sampledSeries, /48 points.*same indices.*stay aligned/);
+    assert.doesNotMatch(out._widget.sampledSeries, /no dates/);
+  });
+
+  it('samples a 252-point timestamps/closes pair at the same indices so dates stay aligned', () => {
+    const day = 86_400_000;
+    const timestamps = Array.from({ length: 252 }, (_, i) => 1_700_000_000_000 + i * day);
+    const closes = timestamps.map((_, i) => 2000 + i);
+    const out = JSON.parse(compact(JSON.stringify({ range: '1y', series: [{ symbol: 'GC=F', timestamps, closes }], unavailable: [] })));
+    const [series] = out.series;
+    assert.equal(series.timestamps.length, 48);
+    assert.equal(series.closes.length, 48);
+    assert.equal(series.timestamps[0], timestamps[0]);
+    assert.equal(series.timestamps.at(-1), timestamps.at(-1));
+    assert.equal(series.closes[0], closes[0]);
+    assert.equal(series.closes.at(-1), closes.at(-1));
+    series.timestamps.forEach((t, i) => assert.equal(series.closes[i], closes[timestamps.indexOf(t)]));
   });
 
   it('keeps short series and small payloads byte-identical', () => {

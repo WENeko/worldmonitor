@@ -132,6 +132,7 @@ const BOOTSTRAP = [
 const RPCS = [
   { path: "/api/market/v1/list-market-quotes", group: "Markets", params: "symbols (one ticker per call, e.g. TSLA)", holds: "Current price and change % for a stock ticker not in marketQuotes; no sparkline for non-seeded tickers" },
   { path: "/api/market/v1/get-country-stock-index", group: "Markets", params: "country_code (ISO2, required)", holds: "A country's main stock index: name, symbol, price, 1-week change %, currency" },
+  { path: "/api/market/v1/get-price-history", group: "Markets", params: "symbols (comma-separated, max 4, from commodityQuotes/marketQuotes/gulfQuotes symbols, e.g. GC=F,SI=F), range (1mo|3mo|6mo|1y, default 3mo)", holds: "Dated daily closes: timestamps (epoch ms) + closes, aligned; up to 1y. No history for ^TASI.SR, DFMGI.AE, ^MSM" },
   { path: "/api/market/v1/list-earnings-calendar", group: "Markets", params: "fromDate, toDate (YYYY-MM-DD)", holds: "Company earnings dates: symbol, date, hour, EPS and revenue estimate and actual, surprise" },
   { path: "/api/market/v1/get-cot-positioning", group: "Markets", params: "", holds: "CFTC Commitments of Traders, latest report: per futures contract long/short by trader type, net %" },
   { path: "/api/market/v1/get-gold-intelligence", group: "Markets", params: "", holds: "Gold/silver/platinum/palladium prices, gold-silver ratio, gold 1w/1m/YTD/1y returns, 52w range, COT" },
@@ -386,7 +387,7 @@ const byGroup = (entries, line) => GROUPS
 const WIDGET_DATA_CATALOG = `## Option 1 — Bootstrap (pre-seeded, instant, matches dashboard panels exactly)
 Use: /api/bootstrap?keys=<key> (comma-separate several keys) — response shape: { data: { <key>: <array or object> } }
 PREFER this over RPCs whenever a key matches the user's topic.
-Quote keys (marketQuotes, commodityQuotes, cryptoQuotes, gulfQuotes) hold the current price, change % and a sparkline of recent prices with no dates; its interval varies by source (today's intraday ticks or the last few daily closes), so it is not a dated history. Add params.symbols (comma-separated) to return only those quotes. commodityQuotes symbols: GC=F gold, SI=F silver, HG=F copper, PL=F platinum, PA=F palladium, CL=F WTI, BZ=F Brent, NG=F natural gas, TTF=F EU gas, ZW=F wheat, ZC=F corn, KC=F coffee, plus FX pairs such as EURUSD=X and USDJPY=X.
+Quote keys (marketQuotes, commodityQuotes, cryptoQuotes, gulfQuotes) hold the current price, change % and a sparkline of recent prices with no dates; its interval varies by source (today's intraday ticks or the last few daily closes), so it is not a dated history; for dated daily closes use /api/market/v1/get-price-history (not crypto). Add params.symbols (comma-separated) to return only those quotes. commodityQuotes symbols: GC=F gold, SI=F silver, HG=F copper, PL=F platinum, PA=F palladium, CL=F WTI, BZ=F Brent, NG=F natural gas, TTF=F EU gas, ZW=F wheat, ZC=F corn, KC=F coffee, plus FX pairs such as EURUSD=X and USDJPY=X.
 
 ${byGroup(BOOTSTRAP, entry => `- ${entry.key}: ${entry.holds}`)}
 

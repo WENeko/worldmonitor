@@ -124,7 +124,6 @@ export interface BaseToolDef {
   // https://modelcontextprotocol.io/specification/2025-06-18/server/tools
   //
   //   - readOnlyHint: "If true, the tool does not modify its environment."
-  //     Every tool here is true — none write/mutate any user-visible state.
   //     Consuming a daily Pro quota counter is NOT environment modification
   //     in the spec sense (which targets the read/write split on the data
   //     plane, not metering on the auth plane).

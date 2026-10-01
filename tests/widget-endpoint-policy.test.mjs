@@ -28,6 +28,7 @@ describe('widget data request boundary', () => {
     ['/api/bootstrap', { keys: 'weatherAlerts' }],
     ['/api/economic/v1/get-fred-series?series_id=CPIAUCSL', { series_id: 'DGS10', note: 'A+B & café' }],
     ['/api/market/v1/get-country-stock-index', { country_code: 'JP' }],
+    ['/api/market/v1/get-price-history', { symbols: 'GC=F,SI=F', range: '3mo' }],
   ]) it(`admits ${endpoint} ${JSON.stringify(params ?? {})}`, () => {
     const url = buildWidgetDataUrl(endpoint, params);
     assert.ok(url);

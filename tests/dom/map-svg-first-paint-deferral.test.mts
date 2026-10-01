@@ -146,6 +146,27 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
+describe('SVG news marker slices', () => {
+  it('excludes invalid coordinates before budgeting in every time range', () => {
+    const fresh = { lat: 52.5, lon: 13.4, title: 'Fresh', threatLevel: 'low', timestamp: new Date() };
+    const old = { ...fresh, title: 'Old', timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000) };
+    const undated = { ...fresh, title: 'Undated', timestamp: undefined };
+    const map = Object.assign(Object.create(MapComponent.prototype), {
+      state: { layers: {}, timeRange: 'all' },
+      isMobile: false,
+      newsLocations: [
+        { ...fresh, lat: NaN },
+        { ...fresh, lon: Infinity },
+        fresh, old, undated,
+      ],
+    }) as { state: { timeRange: string }; overlayFeedSlices: () => { news: typeof fresh[] } };
+
+    expect(map.overlayFeedSlices().news).toEqual([fresh, old, undated]);
+    map.state.timeRange = '1h';
+    expect(map.overlayFeedSlices().news).toEqual([fresh, undated]);
+  });
+});
+
 describe('SVG map first-paint deferral (#4429/#4442)', () => {
   it('paints the base map now and schedules the dynamic layers once for after first paint', () => {
     const map = createMap();

@@ -102,6 +102,19 @@ test('invalid map-center intent fails validation before any downstream request',
   await assert.rejects(tool._execute({ map_latitude: 30 }, 'https://www.worldmonitor.app', { kind: 'env_key', apiKey: 'fixture-key' }, undefined), { name: 'RpcValidationError' });
 });
 
+test('map layer intent is closed and duplicate selections fail before requesting news', async () => {
+  const tool = TOOL_REGISTRY.find(t => t.name === 'open_news_dashboard')!;
+  const validate = new Ajv2020({ strict: false }).compile(buildPublicTool(tool, { compressDescriptions: false }).inputSchema);
+  assert.equal(validate({ map_layers: ['natural', 'fires', 'cables'] }), true);
+  assert.equal(validate({ map_layers: [] }), true);
+  assert.equal(validate({ map_layers: ['military'] }), false);
+  assert.equal(validate({ map_layers: ['natural', 'natural'] }), false);
+  globalThis.fetch = async () => { throw new Error('Must not fetch'); };
+  for (const map_layers of [['military'], ['natural', 'natural']]) {
+    await assert.rejects(tool._execute!({ map_layers }, 'https://www.worldmonitor.app', { kind: 'env_key', apiKey: 'fixture-key' }, undefined), { name: 'RpcValidationError' });
+  }
+});
+
 test('headline translation sends the target language through the existing RPC contract', async () => {
   const tool = TOOL_REGISTRY.find(t => t.name === 'analyze_news_headlines')!;
   globalThis.fetch = async (_input, init) => {

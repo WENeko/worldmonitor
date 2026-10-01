@@ -1069,10 +1069,10 @@ export class MapContainer {
 
   // ─── Data setters ────────────────────────────────────────────────────────────
 
-  public setEarthquakes(earthquakes: Earthquake[]): void {
+  public setEarthquakes(earthquakes: Earthquake[], options: { replaceEmpty?: boolean } = {}): void {
     this.cachedEarthquakes = earthquakes;
     if (this.useGlobe) { this.globeMap?.setEarthquakes(earthquakes); return; }
-    if (this.useDeckGL) { this.deckGLMap?.setEarthquakes(earthquakes); } else { this.svgMap?.setEarthquakes(earthquakes); }
+    if (this.useDeckGL) { this.deckGLMap?.setEarthquakes(earthquakes); } else { this.svgMap?.setEarthquakes(earthquakes, options); }
   }
 
   public setConflictEvents(events: AcledConflictEvent[]): void {

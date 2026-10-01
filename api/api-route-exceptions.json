@@ -3,6 +3,13 @@
   "schema_version": 1,
   "exceptions": [
     {
+      "path": "api/mcp/registry/public-domain-tools.ts",
+      "category": "external-protocol",
+      "reason": "MCP tool definitions for gold enrichment and internet observations. Fixed existing sebuf RPCs retain source schemas and gateway access; this module exports no HTTP route.",
+      "owner": "@SebastienMelki",
+      "removal_issue": null
+    },
+    {
       "path": "api/ask.ts",
       "category": "external-protocol",
       "reason": "NLWeb /ask endpoint (Microsoft NLWeb protocol) — request/response envelope (_meta {response_type, version}, SSE start/result/complete event stream) dictated by the NLWeb spec, not something we can redefine as proto. Anonymous discovery answers over the public MCP tool catalog only; per-IP limit registered in ENDPOINT_RATE_POLICIES and enforced in-handler.",
@@ -167,6 +174,27 @@
       "path": "api/mcp/registry/source-tools.ts",
       "category": "external-protocol",
       "reason": "MCP TOOL_REGISTRY source-discovery tool entry (get_sources). Reads the committed shared/ source-attribution manifest and source-tiers registry to report coverage, licensing status, editorial tier, and provenance; exports no JSON data route and performs no network I/O. Same external-protocol constraint as its sibling registry modules.",
+      "owner": "@SebastienMelki",
+      "removal_issue": null
+    },
+    {
+      "path": "api/mcp/registry/macro-tools.ts",
+      "category": "external-protocol",
+      "reason": "MCP TOOL_REGISTRY macro-history tool entry (get_macro_history) over the existing sebuf economic RPCs (US CPI, US interest rates, US Treasury and government yield curves, world CPI). Tool metadata and execution envelopes follow the external MCP protocol; exports no JSON data route. Same external-protocol constraint as its sibling registry modules.",
+      "owner": "@SebastienMelki",
+      "removal_issue": null
+    },
+    {
+      "path": "api/mcp/registry/stock-tools.ts",
+      "category": "external-protocol",
+      "reason": "MCP stock-research tool definition and fixed MarketService dispatch. Exports no standalone JSON data route.",
+      "owner": "@SebastienMelki",
+      "removal_issue": null
+    },
+    {
+      "path": "api/mcp/registry/cost-shock-tools.ts",
+      "category": "external-protocol",
+      "reason": "MCP cost-shock tool definition and fixed SupplyChainService dispatch. Exports no standalone JSON data route.",
       "owner": "@SebastienMelki",
       "removal_issue": null
     },

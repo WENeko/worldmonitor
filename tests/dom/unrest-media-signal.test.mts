@@ -60,7 +60,7 @@ it('keeps low-confidence media signals in the SVG map feed without changing ACLE
   const quietAcled = { ...media, id: 'quiet-acled', sourceType: 'acled' as const };
   const riotAcled = { ...quietAcled, id: 'riot-acled', eventType: 'riot' as const };
   const map = Object.create(MapComponent.prototype);
-  Object.assign(map, { state: { layers: { protests: true }, timeRange: 'all' }, protests: [media, quietAcled, riotAcled] });
+  Object.assign(map, { state: { layers: { protests: true }, timeRange: 'all' }, protests: [media, quietAcled, riotAcled], newsLocations: [] });
   expect(map.overlayFeedSlices().protests.map((e: { id: string }) => e.id)).toEqual(['gdelt-old', 'riot-acled']);
   map.state.layers.protests = false;
   expect(map.overlayFeedSlices().protests).toEqual([]);

@@ -13569,7 +13569,7 @@ function compactWidgetToolJson(text, symbols = []) {
   if (!sampled && !wanted.length && text.length <= budget) return text;
 
   const note = {};
-  if (sampled) note.sampledSeries = `numeric series longer than ${points} points were evenly sampled to ${points} points (first and last kept); they carry no dates`;
+  if (sampled) note.sampledSeries = `numeric series longer than ${points} points were evenly sampled to ${points} points (first and last kept); equal-length series are sampled at the same indices, so parallel arrays (e.g. timestamps and closes) stay aligned`;
   if (wanted.length) note.symbols = { requested: wanted, missing: wanted.filter(s => !found.has(s)), filtered };
   const serialize = () => JSON.stringify(Object.keys(note).length ? { _widget: note, ...body } : body);
 

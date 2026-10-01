@@ -57,6 +57,7 @@ import {
   summarizeData,
 } from '../filters';
 import { resolveCountryFilter } from '../_country-args';
+import { RpcValidationError } from '../billing-denial';
 import type { ToolDef } from '../types';
 
 import { utf8ByteLength } from '../utils';
@@ -2131,6 +2132,102 @@ export const CACHE_TOOLS: ToolDef[] = [
       "GET /api/supply-chain/v1/get-fuel-shortage-detail",
       "GET /api/supply-chain/v1/list-energy-disruptions",
       "GET /api/supply-chain/v1/list-fuel-shortages",
+    ],
+  },
+  {
+    name: 'get_energy_storage',
+    _outputBudgetBytes: 65536,
+    description: 'EU gas storage and US gas/crude inventories with dated history. Seeded GIE AGSI+ and EIA data, not live quotes. Gas is in TWh or billion cubic feet; crude is in million barrels. Null datasets or weekly changes mean unavailable, not zero. Freshness covers all three sources, including when selecting a subset.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dataset: {
+          type: 'array',
+          items: { type: 'string', enum: ['eu-gas-storage', 'nat-gas-storage', 'crude-inventories'] },
+          description: 'Select EU gas storage, US natural gas storage, or US crude inventories. Omit for all three.',
+        },
+        limit: {
+          type: 'integer', minimum: 0,
+          description: 'Maximum observations per history, newest first. Default 30; 0 returns all available seeded observations.',
+        },
+      },
+      required: [],
+    },
+    outputSchema: cacheEnvelope({
+      'eu-gas-storage': {
+        type: ['object', 'null'],
+        properties: {
+          fillPct: { type: 'number', description: 'EU storage fill percentage.' },
+          fillPctChange1d: { type: ['number', 'null'], description: 'Daily change in percentage points.' },
+          gasDaysConsumption: { type: ['number', 'null'], description: 'Approximate days of consumption, a source heuristic.' },
+          trend: { type: 'string' },
+          updatedAt: { type: 'string', description: 'Observation date, distinct from the cache fetch timestamp.' },
+          seededAt: { type: ['string', 'number'] },
+          unavailable: { type: 'boolean' },
+          history: {
+            type: 'array',
+            items: { type: 'object', properties: {
+              date: { type: 'string' }, fillPct: { type: 'number' },
+              gasTwh: { type: 'number', description: 'Stored gas in terawatt-hours.' },
+            } },
+          },
+        },
+      },
+      'nat-gas-storage': {
+        type: ['object', 'null'],
+        properties: {
+          latestPeriod: { type: 'string' },
+          weeks: { type: 'array', items: { type: 'object', properties: {
+            period: { type: 'string' },
+            storBcf: { type: 'number', description: 'US working gas in billion cubic feet.' },
+            weeklyChangeBcf: { type: ['number', 'null'], description: 'Weekly change in billion cubic feet; null if the prior observation is unavailable.' },
+          } } },
+        },
+      },
+      'crude-inventories': {
+        type: ['object', 'null'],
+        properties: {
+          latestPeriod: { type: 'string' },
+          weeks: { type: 'array', items: { type: 'object', properties: {
+            period: { type: 'string' },
+            stocksMb: { type: 'number', description: 'US commercial crude inventories in million barrels.' },
+            weeklyChangeMb: { type: ['number', 'null'], description: 'Weekly change in million barrels; null if the prior observation is unavailable.' },
+          } } },
+        },
+      },
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _postFilter: (data, params) => {
+      const datasets = ['eu-gas-storage', 'nat-gas-storage', 'crude-inventories'];
+      if (params.dataset !== undefined && (!Array.isArray(params.dataset)
+        || params.dataset.some((value) => !datasets.includes(value)))) {
+        throw new RpcValidationError('get_energy_storage', [{ field: 'dataset', description: 'Expected an array of supported storage datasets.' }]);
+      }
+      if (params.limit !== undefined && (typeof params.limit !== 'number'
+        || !Number.isSafeInteger(params.limit) || params.limit < 0)) {
+        throw new RpcValidationError('get_energy_storage', [{ field: 'limit', description: 'Expected a non-negative integer.' }]);
+      }
+      const limit = argNum(params.limit) ?? DEFAULT_LIST_LIMIT;
+      capNested(data, 'eu-gas-storage', 'history', limit);
+      capNested(data, 'nat-gas-storage', 'weeks', limit);
+      capNested(data, 'crude-inventories', 'weeks', limit);
+      const selected = argStrList(params.dataset);
+      return selected.length > 0 ? selectDatasets(data, selected) : data;
+    },
+    _cacheKeys: [
+      'economic:eu-gas-storage:v1',
+      'economic:nat-gas-storage:v1',
+      'economic:crude-inventories:v1',
+    ],
+    _freshnessChecks: [
+      { key: 'seed-meta:economic:eu-gas-storage', maxStaleMin: 2880 },
+      { key: 'seed-meta:economic:nat-gas-storage', maxStaleMin: 20160 },
+      { key: 'seed-meta:economic:crude-inventories', maxStaleMin: 20160 },
+    ],
+    _apiPaths: [
+      'GET /api/economic/v1/get-eu-gas-storage',
+      'GET /api/economic/v1/get-nat-gas-storage',
+      'GET /api/economic/v1/get-crude-inventories',
     ],
   },
   {

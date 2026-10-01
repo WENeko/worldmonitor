@@ -2265,7 +2265,7 @@ export class DataLoaderManager implements AppModule {
           threatLevel: c.threat?.level ?? 'info',
           timestamp: c.lastUpdated,
         }));
-      if (geoLocated.length > 0) {
+      if (geoLocated.length > 0 || landed) {
         this.ctx.map?.setNewsLocations(geoLocated);
       }
     } catch (error) {

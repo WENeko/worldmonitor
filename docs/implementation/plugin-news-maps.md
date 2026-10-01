@@ -26,13 +26,17 @@ The older `get_news_intelligence` tool and its summary widget remain available w
 | Pan, zoom, country focus | `MapContainer` and its renderers | Map gestures or `apply_news_view` |
 | Renderer selection | Existing 2D/3D controls and fallback policy | UI or `apply_news_view.renderer`; receipt includes the effective renderer |
 | News locations | `MapContainer.setNewsLocations` | Uses only coordinates supplied by the digest; selecting an unlocated article reports `mapFocused: false` |
+| Natural hazards and fires | Existing map renderers and shared event/fire converters | `map_layers` selects bounded global `get_natural_disasters` snapshots through the host; UI checkboxes and agent actions share the same path |
+| Cables, pipelines, chokepoints, military bases | Existing renderer reference data | `map_layers` enables landmarks without claiming live activity |
 | Summary and translation | `NewsPanel`, existing news RPC | Authenticated MCP analysis call |
 | Open article source | Existing attributed article link | `ui/open-link`; no credential-bearing navigation |
 | Refresh | Existing digest endpoint | Host `tools/call`, with last rendered news retained on failure |
 
 `apply_news_view` and `focus_news_article` are app-local tools advertised to capable hosts. View changes share the UI's implementation. Map operations wait for the existing viewport-settled contract before returning an applied receipt. Server entry results carry requested state, not a claim that a view was applied. Optional model-context updates contain the effective view.
 
-The map uses the existing base maps and news locations only. Other domain-layer controls are hidden in this slice. Military, aviation, maritime, markets, infrastructure, climate, and all other domain layers remain under #5198. The existing SVG renderer intentionally omits news-location markers; it still supports map navigation and geographic focus. WebGL and globe retain their existing renderer and entitlement behavior.
+The closed `map_layers` selector replaces the selected natural, fires, cables, pipelines, waterways and bases layers. An empty array clears them. Hazard selection and the map refresh button request at most 100 rows per selected source through the existing host MCP connection. They do not poll or forward credentials into the frame. These are global snapshots, independent of country filters for news; existing map time controls can hide older markers. Snapshot receipts report accepted/skipped/received rows and load time, which is not a claim about provider freshness or total global coverage. Invalid positions and timestamps are skipped. Missing, denied, unavailable or entirely invalid source lists leave the previous map intact; valid empty lists clear the selected source, including the SVG earthquake renderer's explicit replacement path.
+
+Reference layers show existing landmarks, not live activity. Live military aircraft/vessels, aviation, weather and other domains remain under #5198. Other built-in domain controls are hidden. The existing SVG renderer intentionally omits news-location markers; it still supports geographic focus and hazard markers. WebGL and globe retain their existing renderer and entitlement behavior.
 
 ## Packaging and sandbox
 
@@ -44,7 +48,7 @@ MapLibre receives a plugin-only module-worker URL. A small data-URL bootstrap im
 
 ## Verification and remaining acceptance
 
-The browser regression builds the production artifact and renders it in a script-only, opaque sandbox with fixture data. It checks the actual panels, base map, MapLibre worker startup, search, source links, no duplicate initial data call, assistant/UI filter equivalence, denied-refresh retention, clearing filters, valid-empty data, and compact-screen overflow. Screenshots are fixture evidence, not evidence of a connected OpenAI host or live providers.
+The browser regression builds the production artifact and renders it in a script-only, opaque sandbox with fixture data. It checks the actual panels, base map, MapLibre worker startup, search, source links, no duplicate initial data call, assistant/UI filter and layer equivalence, real hazard markers, denied-refresh retention, clearing filters, valid-empty data, and compact-screen overflow. Snapshot-boundary tests cover invalid coordinates/dates, cyclone geometry, provenance and caps. Screenshots are fixture evidence, not evidence of a connected OpenAI host or live providers.
 
 Focused API/resource tests check metadata, fixed-origin asset loading, size/error handling, authenticated endpoint use, and denial propagation. Website converter, panel, map, type, and import-boundary checks remain regression gates.
 
