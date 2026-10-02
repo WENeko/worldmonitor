@@ -184,11 +184,13 @@ describe('GEO residue #7463', () => {
     const rewrite = vercel.rewrites.find((entry) => entry.source === '/.well-known/mcp/server.json');
     assert.ok(rewrite, 'vercel.json must rewrite the newer well-known name');
     assert.equal(rewrite.destination, '/.well-known/mcp/server-card.json');
+    const card = readJson('public/.well-known/mcp/server-card.json');
     assert.notEqual(
-      readJson('server.json').name,
-      readJson('public/.well-known/mcp/server-card.json').name,
+      readJson('server.json').$schema,
+      card.$schema,
       'do not publish the MCP registry server.json at the well-known path',
     );
+    assert.equal(card.$schema, 'https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json');
   });
 
   it('published snapshot note warns about formula change without ticket jargon', () => {

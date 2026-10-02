@@ -452,7 +452,7 @@
   "welcome": {
     "meta": {
       "title": "World Monitor — Gratis instrumentpanel för global underrättelse i realtid",
-      "description": "Innan det blir nyheter vet du redan. Konflikter, flaskhalsar, militärflyg, marknader och cyber på en gratis live-världskarta, med AI-analys. Ingen registrering.",
+      "description": "Innan det blir nyheter vet du redan. Konflikter, flaskhalsar, militärflygningar, marknader, cyber: en gratis livekarta med AI-analys. Ingen registrering.",
       "ogTitle": "World Monitor — Innan det blir nyheter, visste du redan.",
       "ogDescription": "Världens råa signaler — fartyg, jetplan, sirener, kablar, marknader — på en gratis live-underrättelsekarta, med AI som flaggar när de konvergerar. Gratis, ingen registrering."
     },
@@ -485,7 +485,7 @@
       "positioningLink": "WorldMonitor är inte en öppen källkod Palantir",
       "asOf": "Per {{date}}",
       "whatIsTitle": "Vad är World Monitor?",
-      "whatIsBody": "World Monitor är en kostnadsfri dashboard med öppen källkod (AGPL-3.0) som används av 2M+ personer. Den streamar {{feeds}} nyhets- och OSINT-flöden från {{providers}} attribuerade leverantörer på en live-världskarta med {{mapLayers}} kartlagertyper, som spänner över geopolitik, marknader, sjöfart, luftfart och cyber. Den korrelerar dem så att konvergerande händelser blir synliga före rubrikerna. Varje siffra är källhänvisad och varje metod dokumenterad."
+      "whatIsBody": "World Monitor är en kostnadsfri ($0), öppen källkod (AGPL-3.0) dashboard som används av 2M+ personer. Den strömmar {{feeds}} nyhets- och OSINT-flöden från {{providers}} attribuerade leverantörer till en live-världskarta med {{mapLayers}} kartlagertyper, som omfattar geopolitik, marknader, sjöfart, luftfart och cyber. Den korrelerar dem så att konvergerande händelser dyker upp innan rubrikerna gör det. Varje siffra är källa och varje metod dokumenterad."
     },
     "live": {
       "eyebrow": "Live just nu",
@@ -574,17 +574,17 @@
     "firstFive": {
       "eyebrow": "Från noll till orienterad",
       "title": "Vad händer under dina första fem minuter på kartan?",
-      "sub": "Ingen guidad tur, inga tomma tillstånd, ingen registreringsväggstopp. Det här är vad som faktiskt händer.",
+      "sub": "Ingen vägledning, inga tomma tillstånd, ingen registreringsvall. Det här är vad som faktiskt händer under de första 5 minuterna.",
       "f1Title": "Kartan rör sig redan",
       "f1Desc": "Konflikter, fartyg, flygplan, bränder och avbrott återges när sidan läses in. Inget att konfigurera först.",
       "f2Title": "Klicka på ett land",
-      "f2Desc": "En fullständig rapport öppnas: instabilitetspoäng med dess komponenter, ett AI-sammanfattning med citerade rubriker, aktiva signaler, en 7-dagars tidslinje.",
+      "f2Desc": "En fullständig dossiär öppnas för det landet: dess instabilitetspoäng uppdelat i de komponenter som ligger bakom det, en AI-briefing som citerar de rubriker den bygger på, de aktiva signalerna på kartan och en 7-dagars tidslinje över vad som förändrades. Inget behöver ställas in först; ett klick öppnar allt.",
       "f3Title": "Tryck på ⌘K / Ctrl-K",
-      "f3Desc": "{{commands}} kommandon. Hoppa till vilket lager, panel eller land som helst utan att först lära dig användarflödet.",
+      "f3Desc": "{{commands}} kommandon. Hoppa till vilket lager, panel eller land som helst utan att först lära dig gränssnittet.",
       "f4Title": "Välj ditt perspektiv",
       "f4Desc": "World, Tech, Finance, Commodity, Energy eller Happy — samma motor, sex justerade övervakningar, ett klick från varandra.",
       "f5Title": "Du har sett kanske en tiondel av det",
-      "f5Desc": "Resten dyker upp när världen rör sig — satellitpass, GPS-störning, mörka fartyg, protestkluster, sirenvarningar.",
+      "f5Desc": "När kartan öppnas på skrivbordet är {{defaultOnLayers}} av dess {{mapLayers}} kartlagertyper, cirka {{defaultOnLayerPct}}%, aktiverade. Resten visas när världen uppdateras: satellitpassager, GPS-störningar, mörka fartyg flaggade från AIS-luckor, protestkluster och sirenvarningar från civilförsvaret. De flesta kan aktiveras från lagermenyn eller paletten ⌘K.",
       "cta": "Starta klockan"
     },
     "depth": {
@@ -607,9 +607,9 @@
       "s14l": "Språk · RTL inkl.",
       "s15l": "Oberoende varningsursprung",
       "n1Title": "Satellitspårning",
-      "n1Desc": "Live-omloppspositioner beräknade i webbläsaren med SGP4 — se ISS, Starlink och militära satelliter overhead.",
+      "n1Desc": "Live-orbitalpositioner beräknade i webbläsaren med SGP4 och uppdaterade var 3:e sekund — militär- och jordobservationssatelliter från CelesTrak, uppdaterade var 2:e timme.",
       "n2Title": "GPS-jamningszoner",
-      "n2Desc": "Live-RF-interferenskarta som visar var GPS försämras eller förfalskats just nu.",
+      "n2Desc": "Daglig RF-störningskarta från flygrapporter: celler där minst 2% av flygplan ser försämrad GPS flaggas, över 10% markeras högt. Cellerna är hexagoner som återskapas en gång per dag från dessa rapporter, så kartan visar var flygningar mötte jamning eller spoofing under den senaste dagen, inte denna minut.",
       "n3Title": "Flaskhalstransitintelligens",
       "n3Desc": "Fartygsantal genom Hormuz, Suez, Bab el-Mandeb och 10 fler sund — med avbrottsbedömning.",
       "n4Title": "AI-datacenterkarta",
@@ -617,7 +617,7 @@
       "n5Title": "Undersjökablar",
       "n5Desc": "{{submarineCables}} undersjöiska kablar som bär internet, överlagrat med avbrott- och hotsignaler.",
       "n6Title": "Protestspårning",
-      "n6Desc": "Dubbelkällsprotestdetektering med tvärkällsdeduplikering — signal, inte rykte.",
+      "n6Desc": "Protestdetektering från ACLED och GDELT; rapporter från en källa i samma 0,1°-cell samma dag slås samman till en händelse — signal, inte rykten.",
       "faith": "Lita inte på siffrorna blint —",
       "faithCta": "öppna appen och räkna själv.",
       "faithNote": "Källor citeras på varje panel."
@@ -625,7 +625,7 @@
     "agents": {
       "eyebrow": "För utvecklare och AI-agenter",
       "title": "Hur bygger jag på World Monitor från min egen stack?",
-      "sub": "Allt på kartan är också ett API. Integrera det med Claude via MCP med {{mcpTools}} live-verktyg, anropa REST-slutpunkterna från var som helst, eller installera en systemspecifik klient för Python, Ruby, Go eller JavaScript — din kod forskar med live-data istället för träningsdata.",
+      "sub": "Allt på kartan är också ett API. Anslut det till Claude via MCP med {{mcpTools}} live-verktyg, anropa REST-slutpunkterna från var som helst, eller installera en inbyggd klient för Python, Ruby, Go eller JavaScript — din kod forskar med live-data istället för träningsdata-minnen. MCP-åtkomst ingår i Pro, från ${{proMonthlyPrice}}/mån.",
       "b1": "{{mcpTools}} MCP-verktyg — riskpoäng, flaskhalsar, konflikter, marknader, rapporter",
       "b2": "Dokumenterad REST API — en OpenAPI 3.1-specifikation, en nyckel",
       "b3": "Officiella SDK:er på npm, PyPI, RubyGems och Go — nollberoenden, MCP-först",
@@ -648,9 +648,9 @@
       "eyebrow": "Åtkomst",
       "title1": "Gratis är observatoriet.",
       "title2": "Pro är operationsrummet.",
-      "sub": "Instrumentpanelen är gratis — varje kartlager utom Resilience, alla flöden, ingen registrering. Pro lägger till beslutlagret.",
+      "sub": "Instrumentpanelen är gratis för $0 — varje kartlager förutom Resilience, ingen registrering. Pro lägger till beslutslagret.",
       "freeTitle": "Gratis",
-      "freeDesc": "Den kostnadsfria nivån är en fullständig produkt, inte en provversion. Varje kartlager utom Resilience, varje flöde från {{feeds}} källor, alla sex monitorer — ingen registrering, ingen tidsgräns.",
+      "freeDesc": "Den kostnadsfria nivån är en fullständig produkt, inte en testversion. Varje kartlager förutom Resilience, alla sex övervakningar — ingen registrering, ingen testklocka.",
       "freeF1": "Alla kartlager utom Resilience & kurerade flöden",
       "freeF2": "Landsbeskrivningar, hotspots, instabilitetsscore",
       "freeF3": "Flaskhalsar, kablar, kaskadanalys",
@@ -689,11 +689,12 @@
       "q10": "Varför är World Monitor inte Palantir?",
       "a10": "Palantir gör en institutions egna data operationell inom den institutionen. World Monitor börjar från andra änden: det samlar, normaliserar, korrelerar och övervakar offentlig världsdata, och publicerar sedan det intelligensskiktet genom en gratis instrumentpanel och öppen källkod. Olika uppgift, olika produkt.",
       "q11": "Which World Monitor license do I need?",
-      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms."
+      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms.",
+      "sub": "{{answers}} raka svar om pris, data, aviseringar och AI-åtkomst. Den korta versionen: dashboarden kostar $0, kräver inget konto och koden är öppen källkod under AGPL-3.0."
     },
     "cta": {
       "title": "Hur kommer jag igång med att övervaka världskartan?",
-      "subtitle": "Öppna worldmonitor.app/dashboard i valfri webbläsare, utan konto: {{mapLayers}} kartlagertyper, alla utom Resilience gratis att slå på. Klicka på vilket land som helst för dess briefing, eller tryck ⌘K / Ctrl-K för kommandopaletten. Kartan har fortsatt uppdateras medan du läste denna sida.",
+      "subtitle": "Öppna worldmonitor.app/dashboard i vilken webbläsare som helst för $0, utan konto: {{mapLayers}} kartlagertyper, alla utom Resilience är kostnadsfria att aktivera. Klicka på ett land för dess briefing, eller tryck ⌘K / Ctrl-K för kommandopaletten. Kartan har fortsatt att uppdateras medan du läste den här sidan.",
       "button": "Hitta den först",
       "note": "Gratis · Ingen registrering · Laddar på sekunder",
       "secondary": "Eller se Pro-planer →"
@@ -701,7 +702,7 @@
     "tasks": {
       "eyebrow": "Börja med frågan",
       "title": "Vad försöker du ta reda på?",
-      "sub": "Välj beviskedjan som motsvarar ditt uppdrag. Varje väg öppnar en källstödd vy, inte en tom instrumentpanel.",
+      "sub": "Välj någon av de {{routes}} spåren av bevis som motsvarar uppgiften framför dig. Varje spår öppnar en källstödd vy, inte en tom instrumentbräda.",
       "verifyTitle": "Verifiera en breaking-händelse",
       "verifyDesc": "Kontrollera aktuella krishanterare, uppdaterade mätvärden och citerad kontext innan du litar på ett breaking-claim.",
       "chokepointTitle": "Kontrollera en flaskhal",

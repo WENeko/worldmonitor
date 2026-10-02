@@ -1,5 +1,5 @@
 ---
-title: Meter a country panel as one bounded user request
+title: Meter each embedded panel as one bounded user request
 date: 2026-10-02
 category: performance-issues
 module: api/mcp
@@ -11,7 +11,7 @@ resolution_type: code_fix
 tags: [mcp, quota, country-brief, caching, paid-usage]
 ---
 
-# Country-panel usage and cost evidence
+# Embedded-panel usage and cost evidence
 
 The dedicated Pro allowance previously charged each MCP tool call, including
 the internal readers needed to render one country brief. A production Pro
@@ -111,3 +111,49 @@ open, topic changes, return navigation, refresh, daily-cap denial and reset
 notices. Local handler/browser proof does not establish deployment, live data
 freshness or store readiness. The change requires no data migration; rollback
 must revert both the server admission behavior and the panel receipt/cache UI.
+
+## All-panel audit and news/dashboard extension
+
+The rule applies to all twelve embedded views. The billing matrix exercises
+all registered roots through the real MCP handler and verifies that reading
+the visual shell adds no charge. Its missing-data fixtures also preserve the
+no-refund behavior after upstream work. Ten static bridges render the tool
+result and make no further data calls; their DOM tests verify usage notices
+and the absence of tools/call messages. Country and news are composite views.
+
+| Embedded view | Root tool | Daily units per opening | Included data |
+|---|---|---|---|
+| Country risk | get_country_risk | 1 | Risk result and component details |
+| World brief | get_world_brief | 1 | Brief and source details |
+| Country text brief | get_country_brief | 1 | Text assessment and evidence |
+| Markets | get_market_data | 1 | Selected market result |
+| Chokepoints | get_chokepoint_status | 1 | Status and route details |
+| News intelligence | get_news_intelligence | 1 | Selected intelligence result |
+| Conflicts | get_conflict_events | 1 | Selected conflict result |
+| Natural disasters | get_natural_disasters | 1 | Selected hazard result |
+| Prediction markets | get_prediction_markets | 1 | Selected markets |
+| Forecasts | get_forecast_predictions | 1 | Forecast result |
+| Country view | open_country_brief | 1 | Default assessment, coverage and section graph |
+| News and maps | open_news_dashboard | 1 | News panels and bounded hazard snapshots |
+
+A news admission shares the same atomic reservation, owner-bound signature,
+UTC expiry and 64-uncached-read ceiling as the country admission. It permits
+only the full digest and reviewed hazard datasets at limits 100, 20 or 1.
+It cannot fund country data, arbitrary tools or AI summaries. The root digest
+cache permits at most 1 MiB; other admitted results permit 512 KiB. Partial,
+stale and failed results are retried. A rendered dashboard reuses successful
+hazard selections without host calls and coalesces simultaneous refreshes.
+Host input does not trigger hazard calls before the paid result arrives.
+
+The built opaque-iframe browser test measured two initial host calls (open
+plus natural hazards) for one daily unit. Layer toggles replayed loaded data
+with zero calls. Adding fire data made one internal call and spent zero extra
+units. Refresh made two host calls for one new daily unit; denied refresh
+started no hazard calls and retained the news. These are controlled fixtures,
+not measured production costs or native ChatGPT acceptance.
+
+Re-run `tests/mcp-panel-usage-ui.test.mts` and
+`e2e/plugin-news-metering.spec.ts` with the existing tests above. After deployment,
+repeat news/map open, layer toggles, filters, refresh and denial in ChatGPT.
+A user-triggered news summary or translation is a separate request. API-plan
+weighted metering is unchanged.

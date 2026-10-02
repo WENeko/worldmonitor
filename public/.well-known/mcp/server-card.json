@@ -1,7 +1,9 @@
 {
-  "name": "worldmonitor",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json",
+  "name": "app.worldmonitor/mcp",
+  "title": "WorldMonitor",
+  "description": "Live markets, conflicts, country risk, chokepoints, energy, and China decision signals.",
   "kind": "product",
-  "description": "WorldMonitor's live global-intelligence stack as an MCP server: real-time markets, conflict events, aviation, maritime, energy, climate, health, displacement, supply chain, and AI-generated regional briefs.",
   "icon": "https://www.worldmonitor.app/favico/apple-touch-icon.png",
   "version": "1.26.0",
   "url": "https://worldmonitor.app/mcp",
@@ -566,7 +568,7 @@
     },
     {
       "name": "open_news_dashboard",
-      "description": "Open WorldMonitor with its news category panels and interactive map. Returns the current full dashboard feed digest, including publication dates, source provenance inputs, coordinates and coverage. Empty arguments open the dashboard. View arguments configure a rendered instance when delivered by the host. requestedView confirms requested settings, not the applied state of an already-open map.",
+      "description": "Open WorldMonitor with its news panels and interactive map. On dedicated paid MCP plans, one dashboard request includes bounded map snapshot loads; default opens reuse its loaded news for at least five minutes. Explicit refresh starts one new request. API plans retain per-tool billing. Returns the full feed digest with publication dates, source provenance, coordinates and coverage. Empty arguments open the dashboard. View arguments configure the rendered instance; requestedView confirms requested settings, not an already-open map’s applied state.",
       "_meta": {
         "worldmonitor/access": "subscription"
       }

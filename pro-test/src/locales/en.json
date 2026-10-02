@@ -452,7 +452,7 @@
   "welcome": {
     "meta": {
       "title": "World Monitor — Free Real-Time Global Intelligence Dashboard",
-      "description": "By the time it's news, you already knew. Conflicts, chokepoints, military flights, markets and cyber on one free live world map, with AI analysis. No signup.",
+      "description": "By the time it's news, you already knew. Conflicts, chokepoints, military flights, markets, cyber: one free live map with AI analysis. No signup.",
       "ogTitle": "World Monitor — By the time it's news, you already knew.",
       "ogDescription": "The world's raw signals — ships, jets, sirens, cables, markets — on one free live intelligence map, with AI that flags when they converge. Free, no signup."
     },
@@ -485,12 +485,12 @@
       "trustBuild": "Build on it:",
       "positioningLink": "WorldMonitor is not an open-source Palantir",
       "whatIsTitle": "What is World Monitor?",
-      "whatIsBody": "World Monitor is a free, open-source (AGPL-3.0) dashboard used by 2M+ people. It streams {{feeds}} news and OSINT feeds from {{providers}} attributed providers onto one live world map with {{mapLayers}} map layer types, spanning geopolitics, markets, shipping, aviation and cyber. It correlates them so converging events surface before the headlines do. Every figure is sourced and every method documented."
+      "whatIsBody": "World Monitor is a free ($0), open-source (AGPL-3.0) dashboard used by 2M+ people. It streams {{feeds}} news and OSINT feeds from {{providers}} attributed providers onto one live world map with {{mapLayers}} map layer types, spanning geopolitics, markets, shipping, aviation and cyber. It correlates them so converging events surface before the headlines do. Every figure is sourced and every method documented."
     },
     "tasks": {
       "eyebrow": "Start with the question",
       "title": "What are you trying to find out?",
-      "sub": "Choose the evidence trail that matches the job in front of you. Each route opens a source-backed view, not an empty dashboard.",
+      "sub": "Choose whichever of the {{routes}} evidence trails matches the job in front of you. Each route opens a source-backed view, not an empty dashboard.",
       "verifyTitle": "Verify a breaking event",
       "verifyDesc": "Check current crisis trackers, dated metrics, and cited context before trusting a breaking claim.",
       "chokepointTitle": "Check a chokepoint",
@@ -586,17 +586,17 @@
     "firstFive": {
       "eyebrow": "Zero to oriented",
       "title": "What happens in your first five minutes on the map?",
-      "sub": "No tour, no empty states, no signup wall. This is what actually happens.",
+      "sub": "No tour, no empty states, no signup wall. This is what actually happens in the first 5 minutes.",
       "f1Title": "The map is already moving",
       "f1Desc": "Conflicts, vessels, flights, fires and outages render as the page loads. Nothing to configure first.",
       "f2Title": "Click any country",
-      "f2Desc": "A full dossier opens: instability score with its components, an AI brief with cited headlines, active signals, a 7-day timeline.",
+      "f2Desc": "A full dossier opens for that country: its instability score broken into the components behind it, an AI brief that cites the headlines it drew on, the active signals on the map, and a 7-day timeline of what changed. Nothing has to be set up first; one click opens all of it.",
       "f3Title": "Hit ⌘K / Ctrl-K",
       "f3Desc": "{{commands}} commands. Jump to any layer, panel or country without learning the UI first.",
       "f4Title": "Pick your lens",
       "f4Desc": "World, Tech, Finance, Commodity, Energy or Happy — same engine, six tuned monitors, one click apart.",
       "f5Title": "You've seen maybe a tenth of it",
-      "f5Desc": "The rest surfaces as the world moves — satellite passes, GPS jamming, dark ships, protest clusters, siren alerts.",
+      "f5Desc": "When the map opens on desktop, {{defaultOnLayers}} of its {{mapLayers}} map layer types, about {{defaultOnLayerPct}}%, are switched on. The rest surface as the world moves: satellite passes, GPS jamming, dark ships flagged from AIS gaps, protest clusters and civil-defense siren alerts. Most can be switched on from the layer menu or the ⌘K palette.",
       "cta": "Start the clock"
     },
     "depth": {
@@ -619,9 +619,9 @@
       "s14l": "Languages · RTL incl.",
       "s15l": "Independent alert origins",
       "n1Title": "Satellite tracking",
-      "n1Desc": "Live orbital positions computed in-browser with SGP4 — watch ISS, Starlink and military birds overhead.",
+      "n1Desc": "Live orbital positions computed in-browser with SGP4 and updated every 3 seconds — military and Earth-observation satellites from CelesTrak, refreshed every 2 hours.",
       "n2Title": "GPS jamming zones",
-      "n2Desc": "Live RF-interference map showing where GPS is being degraded or spoofed right now.",
+      "n2Desc": "Daily RF-interference map from aircraft reports: cells where at least 2% of aircraft see degraded GPS are flagged, over 10% marked high. The cells are hexagons rebuilt once a day from those reports, so the map shows where flights met jamming or spoofing over the latest day, not this minute.",
       "n3Title": "Chokepoint transit intel",
       "n3Desc": "Vessel counts through Hormuz, Suez, Bab el-Mandeb and 10 more straits — with disruption scoring.",
       "n4Title": "AI datacenter map",
@@ -629,7 +629,7 @@
       "n5Title": "Submarine cables",
       "n5Desc": "{{submarineCables}} undersea cables that carry the internet, overlaid with outage and threat signals.",
       "n6Title": "Protest tracking",
-      "n6Desc": "Dual-source protest detection with cross-source deduplication — signal, not rumor.",
+      "n6Desc": "Protest detection from ACLED and GDELT; reports from one source in the same 0.1° cell on the same day merge into one event — signal, not rumor.",
       "faith": "Don't take the numbers on faith —",
       "faithCta": "open the app and count.",
       "faithNote": "Sources are cited on every panel."
@@ -637,7 +637,7 @@
     "agents": {
       "eyebrow": "For builders & AI agents",
       "title": "How do I build on World Monitor from my own stack?",
-      "sub": "Everything on the map is also an API. Wire it into Claude over MCP with {{mcpTools}} live tools, call the REST endpoints from anywhere, or install a native client for Python, Ruby, Go, or JavaScript — your code researches with live data instead of training-data memories.",
+      "sub": "Everything on the map is also an API. Wire it into Claude over MCP with {{mcpTools}} live tools, call the REST endpoints from anywhere, or install a native client for Python, Ruby, Go, or JavaScript — your code researches with live data instead of training-data memories. MCP access comes with Pro, from ${{proMonthlyPrice}}/mo.",
       "b1": "{{mcpTools}} MCP tools — risk scores, chokepoints, conflicts, markets, briefs",
       "b2": "Documented REST API — one OpenAPI 3.1 spec, one key",
       "b3": "Official SDKs on npm, PyPI, RubyGems, and Go — zero-dependency, MCP-first",
@@ -660,9 +660,9 @@
       "eyebrow": "Access",
       "title1": "Free is the observatory.",
       "title2": "Pro is the operations room.",
-      "sub": "The dashboard is free — every map layer except Resilience, every feed, no signup. Pro adds the decision layer.",
+      "sub": "The dashboard is free at $0 — every map layer except Resilience, no signup. Pro adds the decision layer.",
       "freeTitle": "Free",
-      "freeDesc": "The free tier is a full product, not a trial. Every map layer except Resilience, every feed from {{feeds}} sources, all six monitors — no signup, no trial clock.",
+      "freeDesc": "The free tier is a full product, not a trial. Every map layer except Resilience, all six monitors — no signup, no trial clock.",
       "freeF1": "All map layers except Resilience & curated feeds",
       "freeF2": "Country briefs, hotspots, instability scores",
       "freeF3": "Chokepoints, cables, cascade analysis",
@@ -680,6 +680,7 @@
     "faq": {
       "eyebrow": "No catch",
       "title": "What are common questions about World Monitor?",
+      "sub": "{{answers}} straight answers on price, data, alerts and AI access. The short version: the dashboard costs $0, needs no account, and the code is open source under AGPL-3.0.",
       "q1": "Is World Monitor really free?",
       "a1": "Yes. The live map costs $0 with no signup and no trial clock: {{mapLayers}} map layer types, every one but Resilience, plus curated feeds, country briefs, breaking alerts and monitoring surfaces. Pro pays for the feeds: it adds WM Analyst, the scenario engine, Route Explorer, scheduled digests, MCP access for AI clients and the Resilience map layer. No ads, and no account means there's no user data to sell.",
       "q2": "What is a global intelligence dashboard?",
@@ -705,7 +706,7 @@
     },
     "cta": {
       "title": "How do I start watching the world map?",
-      "subtitle": "Open worldmonitor.app/dashboard in any browser, with no account: {{mapLayers}} map layer types, every one except Resilience free to switch on. Click any country for its brief, or press ⌘K / Ctrl-K for the command palette. The map has kept updating while you read this page.",
+      "subtitle": "Open worldmonitor.app/dashboard in any browser for $0, with no account: {{mapLayers}} map layer types, every one except Resilience free to switch on. Click any country for its brief, or press ⌘K / Ctrl-K for the command palette. The map has kept updating while you read this page.",
       "button": "Find it first",
       "note": "Free · No signup · Loads in seconds",
       "secondary": "Or see Pro plans →"

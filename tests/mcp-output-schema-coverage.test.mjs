@@ -903,10 +903,10 @@ describe('api/mcp.ts — per-tool outputSchema coverage (v1.7.0)', () => {
   // `provider` the response never had). Guarding only the literal-return form
   // would leave the second half of that fix unprotected.
   //
-  // `adds` lists the keys `_execute` layers on top; they are legitimately
+  // `adds` lists the keys `_execute` or MCP dispatch layers on top; they are legitimately
   // absent from the wire, so they are subtracted before comparing.
   const SPREAD_PASSTHROUGH_TOOLS = new Map([
-    ['open_news_dashboard', { adds: ['requestedView'] }],
+    ['open_news_dashboard', { adds: ['requestedView', 'panelRequest'] }],
     ['get_country_brief', { adds: ['digestCoverage', 'groundingStories', 'sources[].sourceProvenance'] }],
   ]);
 

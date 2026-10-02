@@ -452,7 +452,7 @@
   "welcome": {
     "meta": {
       "title": "World Monitor — Painel Gratuito de Inteligência Global em Tempo Real",
-      "description": "Quando vira notícia, você já sabe. Conflitos, pontos críticos, voos militares, mercados e ciberataques em um único mapa-múndi ao vivo e gratuito, com análise por IA. Sem cadastro.",
+      "description": "Quando vira notícia, você já sabia. Conflitos, pontos críticos, voos militares, mercados, cibernética: um mapa ao vivo gratuito com análise de IA. Sem cadastro.",
       "ogTitle": "World Monitor — Quando vira notícia, você já sabia.",
       "ogDescription": "Os sinais brutos do mundo — navios, jatos, sirenes, cabos, mercados — em um mapa de inteligência ao vivo gratuito, com IA que sinaliza quando convergem. Grátis, sem cadastro."
     },
@@ -485,7 +485,7 @@
       "positioningLink": "WorldMonitor não é um Palantir de código aberto",
       "asOf": "Em {{date}}",
       "whatIsTitle": "O que é World Monitor?",
-      "whatIsBody": "O World Monitor é um dashboard gratuito e de código aberto (AGPL-3.0) usado por mais de 2 milhões de pessoas. Ele transmite {{feeds}} feeds de notícias e inteligência de {{providers}} provedores atribuídos em um único mapa-múndi ao vivo com {{mapLayers}} tipos de camada de mapa, abrangendo geopolítica, mercados, navegação marítima, aviação e cibersegurança. Correlaciona-os para que eventos convergentes apareçam antes das manchetes. Cada dado é rastreado e cada método documentado."
+      "whatIsBody": "World Monitor é um dashboard gratuito ($0), open-source (AGPL-3.0) usado por 2M+ pessoas. Ele transmite {{feeds}} feeds de notícias e OSINT de {{providers}} provedores atribuídos em um único mapa-múndi ao vivo com {{mapLayers}} tipos de camada de mapa, abrangendo geopolítica, mercados, navegação marítima, aviação e cibersegurança. Ele correlaciona-os para que eventos convergentes apareçam antes dos destaques. Cada dado é rastreado e cada método documentado."
     },
     "live": {
       "eyebrow": "Ao vivo agora",
@@ -533,7 +533,7 @@
         "kicker": "Commodities + pontos de estrangulamento + clima",
         "title1": "Movimentos de commodities começam",
         "title2": "no mundo físico.",
-        "s1": "AIS, portos, oleodutos, GNL, refinarias, hidrovias e {{chokepoints}} pontos críticos mostram quando o suprimento está desacelerando, se rerouting ou se concentrando.",
+        "s1": "AIS, portos, oleodutos, GNL, refinarias, hidrovias e {{chokepoints}} pontos críticos mostram quando o suprimento está desacelerando, sendo redirecionado ou se concentrando.",
         "s2": "Clima, incêndios, terremotos, apagões e camadas de conflito mostram os eventos físicos que podem impactar produção ou transporte.",
         "s3": "Petróleo, gás, ouro, grãos, mineradoras, armadores e moedas vinculadas a commodities mostram como o choque é precificado.",
         "s4": "Inteligência de commodities só funciona quando fluxo físico, sinal de disrupção e spread de mercado são visíveis juntos.",
@@ -574,17 +574,17 @@
     "firstFive": {
       "eyebrow": "Do zero à orientação",
       "title": "O que acontece nos seus primeiros cinco minutos no mapa?",
-      "sub": "Sem tour, sem estados vazios, sem muro de cadastro. Isto é o que realmente acontece.",
+      "sub": "Sem tour, sem estados vazios, sem muro de cadastro. Isto é o que realmente acontece nos primeiros 5 minutos.",
       "f1Title": "O mapa já está se movendo",
       "f1Desc": "Conflitos, embarcações, voos, incêndios e interrupções renderizam conforme a página carrega. Nada para configurar antes.",
       "f2Title": "Clique em qualquer país",
-      "f2Desc": "Um dossiê completo abre: pontuação de instabilidade com seus componentes, resumo de IA com manchetes citadas, sinais ativos, cronograma de 7 dias.",
+      "f2Desc": "Um dossiê completo se abre para esse país: sua pontuação de instabilidade decomposta nos componentes que a formam, um briefing de IA que cita as manchetes em que se baseou, os sinais ativos no mapa e uma linha do tempo de 7 dias do que mudou. Nada precisa ser configurado antes; um clique abre tudo.",
       "f3Title": "Pressione ⌘K / Ctrl-K",
       "f3Desc": "{{commands}} comandos. Acesse qualquer camada, painel ou país sem aprender a UI primeiro.",
       "f4Title": "Escolha sua lente",
       "f4Desc": "Mundo, Tech, Finanças, Commodities, Energia ou Happy — mesmo motor, seis monitores ajustados, um clique de distância.",
       "f5Title": "Você viu talvez um décimo disso",
-      "f5Desc": "O resto aparece conforme o mundo se move — passagens de satélites, jammers GPS, navios fantasmas, aglomerações de protestos, alertas de sirene.",
+      "f5Desc": "Quando o mapa abre no desktop, {{defaultOnLayers}} dos {{mapLayers}} tipos de camada do mapa, aproximadamente {{defaultOnLayerPct}}%, estão ligados. Os demais aparecem conforme o mundo se move: passagens de satélites, interferência GPS, navios encobertos sinalizados por lacunas de AIS, aglomerados de protestos e alertas de sirenes de proteção civil. A maioria pode ser ativada no menu de camadas ou na paleta ⌘K.",
       "cta": "Comece a contagem"
     },
     "depth": {
@@ -607,9 +607,9 @@
       "s14l": "Idiomas · incl. RTL",
       "s15l": "Origens de alerta independentes",
       "n1Title": "Rastreamento de satélites",
-      "n1Desc": "Posições orbitais ao vivo calculadas no navegador com SGP4 — acompanhe a ISS, Starlink e satélites militares acima de você.",
+      "n1Desc": "Posições orbitais ao vivo calculadas no navegador com SGP4 e atualizadas a cada 3 segundos — satélites militares e de observação da Terra da CelesTrak, atualizados a cada 2 horas.",
       "n2Title": "Zonas de interferência GPS",
-      "n2Desc": "Mapa de interferência RF ao vivo mostrando onde o GPS está sendo degradado ou falsificado agora.",
+      "n2Desc": "Mapa diário de interferência de RF de relatórios de aeronaves: células onde pelo menos 2% das aeronaves detectam GPS degradado são sinalizadas, acima de 10% marcadas como altas. As células são hexágonos reconstruídos uma vez por dia desses relatórios, então o mapa mostra onde voos encontraram jamming ou spoofing ao longo do último dia, não neste minuto.",
       "n3Title": "Inteligência de trânsito em pontos críticos",
       "n3Desc": "Contagem de embarcações através de Hormuz, Suez, Bab el-Mandeb e 10 outros estreitos — com pontuação de disrupção.",
       "n4Title": "Mapa de datacenters de IA",
@@ -617,7 +617,7 @@
       "n5Title": "Cabos submarinos",
       "n5Desc": "{{submarineCables}} cabos submarinos que transportam a internet, sobrepostos com sinais de interrupção e ameaça.",
       "n6Title": "Rastreamento de protestos",
-      "n6Desc": "Detecção de protestos de dupla fonte com desduplicação entre fontes — sinal, não boato.",
+      "n6Desc": "Detecção de protestos do ACLED e GDELT; relatórios de uma mesma fonte na mesma célula de 0,1° no mesmo dia são consolidados em um único evento — sinal, não rumor.",
       "faith": "Não confie apenas nos números —",
       "faithCta": "abra o app e verifique.",
       "faithNote": "As fontes estão citadas em cada painel."
@@ -625,7 +625,7 @@
     "agents": {
       "eyebrow": "Para construtores & agentes de IA",
       "title": "Como construo sobre World Monitor a partir da minha própria stack?",
-      "sub": "Tudo no mapa também é uma API. Integre ao Claude via MCP com {{mcpTools}} ferramentas live, chame os endpoints REST de qualquer lugar, ou instale um cliente nativo para Python, Ruby, Go ou JavaScript — seu código pesquisa com dados live em vez de memórias de treinamento.",
+      "sub": "Tudo no mapa também é uma API. Integre-o ao Claude via MCP com {{mcpTools}} ferramentas ao vivo, chame os endpoints REST de qualquer lugar, ou instale um cliente nativo para Python, Ruby, Go ou JavaScript — seu código pesquisa com dados ao vivo em vez de memórias de dados de treinamento. O acesso MCP vem com Pro, a partir de ${{proMonthlyPrice}}/mês.",
       "b1": "{{mcpTools}} ferramentas MCP — pontuações de risco, gargalos, conflitos, mercados, briefings",
       "b2": "REST API documentada — uma especificação OpenAPI 3.1, uma chave",
       "b3": "SDKs oficiais no npm, PyPI, RubyGems e Go — sem dependências, MCP-first",
@@ -648,9 +648,9 @@
       "eyebrow": "Acesso",
       "title1": "Grátis é o observatório.",
       "title2": "Pro é a sala de operações.",
-      "sub": "O dashboard é gratuito — todas as camadas de mapa exceto Resilience, todos os feeds, sem cadastro. Pro adiciona a camada de decisão.",
+      "sub": "O dashboard é gratuito em $0 — todas as camadas de mapa exceto Resilience, sem cadastro. Pro adiciona a camada de decisão.",
       "freeTitle": "Grátis",
-      "freeDesc": "O plano gratuito é um produto completo, não uma avaliação. Todas as camadas de mapa exceto Resilience, todos os feeds de {{feeds}} fontes, todos os seis monitores — sem cadastro, sem limite de tempo.",
+      "freeDesc": "O plano gratuito é um produto completo, não uma avaliação. Todas as camadas de mapa exceto Resilience, todos os seis monitores — sem cadastro, sem tempo de expiração.",
       "freeF1": "Todas as camadas de mapa exceto Resilience e feeds curados",
       "freeF2": "Resumos de país, pontos de acesso, pontuações de instabilidade",
       "freeF3": "Pontos críticos, cabos, análise em cascata",
@@ -689,11 +689,12 @@
       "q10": "Por que o World Monitor não é Palantir?",
       "a10": "Palantir torna os dados próprios de uma instituição operacionais dentro dessa instituição. World Monitor começa do outro lado: reúne, normaliza, correlaciona e monitora dados do mundo público, depois publica essa camada de inteligência por meio de um painel gratuito e código aberto. Trabalho diferente, produto diferente.",
       "q11": "Which World Monitor license do I need?",
-      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms."
+      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms.",
+      "sub": "{{answers}} respostas diretas sobre preço, dados, alertas e acesso a IA. Em resumo: o dashboard custa $0, não requer conta, e o código é open source sob AGPL-3.0."
     },
     "cta": {
       "title": "Como começo a monitorar o mapa do mundo?",
-      "subtitle": "Abra worldmonitor.app/dashboard em qualquer navegador, sem conta: {{mapLayers}} tipos de camadas de mapa, todos exceto Resilience são livres para alternar. Clique em qualquer país para seu resumo, ou pressione ⌘K / Ctrl-K para a paleta de comandos. O mapa continuou atualizando enquanto você lia esta página.",
+      "subtitle": "Abra worldmonitor.app/dashboard em qualquer navegador por $0, sem conta: {{mapLayers}} tipos de camada de mapa, todos exceto Resilience livres para ativar. Clique em qualquer país para seu briefing, ou pressione ⌘K / Ctrl-K para a paleta de comandos. O mapa continuou atualizando enquanto você lia esta página.",
       "button": "Encontre primeiro",
       "note": "Gratuito · Sem inscrição · Carrega em segundos",
       "secondary": "Ou veja planos Pro →"
@@ -701,7 +702,7 @@
     "tasks": {
       "eyebrow": "Comece pela pergunta",
       "title": "O que você está tentando descobrir?",
-      "sub": "Escolha a trilha de evidências que corresponde à sua tarefa. Cada rota abre uma visualização apoiada em fontes, não um painel vazio.",
+      "sub": "Escolha qual dos {{routes}} trilhos de evidências corresponde à tarefa em questão. Cada trilho abre uma visualização com fonte, não um dashboard vazio.",
       "verifyTitle": "Verificar um evento de última hora",
       "verifyDesc": "Verifique os rastreadores de crise atuais, métricas datadas e contexto citado antes de confiar em uma notícia de última hora.",
       "chokepointTitle": "Verificar um ponto de estrangulamento",

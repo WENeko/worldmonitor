@@ -452,7 +452,7 @@
   "welcome": {
     "meta": {
       "title": "World Monitor — Безкоштовна панель глобальної розвідки в реальному часі",
-      "description": "Поки це стане новиною, ви вже знатимете. Конфлікти, вузькі місця, військові рейси, ринки та кібератаки — на одній живій карті світу з аналізом на основі штучного інтелекту. Без реєстрації.",
+      "description": "Поки це стає новиною, ви вже знаєте. Конфлікти, вузькі місця, військові польоти, ринки, кібер: одна безкоштовна жива карта з AI-аналізом. Без реєстрації.",
       "ogTitle": "World Monitor — Коли це вже новини, ви вже знали.",
       "ogDescription": "Сирі сигнали світу — кораблі, літаки, сирени, кабелі, ринки — на одній безкоштовній живій мапі розвідки, з AI, що помічає, коли вони сходяться. Безкоштовно, без реєстрації."
     },
@@ -485,7 +485,7 @@
       "positioningLink": "WorldMonitor is not an open-source Palantir",
       "asOf": "Станом на {{date}}",
       "whatIsTitle": "Що таке World Monitor?",
-      "whatIsBody": "World Monitor — це безплатна панель з відкритим кодом (AGPL-3.0), якою користуються понад 2 млн людей. Вона транслює {{feeds}} новинні та розвідувальні стрічки від {{providers}} атрибутованих джерел на одну живу карту світу з {{mapLayers}} типами шарів, охоплюючи геополітику, ринки, судноплавство, авіацію та кібербезпеку. Вона корелює їх, щоб збіжні події спливали до того, як з'являться в заголовках. Кожна цифра має джерело, а кожен метод задокументований."
+      "whatIsBody": "World Monitor — це вільна ($0), відкритого коду (AGPL-3.0) інформаційна панель, яку використовують понад 2 млн людей. Вона передає {{feeds}} новинних та OSINT потоків від {{providers}} атрибутованих джерел на одну живу карту світу з {{mapLayers}} типами шарів, охоплюючи геополітику, ринки, судноплавство, авіацію та кібербезпеку. Вона корелює їх, щоб важливі події спливали до того, як потрапляють у заголовки. Кожна цифра має джерело і кожен метод задокументовано."
     },
     "live": {
       "eyebrow": "Live right now",
@@ -574,17 +574,17 @@
     "firstFive": {
       "eyebrow": "Zero to oriented",
       "title": "Що відбувається протягом перших п'яти хвилин на карті?",
-      "sub": "No tour, no empty states, no signup wall. This is what actually happens.",
+      "sub": "Без екскурсії, без порожніх станів, без стіни реєстрації. Це те, що дійсно відбувається в перші 5 хвилин.",
       "f1Title": "The map is already moving",
       "f1Desc": "Conflicts, vessels, flights, fires and outages render as the page loads. Nothing to configure first.",
       "f2Title": "Click any country",
-      "f2Desc": "A full dossier opens: instability score with its components, an AI brief with cited headlines, active signals, a 7-day timeline.",
+      "f2Desc": "Для цієї країни відкривається повна досьє: показник нестабільності розбитий на компоненти, що його формують, стислий звіт ШІ зі посиланнями на заголовки, на яких він базується, активні сигнали на карті та 7-денна шкала часу змін. Немає необхідності щось налаштовувати попередньо — один клік відкриває всі дані.",
       "f3Title": "Hit ⌘K / Ctrl-K",
       "f3Desc": "{{commands}} команд. Перейдіть до будь-якого шару, панелі або країни без попереднього вивчення інтерфейсу.",
       "f4Title": "Pick your lens",
       "f4Desc": "World, Tech, Finance, Commodity, Energy або Happy — один механізм, шість спеціалізованих моніторів, один клік розділяє їх.",
       "f5Title": "You've seen maybe a tenth of it",
-      "f5Desc": "The rest surfaces as the world moves — satellite passes, GPS jamming, dark ships, protest clusters, siren alerts.",
+      "f5Desc": "Коли карта відкривається на комп'ютері, {{defaultOnLayers}} з {{mapLayers}} типів шарів карти, приблизно {{defaultOnLayerPct}}%, увімкнені. Решта з'являються в міру розвитку подій: проходження супутників, GPS глушення, темні судна, виявлені за розривами AIS, скупчення протестів та сигналізація цивільної оборони. Більшість можна увімкнути з меню шарів або палітри ⌘K.",
       "cta": "Start the clock"
     },
     "depth": {
@@ -607,9 +607,9 @@
       "s14l": "Languages · RTL incl.",
       "s15l": "Independent alert origins",
       "n1Title": "Satellite tracking",
-      "n1Desc": "Live orbital positions computed in-browser with SGP4 — watch ISS, Starlink and military birds overhead.",
+      "n1Desc": "Живі орбітальні позиції обчислюються в браузері за допомогою SGP4 та оновлюються кожні 3 секунди — військові та спостережувальні супутники Землі від CelesTrak, оновлюються кожні 2 години.",
       "n2Title": "GPS jamming zones",
-      "n2Desc": "Live RF-interference map showing where GPS is being degraded or spoofed right now.",
+      "n2Desc": "Щоденна карта RF-перешкод від звітів повітряних суден: клітини, де щонайменше 2% літаків реєструють деградацію GPS, позначаються, понад 10% відзначаються як високі. Клітини — це шестикутники, перебудовані один раз на день на основі цих звітів, тому карта показує, де рейси зіткнулися з глушенням або спуфінгом упродовж останнього дня, а не цієї хвилини.",
       "n3Title": "Chokepoint transit intel",
       "n3Desc": "Vessel counts through Hormuz, Suez, Bab el-Mandeb and 10 more straits — with disruption scoring.",
       "n4Title": "AI datacenter map",
@@ -617,7 +617,7 @@
       "n5Title": "Submarine cables",
       "n5Desc": "{{submarineCables}} підводних кабелів, які несуть інтернет, з наложеними сигналами про збої та загрози.",
       "n6Title": "Protest tracking",
-      "n6Desc": "Dual-source protest detection with cross-source deduplication — signal, not rumor.",
+      "n6Desc": "Виявлення протестів з ACLED та GDELT; звіти з одного джерела в одній комірці 0,1° в один день об'єднуються в одну подію — сигнал, а не чутка.",
       "faith": "Don't take the numbers on faith —",
       "faithCta": "open the app and count.",
       "faithNote": "Sources are cited on every panel."
@@ -625,7 +625,7 @@
     "agents": {
       "eyebrow": "For builders & AI agents",
       "title": "Як я можу розробляти на World Monitor зі свого стека?",
-      "sub": "Все на карті також є API. Підключіть його до Claude через MCP з {{mcpTools}} живими інструментами, викличте REST endpoints звідусиль або встановіть нативний клієнт для Python, Ruby, Go чи JavaScript — ваш код проводить дослідження з живими даними замість спогадів навчальних даних.",
+      "sub": "Усе на карті також доступне як API. Підключіть його до Claude через MCP з {{mcpTools}} живими інструментами, викличте REST endpoints звідусіль, або встановіть нативний клієнт для Python, Ruby, Go чи JavaScript — ваш код досліджує живі дані замість спогадів навчальних даних. Доступ до MCP входить у Pro, від ${{proMonthlyPrice}}/міс.",
       "b1": "{{mcpTools}} інструментів MCP — оцінки ризику, вузькі місця, конфлікти, ринки, брифінги",
       "b2": "Документована REST API — одна специфікація OpenAPI 3.1, один ключ",
       "b3": "Official SDKs on npm, PyPI, RubyGems, and Go — zero-dependency, MCP-first",
@@ -648,9 +648,9 @@
       "eyebrow": "Access",
       "title1": "Free is the observatory.",
       "title2": "Pro is the operations room.",
-      "sub": "The dashboard is free — every map layer except Resilience, every feed, no signup. Pro adds the decision layer.",
+      "sub": "Панель управління безкоштовна — $0, усі шари карти крім Resilience, без реєстрації. Pro додає шар прийняття рішень.",
       "freeTitle": "Free",
-      "freeDesc": "Безкоштовний рівень — це повноцінний продукт, не пробна версія. Кожен шар карти крім Resilience, кожен потік від {{feeds}} джерел, всі шість моніторів — без реєстрації, без часового ліміту.",
+      "freeDesc": "Безкоштовний рівень — повнофункціональний продукт, не пробна версія. Усі шари карти крім Resilience, усі шість моніторів — без реєстрації та обмеження часу.",
       "freeF1": "Усі шари карт крім Resilience та куровані стрічки",
       "freeF2": "Country briefs, hotspots, instability scores",
       "freeF3": "Chokepoints, cables, cascade analysis",
@@ -689,11 +689,12 @@
       "q10": "Why isn't World Monitor Palantir?",
       "a10": "Palantir makes an institution's own data operational inside that institution. World Monitor starts from the other end: it assembles, normalizes, correlates, and monitors public-world data, then publishes that intelligence layer through a free dashboard and open-source code. Different job, different product.",
       "q11": "Which World Monitor license do I need?",
-      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms."
+      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms.",
+      "sub": "{{answers}} прямих відповідей про ціну, дані, сповіщення та доступ до AI. Коротко: dashboard коштує $0, не потребує облікового запису, а код відкритий під ліцензією AGPL-3.0."
     },
     "cta": {
       "title": "Як почати спостерігати світову карту?",
-      "subtitle": "Відкрийте worldmonitor.app/dashboard у будь-якому браузері без акаунту: {{mapLayers}} типи шарів карти, кожен крім Resilience вільний для перемикання. Натисніть будь-яку країну для її брифу або натисніть ⌘K / Ctrl-K для палітри команд. Карта продовжує оновлюватись, поки ви читаєте цю сторінку.",
+      "subtitle": "Відкрийте worldmonitor.app/dashboard в будь-якому браузері за $0, без облікового запису: {{mapLayers}} типи шарів карти, кожен крім Resilience доступний для вмикання. Натисніть на будь-яку країну, щоб отримати її брифінг, або натисніть ⌘K / Ctrl-K для палітри команд. Карта продовжує оновлюватися, поки ви читаєте цю сторінку.",
       "button": "Find it first",
       "note": "Free · No signup · Loads in seconds",
       "secondary": "Or see Pro plans →"
@@ -701,7 +702,7 @@
     "tasks": {
       "eyebrow": "Почніть з питання",
       "title": "Що ви намагаєтесь дізнатися?",
-      "sub": "Виберіть шлях доказів, що відповідає вашому завданню. Кожний маршрут відкриває представлення з джерелами, а не порожній dashboard.",
+      "sub": "Виберіть будь-який з {{routes}} слідів доказів, що відповідає вашому завданню. Кожен маршрут відкриває представлення на основі джерел, а не порожній dashboard.",
       "verifyTitle": "Перевірити критичну подію",
       "verifyDesc": "Перевірте поточні відстеження криз, датовані показники та наведені контексти перед тим, як довіритися спеціальному повідомленню.",
       "chokepointTitle": "Перевірити вузьке місце",

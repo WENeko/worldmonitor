@@ -495,7 +495,7 @@ describe('api/mcp.ts — tools/list description compression (v1.7.0)', () => {
       // Top-level mirrors must stay consistent with the nested MCP shapes.
       assert.equal(card.version, card.serverInfo.version, 'top-level version must mirror serverInfo.version');
       assert.equal(card.serverUrl, card.transport.endpoint, 'serverUrl must mirror transport.endpoint');
-      assert.equal(card.name, card.serverInfo.name, 'top-level name must mirror serverInfo.name');
+      assert.match(card.name, /^[a-zA-Z0-9.-]+\/[a-zA-Z0-9._-]+$/, 'top-level name must be reverse-DNS (Server Card schema)');
 
       // tools[] must be a name+description projection of the live registry,
       // plus the same access marker tools/list emits, in the same order.

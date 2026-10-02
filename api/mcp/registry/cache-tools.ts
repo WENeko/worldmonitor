@@ -1190,6 +1190,7 @@ export const CACHE_TOOLS: ToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        panel_request: { type: 'string', maxLength: 160, description: 'Server-issued news dashboard request token for its bounded internal map snapshots.' },
         dataset: {
           type: 'array',
           items: { type: 'string', enum: ['earthquakes', 'wildfires', 'other'] },

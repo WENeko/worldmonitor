@@ -1,10 +1,8 @@
 import { z } from 'zod';
 import { BRIEF_TOPICS } from './country-brief-sections';
+import { panelReceiptSchema } from './panel-admission';
 
-export const panelAdmissionSchema = z.object({
-  token: z.string().max(160), countryCode: z.string().regex(/^[A-Z]{2}$/), expiresAt: z.string().datetime(), reused: z.boolean(),
-  usage: z.object({ used: z.number().int().nonnegative(), limit: z.number().nonnegative().nullable(), remaining: z.number().nonnegative().nullable(), resetsAt: z.string().datetime(), unit: z.literal('requests') }),
-});
+export const panelAdmissionSchema = panelReceiptSchema.extend({ countryCode: z.string().regex(/^[A-Z]{2}$/) });
 export type PanelAdmission = z.infer<typeof panelAdmissionSchema>;
 
 export const countryViewSchema = z.object({

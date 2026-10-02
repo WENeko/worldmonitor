@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { HMAC_SECRET, callBody, makeProDeps, proReq } from './helpers/mcp-pro-deps.mjs';
 import { admitCountryPanel, authorizePanelRead, PANEL_READ_LIMIT } from '../api/mcp/panel-requests.ts';
+import { envPrefix } from '../server/_shared/pro-mcp-token.ts';
 
 const originalFetch = globalThis.fetch;
 const originalEnv = { ...process.env };
@@ -46,6 +47,20 @@ describe('paid country workflow through the MCP handler', () => {
     assert.equal(refreshed.body.result.structuredContent.panelRequest.usage.remaining, 48);
     await invoke(deps, 'get_country_brief_section', { ...energy, panel_request: refreshed.body.result.structuredContent.panelRequest.token });
     assert.equal(fetched.length, 2);
+  });
+  it('preserves the deployed country token and paid marker namespace across the news extension', async () => {
+    const { pipe } = makeProDeps();
+    const now = Date.UTC(2026, 9, 2, 12);
+    const grant = await admitCountryPanel(context, budget, pipe.pipeline, { country_code: 'US' }, now);
+    const [country, window, expiry] = grant.token.split('.');
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey('raw', encoder.encode(HMAC_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const bytes = await crypto.subtle.sign('HMAC', key, encoder.encode(`country-panel:${envPrefix()}:${context.userId}:${country}:${window}:${expiry}`));
+    const signature = Array.from(new Uint8Array(bytes), value => value.toString(16).padStart(2, '0')).join('');
+    assert.equal(grant.token, `${country}.${window}.${expiry}.${signature}`);
+    assert.ok(pipe.ops.flat().some(command => command[0] === 'EVAL' && String(command[5]).includes(`:country:US:${window}`)));
+    await authorizePanelRead(context, pipe.pipeline, 'get_country_brief_section', energy, grant.token, now);
+    assert.equal(pipe.count, 1);
   });
   it('includes a full country reader graph and ten exposure/dependency sectors in one charge', async () => {
     const { deps, pipe } = makeProDeps();
@@ -199,5 +214,135 @@ describe('paid country workflow through the MCP handler', () => {
     assert.equal(pipe.count, 1);
     await authorizePanelRead(context, pipe.pipeline, 'get_country_brief_section', energy, retry.token, now + 299999);
     await assert.rejects(authorizePanelRead(context, pipe.pipeline, 'get_country_brief_section', energy, retry.token, now + 300000), error => error.code === 'invalid');
+  });
+});
+
+describe('one allocation per embedded panel', () => {
+  let handler;
+  let fetched;
+  const invoke = async (deps, name, args = {}) => {
+    const response = await handler(proReq('POST', callBody(name, args)), deps);
+    return { response, body: await response.json() };
+  };
+  beforeEach(async () => {
+    process.env.MCP_INTERNAL_HMAC_SECRET = HMAC_SECRET;
+    process.env.MCP_TELEMETRY = 'false';
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    fetched = [];
+    globalThis.fetch = async url => {
+      fetched.push(String(url));
+      return Response.json({ categories: { world: { items: [] } }, coverage: { state: 'complete', servedStale: false }, generatedAt: 'controlled', brief: 'Controlled brief' });
+    };
+    handler = (await import('../api/mcp.ts')).mcpHandler;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    for (const key of Object.keys(process.env)) if (!(key in originalEnv)) delete process.env[key];
+    Object.assign(process.env, originalEnv);
+  });
+  it('reserves one unit per registered panel root, even when its readers fan out or fail', async () => {
+    const { TOOL_REGISTRY } = await import('../api/mcp/registry/index.ts');
+    const roots = TOOL_REGISTRY.filter(tool => tool._uiResourceUri);
+    assert.equal(roots.length, 12);
+    for (const root of roots) {
+      const { deps, pipe } = makeProDeps();
+      const opened = await invoke(deps, root.name, ['open_country_brief', 'get_country_brief', 'get_country_risk'].includes(root.name) ? { country_code: 'US' } : {});
+      assert.equal(pipe.count, 1, root.name);
+      assert.notEqual(opened.response.status, 401, root.name);
+      assert.notEqual(opened.response.status, 403, root.name);
+      assert.notEqual(opened.response.status, 429, root.name);
+      const shell = await handler(proReq('POST', { jsonrpc: '2.0', id: 101, method: 'resources/read', params: { uri: root._uiResourceUri } }), deps);
+      await shell.json();
+      assert.equal(pipe.count, 1, `${root.name} visual shell is uncharged`);
+    }
+  });
+  it('shares a news snapshot across filtered opens, includes map loads and charges a retry-stable refresh once', async () => {
+    const { deps, pipe } = makeProDeps();
+    const first = await invoke(deps, 'open_news_dashboard', { map_layers: ['natural'] });
+    const grant = first.body.result.structuredContent.panelRequest;
+    assert.equal(grant.panel, 'news');
+    assert.equal(grant.usage.remaining, 49);
+    const second = await invoke(deps, 'open_news_dashboard', { country: 'US', query: 'trade' });
+    assert.equal(pipe.count, 1);
+    assert.equal(fetched.length, 1);
+    assert.deepEqual(second.body.result.structuredContent.requestedView, { country: 'US', query: 'trade' });
+    assert.equal(second.body.result.structuredContent.panelRequest.token, grant.token);
+    const snapshot = await authorizePanelRead(context, pipe.pipeline, 'get_natural_disasters', { dataset: ['earthquakes', 'other'], limit: 100 }, grant.token);
+    await snapshot.save({ data: { earthquakes: { earthquakes: [] }, events: { events: [] } } });
+    const result = await invoke(deps, 'get_natural_disasters', { dataset: ['earthquakes', 'other'], limit: 100, panel_request: grant.token });
+    assert.deepEqual(result.body.result.structuredContent.data.earthquakes.earthquakes, []);
+    assert.equal(pipe.count, 1);
+    const request_id = crypto.randomUUID();
+    const refresh = await invoke(deps, 'open_news_dashboard', { refresh: true, request_id });
+    await invoke(deps, 'open_news_dashboard', { refresh: true, request_id });
+    assert.equal(pipe.count, 2);
+    assert.equal(fetched.length, 2);
+    assert.equal(refresh.body.result.structuredContent.panelRequest.usage.remaining, 48);
+    const fresh = await authorizePanelRead(context, pipe.pipeline, 'get_natural_disasters', { dataset: ['earthquakes', 'other'], limit: 100 }, refresh.body.result.structuredContent.panelRequest.token);
+    assert.equal(fresh.cached, undefined);
+  });
+  it('reports the paid remaining allowance with a single-result panel', async () => {
+    const { deps, pipe } = makeProDeps();
+    const result = await invoke(deps, 'get_country_risk', { country_code: 'US' });
+    assert.equal(result.body.result._meta['worldmonitor/usage'].remaining, 49);
+    assert.equal(result.body.result._meta['worldmonitor/usage'].unit, 'requests');
+    assert.match(result.body.result._meta['worldmonitor/usage'].resetsAt, /T00:00:00.000Z$/);
+    assert.equal(pipe.count, 1);
+  });
+  it('keeps loaded data available at the cap but denies a new refresh before downstream work', async () => {
+    const { deps, pipe } = makeProDeps({ pipelineOpts: { initialCount: 49 } });
+    const first = await invoke(deps, 'open_news_dashboard');
+    const grant = first.body.result.structuredContent.panelRequest;
+    await invoke(deps, 'open_news_dashboard', { category: 'world' });
+    await authorizePanelRead(context, pipe.pipeline, 'get_natural_disasters', { dataset: ['wildfires'], limit: 20 }, grant.token);
+    const denied = await invoke(deps, 'open_news_dashboard', { refresh: true });
+    assert.equal(denied.response.status, 429);
+    assert.ok(denied.response.headers.get('Retry-After'));
+    assert.equal(pipe.count, 50);
+    assert.equal(fetched.length, 1);
+  });
+  it('rejects foreign-panel, user, arbitrary analysis and unbounded hazard access', async () => {
+    const { deps, pipe } = makeProDeps();
+    const news = (await invoke(deps, 'open_news_dashboard')).body.result.structuredContent.panelRequest;
+    for (const [name, args] of [
+      ['get_country_brief_section', energy], ['get_country_brief', { country_code: 'US' }],
+      ['get_market_data', {}], ['analyze_news_headlines', { headlines: ['Controlled'] }],
+      ['get_natural_disasters', { dataset: ['earthquakes'], limit: 0 }],
+      ['get_natural_disasters', { dataset: ['earthquakes'], limit: 101 }],
+      ['get_natural_disasters', { dataset: ['earthquakes'], limit: 20, active_only: true }],
+      ['get_natural_disasters', { dataset: ['earthquakes', 'earthquakes'], limit: 20 }],
+    ]) await assert.rejects(authorizePanelRead(context, pipe.pipeline, name, args, news.token));
+    await assert.rejects(authorizePanelRead({ ...context, userId: 'other' }, pipe.pipeline, 'get_natural_disasters', { dataset: ['earthquakes'], limit: 20 }, news.token));
+    const country = await admitCountryPanel(context, budget, pipe.pipeline, { country_code: 'US' });
+    await assert.rejects(authorizePanelRead(context, pipe.pipeline, 'get_natural_disasters', { dataset: ['earthquakes'], limit: 20 }, country.token));
+    assert.equal((await invoke(deps, 'open_news_dashboard', { panel_request: news.token, refresh: true })).body.error.code, -32602);
+    assert.equal(pipe.count, 2);
+    assert.equal(fetched.length, 1);
+  });
+  it('checks current entitlement before cache replay and does not reuse partial or failed news', async () => {
+    let revoked = false;
+    const { deps, pipe } = makeProDeps({ getEntitlements: async () => ({ planKey: 'pro', features: { tier: 1, mcpAccess: !revoked }, validUntil: Date.now() + 86400000 }) });
+    await invoke(deps, 'open_news_dashboard');
+    revoked = true;
+    assert.equal((await invoke(deps, 'open_news_dashboard')).response.status, 403);
+    assert.equal(fetched.length, 1);
+    assert.equal(pipe.count, 1);
+    revoked = false;
+    const request_id = crypto.randomUUID();
+    globalThis.fetch = async () => { fetched.push('partial'); return Response.json({ categories: {}, coverage: { state: 'partial' } }); };
+    await invoke(deps, 'open_news_dashboard', { refresh: true, request_id });
+    await invoke(deps, 'open_news_dashboard', { refresh: true, request_id });
+    assert.equal(fetched.length, 3);
+    assert.equal(pipe.count, 2);
+  });
+  it('preserves weighted API billing for news and hazard calls', async () => {
+    const { deps, pipe } = makeProDeps({ getEntitlements: async () => ({ planKey: 'api-starter', features: { tier: 1, mcpAccess: true, apiAccess: true, planLimits: { apiCallsPerDay: 1000, mcpCallsPerDay: 'shared-api-budget' } }, validUntil: Date.now() + 86400000 }) });
+    const first = await invoke(deps, 'open_news_dashboard');
+    assert.equal(first.body.result.structuredContent.panelRequest, undefined);
+    await invoke(deps, 'get_natural_disasters', { dataset: ['earthquakes'], limit: 20 });
+    assert.equal(pipe.count, 3);
+    assert.equal((await invoke(deps, 'get_natural_disasters', { dataset: ['earthquakes'], limit: 20, panel_request: 'forged' })).body.error.code, -32602);
+    assert.equal(pipe.count, 3);
   });
 });

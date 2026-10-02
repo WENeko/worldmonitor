@@ -452,7 +452,7 @@
   "welcome": {
     "meta": {
       "title": "World Monitor — 無料のリアルタイム グローバル インテリジェンス ダッシュボード",
-      "description": "ニュースになる頃には既に知っている。紛争、海峡、軍用機、市場、サイバー — ワンマップで監視。AI分析付き、無料、登録不要。",
+      "description": "ニュースになる頃には、もう知っている。紛争、要衝、軍用機、市場、サイバー：AI分析付きの1つの無料ライブマップ。サインアップ不要。",
       "ogTitle": "World Monitor — ニュースになる頃には、既に知っている。",
       "ogDescription": "世界の生のシグナル — 船舶、航空機、サイレン、ケーブル、市場 — が 1 つの無料ライブ インテリジェンスマップに集約。収束を検知する AI 搭載。無料、登録不要。"
     },
@@ -485,7 +485,7 @@
       "positioningLink": "WorldMonitor はオープンソース版 Palantir ではありません",
       "asOf": "{{date}}時点",
       "whatIsTitle": "World Monitor とは何ですか？",
-      "whatIsBody": "World Monitor は 200 万人以上が利用する無料のオープンソース (AGPL-3.0) ダッシュボードです。{{feeds}} 本のニュースおよび OSINT フィードを {{providers}} の帰属元プロバイダーからストリーミング配信し、{{mapLayers}} 種類のマップレイヤーを備えた単一のライブワールドマップに表示します。地政学、マーケット、海運、航空、サイバーセキュリティに対応しており、これらを相互関連付けることで、ヘッドラインが報道される前に収束するイベントを浮かび上がらせます。すべての数値は出典が明記され、すべての手法は文書化されています。"
+      "whatIsBody": "World Monitor は無料（$0）のオープンソース（AGPL-3.0）ダッシュボードで、200万人以上が利用しています。{{feeds}}個のニュースおよびOSINT フィードを{{providers}}個の提供元から集約し、1つのライブ世界地図上にストリーミング配信します。{{mapLayers}}種類のマップレイヤーで地政学、市場、海運、航空、サイバーに対応し、収束するイベントがヘッドラインになる前に表示されます。すべての数値は出典付きで、すべての手法は文書化されています。"
     },
     "live": {
       "eyebrow": "現在ライブ配信中",
@@ -574,17 +574,17 @@
     "firstFive": {
       "eyebrow": "ゼロから始める",
       "title": "マップで最初の 5 分間に何が起きますか?",
-      "sub": "ツアーなし、空の状態なし、サインアップ画面なし。これが実際に起こることです。",
+      "sub": "ツアーなし、空の状態なし、サインアップ壁なし。これが最初の5分間で実際に起こることです。",
       "f1Title": "マップはすでに動いている",
       "f1Desc": "紛争、船舶、飛行機、火災、障害はページ読み込み時にレンダリングされます。最初に設定するものはありません。",
       "f2Title": "任意の国をクリック",
-      "f2Desc": "完全なドシエが開きます：不安定性スコアとその構成要素、引用元の見出し付き AI ブリーフ、アクティブシグナル、7 日間のタイムライン。",
+      "f2Desc": "その国の完全なドシエが開きます。不安定性スコアがそれを構成する要素に分解され、引用された見出しを示すAIブリーフ、マップ上のアクティブなシグナル、そして何が変わったかを示す7日間のタイムラインが表示されます。事前に設定する必要はありません。1クリックですべてが開きます。",
       "f3Title": "⌘K / Ctrl-K を押す",
       "f3Desc": "{{commands}} のコマンド。UI を習得せずに任意のレイヤー、パネル、国にジャンプ。",
       "f4Title": "レンズを選ぶ",
       "f4Desc": "World、Tech、Finance、Commodity、Energy、Happy — 同じエンジン、6つのチューンされたモニター、ワンクリック。",
       "f5Title": "おそらく 10 分の 1 しか見ていない",
-      "f5Desc": "残りは世界が動くにつれて表示されます — 衛星パス、GPS ジャミング、ダークシップ、抗議クラスター、サイレンアラート。",
+      "f5Desc": "デスクトップでマップが開くと、{{mapLayers}}種類のマップレイヤーのうち{{defaultOnLayers}}種類（約{{defaultOnLayerPct}}%）がオンになります。その他は世界が動くにつれて表示されます：衛星パス、GPS妨害、AISギャップから推定されたダークシップ、抗議集会クラスター、民間防衛サイレンアラート。ほとんどはレイヤーメニューまたは⌘Kパレットからオンにできます。",
       "cta": "時間を開始"
     },
     "depth": {
@@ -607,9 +607,9 @@
       "s14l": "言語・RTL対応",
       "s15l": "独立したアラート情報源",
       "n1Title": "衛星軌道追跡",
-      "n1Desc": "SGP4で計算するブラウザ内リアルタイム軌道位置——ISSやStarlink、軍事衛星のオーバーヘッドを監視。",
+      "n1Desc": "SGP4でブラウザ内で計算されたライブ軌道位置で、3秒ごとに更新される — CelesTrakからの軍用および地球観測衛星で、2時間ごとに更新。",
       "n2Title": "GPS妨害ゾーン",
-      "n2Desc": "GPSが劣化または偽造されている現在位置をリアルタイムで示すRF干渉マップ。",
+      "n2Desc": "航空機レポートから生成される日次RF干渉マップです。GPS信号が低下した航空機が全体の2%以上を占めるセルはフラグ付き、10%を超えるセルは高として標示されます。セルは毎日これらのレポートから再構築される六角形で、このマップは直近1日間でフライトがジャミングまたはスプーフィングに遭遇した場所を示します。現在時点ではありません。",
       "n3Title": "隘路通過情報",
       "n3Desc": "ホルムズ海峡、スエズ運河、バベルマンデブ海峡ほか10以上の海峡の船舶数——混乱度スコア付き。",
       "n4Title": "AI データセンターマップ",
@@ -617,7 +617,7 @@
       "n5Title": "海底ケーブル",
       "n5Desc": "{{submarineCables}} のインターネット運搬海底ケーブルを障害・脅威信号とオーバーレイ。",
       "n6Title": "抗議活動追跡",
-      "n6Desc": "デュアルソース抗議検出とクロスソース重複排除——ノイズではなくシグナル。",
+      "n6Desc": "ACLEDおよびGDELTからの抗議活動検出。同じ日に同じ0.1°セルの1つのソースからのレポートは1つのイベントにマージされます — シグナル、推測ではありません。",
       "faith": "数字を信じるのではなく——",
       "faithCta": "アプリを開いて確認してください。",
       "faithNote": "すべてのパネルに情報源が記載されています。"
@@ -625,7 +625,7 @@
     "agents": {
       "eyebrow": "ビルダー・AIエージェント向け",
       "title": "独自のスタックから World Monitor 上にビルドするにはどうすればよいですか?",
-      "sub": "マップ上のすべてはAPIでもあります。{{mcpTools}}個のライブツールでClaudeにMCP経由で接続するか、任意の場所からRESTエンドポイントを呼び出すか、Python、Ruby、Go、JavaScriptのネイティブクライアントをインストールしてください — あなたのコードは学習データではなくライブデータで調査します。",
+      "sub": "マップ上のすべてはAPI としても利用できます。MCP経由でClaudeに{{mcpTools}}個のライブツールとして組み込む、どこからでもREST エンドポイントを呼び出す、またはPython、Ruby、Go、JavaScriptのネイティブクライアントをインストール — コードはトレーニングデータの記憶ではなくライブデータで調査します。MCP アクセスはPro（月額${{proMonthlyPrice}}/月から）に付属します。",
       "b1": "{{mcpTools}} の MCP ツール — リスクスコア、チョークポイント、紛争、マーケット、ブリーフィング",
       "b2": "ドキュメント化された REST API — OpenAPI 3.1 スペック 1 つ、キー 1 つ",
       "b3": "npm、PyPI、RubyGems、Goの公式SDK——ゼロ依存、MCP優先",
@@ -648,9 +648,9 @@
       "eyebrow": "アクセス",
       "title1": "Freeは観測所。",
       "title2": "Proは作戦室。",
-      "sub": "ダッシュボードは無料です。レジリエンスを除くすべてのマップレイヤー、すべてのフィード、サインアップ不要。Proは意思決定レイヤーを追加します。",
+      "sub": "ダッシュボードは無料（$0）— Resilienceを除くすべてのマップレイヤー、登録不要。Proは判断レイヤーを追加。",
       "freeTitle": "Free",
-      "freeDesc": "無料プランは試用版ではなく、完全なプロダクトです。Resilience を除くすべてのマップレイヤー、{{feeds}} のソースからのすべてのフィード、6つのモニター全部 — サインアップなし、試用期間なし。",
+      "freeDesc": "無料プランは試用版ではなく完全な製品です。Resilienceを除くすべてのマップレイヤー、6つのモニター全て — 登録なし、試用期限なし。",
       "freeF1": "Resilience と厳選フィード以外のすべてのマップレイヤー",
       "freeF2": "国別ブリーフ、ホットスポット、不安定性スコア",
       "freeF3": "隘路、ケーブル、カスケード分析",
@@ -689,11 +689,12 @@
       "q10": "World Monitor が Palantir ではない理由は何ですか?",
       "a10": "Palantir は機関独自のデータをその機関内で運用可能にします。World Monitor は反対の側から始まります。公開されているデータを集約、正規化、関連付け、監視してから、その情報層を無料ダッシュボードとオープンソースコードを通じて公開します。異なるジョブ、異なるプロダクトです。",
       "q11": "Which World Monitor license do I need?",
-      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms."
+      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms.",
+      "sub": "{{answers}}個の直接的な回答。料金、データ、アラート、AI アクセスについて。簡潔に言うと：ダッシュボードは $0、アカウント不要、コードは AGPL-3.0 のオープンソースです。"
     },
     "cta": {
       "title": "ワールドマップの監視を開始するにはどうすればよいですか?",
-      "subtitle": "worldmonitor.app/dashboardをブラウザで開きます（アカウント不要）。{{mapLayers}}種類のマップレイヤーがあり、レジリエンス以外はすべて無料で切り替え可能です。国をクリックして概要を表示するか、⌘K / Ctrl-Kを押してコマンドパレットを開きます。このページを読んでいる間もマップは更新され続けています。",
+      "subtitle": "worldmonitor.app/dashboardをブラウザで無料（$0）、アカウント不要で開きます。{{mapLayers}}種類のマップレイヤー、Resilience を除くすべてが無料で切り替え可能です。任意の国をクリックしてその概要を表示するか、⌘K / Ctrl-K を押してコマンドパレットを開きます。このページを読んでいる間も地図は更新され続けています。",
       "button": "最初に見つける",
       "note": "無料 · サインアップ不要 · 数秒で読み込み",
       "secondary": "またはProプランを見る →"
@@ -701,7 +702,7 @@
     "tasks": {
       "eyebrow": "質問から始める",
       "title": "何を調べたいのか?",
-      "sub": "あなたの目的に合った証拠の道筋を選択してください。各ルートはソースに基づいたビューを開き、空のダッシュボードではありません。",
+      "sub": "{{routes}}の証拠の道筋から、目の前の仕事に合致するものを選ぶ。各ルートはソース裏付けのビューを開き、空のダッシュボードではない。",
       "verifyTitle": "速報イベントを検証",
       "verifyDesc": "速報の主張を信頼する前に、現在の危機トラッカー、日付付きのメトリクス、および引用されたコンテキストを確認してください。",
       "chokepointTitle": "チョークポイントを確認",

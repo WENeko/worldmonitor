@@ -16,6 +16,16 @@ export const pluginNewsViewSchema = z.object({
   map_zoom: z.number().min(1).max(8).optional(),
 }).strict().refine(value => (value.map_latitude === undefined) === (value.map_longitude === undefined), 'Map center requires both latitude and longitude');
 export type PluginNewsView = z.infer<typeof pluginNewsViewSchema>;
+export const newsDashboardRequestSchema = z.object({
+  view: pluginNewsViewSchema,
+  refresh: z.boolean().default(false),
+  request_id: z.string().uuid().optional(),
+}).strict();
+
+export function parseNewsDashboardRequest(input: Record<string, unknown>) {
+  const { refresh, request_id, jmespath: _projection, ...view } = input;
+  return newsDashboardRequestSchema.safeParse({ view, refresh, request_id });
+}
 
 export const PLUGIN_NEWS_VIEW_INPUT_SCHEMA = {
   type: 'object',
@@ -32,4 +42,13 @@ export const PLUGIN_NEWS_VIEW_INPUT_SCHEMA = {
     map_zoom: { type: 'number', minimum: 1, maximum: 8 },
   },
   required: [],
+};
+
+export const NEWS_DASHBOARD_INPUT_SCHEMA = {
+  ...PLUGIN_NEWS_VIEW_INPUT_SCHEMA,
+  properties: {
+    ...PLUGIN_NEWS_VIEW_INPUT_SCHEMA.properties,
+    refresh: { type: 'boolean', description: 'Refresh news and map observations with one new paid request. Default false reuses the loaded dashboard request.' },
+    request_id: { type: 'string', format: 'uuid', description: 'Stable ID for a refresh; retries share one paid request.' },
+  },
 };

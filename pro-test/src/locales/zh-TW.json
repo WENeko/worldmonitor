@@ -452,7 +452,7 @@
   "welcome": {
     "meta": {
       "title": "World Monitor — 免費即時全球情報儀表板\t",
-      "description": "在事件成為新聞之前，你已經知道了。衝突、樞紐、軍事飛行、市場和網路威脅即時展現在一張免費世界地圖上，配有AI分析。無需註冊。",
+      "description": "成為新聞之前，你已經知道。衝突、咽喉要道、軍事飛行、市場、網路：一張免費即時地圖加AI分析。無需註冊。",
       "ogTitle": "World Monitor — 新聞報道之前，您已經瞭解。\t",
       "ogDescription": "世界原始訊號 — 船舶、飛機、警報、電纜、市場 — 匯聚在一張免費即時情報地圖上，AI 會在它們匯聚成重要資訊時發出標記。免費、無需註冊。\t"
     },
@@ -485,7 +485,7 @@
       "positioningLink": "WorldMonitor 不是開源的 Palantir\t",
       "asOf": "截至{{date}}",
       "whatIsTitle": "World Monitor 是什麼？",
-      "whatIsBody": "World Monitor 是一個免費、開源（AGPL-3.0）的儀表盤，由 200 萬+ 使用者使用。它將來自 {{providers}} 個可溯源提供方的 {{feeds}} 條新聞和 OSINT 動態流即時展示在一張世界地圖上，支援 {{mapLayers}} 種地圖圖層型別，覆蓋地緣政治、市場、海運、航空和網路安全領域。系統會關聯這些資料，使相關事件在上頭條前就浮現出來。每項資料都有來源，每套方法都有文件記錄。"
+      "whatIsBody": "World Monitor 是一款免費（$0）、開源（AGPL-3.0）的儀表板，供 200 多萬人使用。它將來自 {{providers}} 個歸屬提供商的 {{feeds}} 條新聞和 OSINT 源流式傳輸到一張即時世界地圖上，包括 {{mapLayers}} 種地圖圖層型別，涵蓋地緣政治、市場、海運、航空和網路安全。它關聯這些資料，使匯聚事件在登上新聞頭條前就浮現出來。每個資料都有溯源，每種方法都有文件記錄。"
     },
     "live": {
       "eyebrow": "即時線上\t",
@@ -574,17 +574,17 @@
     "firstFive": {
       "eyebrow": "從零開始快速上手",
       "title": "在地圖上的前五分鐘會發生什麼？",
-      "sub": "無導覽、無空狀態、無註冊牆。這就是實際情況。",
+      "sub": "無導覽、無空狀態、無註冊牆。這就是前5分鐘實際發生的。",
       "f1Title": "地圖已在動態更新",
       "f1Desc": "衝突、船舶、航班、火災和中斷在頁面載入時即時呈現。無需提前配置任何內容。",
       "f2Title": "點選任意國家",
-      "f2Desc": "會開啟完整檔案：包含各分量的不穩定指數、引用標題的 AI 簡報、即時訊號和 7 天時間線。",
+      "f2Desc": "為該國開啟完整檔案：不穩定指數分解為其各項成分、引用了相關頭條新聞的AI簡報、地圖上的活躍訊號，以及7天內情況變化的時間線。無需預先設定；一次點選即可開啟所有內容。",
       "f3Title": "按 ⌘K / Ctrl-K",
       "f3Desc": "{{commands}}條命令。無需學習UI即可跳轉到任何圖層、面板或國家。",
       "f4Title": "選擇你的視角",
       "f4Desc": "World、Tech、Finance、Commodity、Energy或Happy——同一引擎、六個專項監測、一鍵切換。",
       "f5Title": "你可能只看到了十分之一",
-      "f5Desc": "當世界變化時，其餘內容會逐漸顯現——衛星過境、GPS 干擾、暗船、抗議叢集、警報提示。",
+      "f5Desc": "地圖在桌面端開啟時，其{{mapLayers}}個地圖圖層型別中的{{defaultOnLayers}}個（約{{defaultOnLayerPct}}%）被啟用。其餘圖層會隨著世界變化而浮現：衛星過境、GPS干擾、AIS訊號缺口標記的暗船、抗議叢集和民防警笛警報。大多數圖層可從圖層選單或⌘K快捷板啟用。",
       "cta": "開始計時"
     },
     "depth": {
@@ -607,9 +607,9 @@
       "s14l": "語言·含RTL",
       "s15l": "獨立警報源",
       "n1Title": "衛星追蹤",
-      "n1Desc": "使用SGP4在瀏覽器內即時計算軌道位置——監控國際空間站、星鏈和軍事衛星的頭頂透過。",
+      "n1Desc": "使用SGP4在瀏覽器中計算的即時軌道位置，每3秒更新一次——來自CelesTrak的軍事和地球觀測衛星，每2小時重新整理一次。",
       "n2Title": "GPS干擾區域",
-      "n2Desc": "即時射頻干擾地圖，顯示GPS當前被降級或欺騙的位置。",
+      "n2Desc": "來自飛行報告的每日射頻干擾地圖：至少 2% 的飛行器出現 GPS 訊號衰減的區域會被標記，超過 10% 的區域會標記為高風險。這些區域是根據這些報告每天重建一次的六邊形網格，因此地圖顯示的是過去一天內飛行遭遇干擾或欺騙的位置，而非此刻情況。",
       "n3Title": "卡點運輸情報",
       "n3Desc": "透過霍爾木茲海峽、蘇伊士運河、曼德海峽及另外10個海峽的船舶計數——含中斷評分。",
       "n4Title": "AI資料中心地圖",
@@ -617,7 +617,7 @@
       "n5Title": "海底電纜",
       "n5Desc": "{{submarineCables}}條承載網際網路的海底光纜，疊加中斷和威脅訊號。",
       "n6Title": "抗議追蹤",
-      "n6Desc": "雙源抗議檢測，含跨源去重——訊號，非謠言。",
+      "n6Desc": "來自 ACLED 和 GDELT 的抗議活動檢測；同一天內同一 0.1° 網格單元中來自一個信源的報告合併為一個事件——實際訊號，而非謠言。",
       "faith": "不要盲目相信這些數字——",
       "faithCta": "開啟應用並自己計數。",
       "faithNote": "每個面板都標註了來源。"
@@ -625,7 +625,7 @@
     "agents": {
       "eyebrow": "為構建者與AI代理",
       "title": "我如何從自己的堆疊在 World Monitor 上構建？",
-      "sub": "地圖上的所有內容都可透過 API 呼叫。使用 MCP 將其接入 Claude，配備 {{mcpTools}} 個即時工具，從任何地方呼叫 REST 端點，或為 Python、Ruby、Go 或 JavaScript 安裝本地客戶端 — 你的程式碼可用即時資料進行研究，而不是依賴訓練資料的記憶。",
+      "sub": "地圖上的所有內容都可透過 API 存取。透過 MCP 將其接入 Claude，使用 {{mcpTools}} 個即時工具，從任何地方呼叫 REST 端點，或為 Python、Ruby、Go 或 JavaScript 安裝原生客戶端——你的程式碼可用即時資料而非訓練資料進行研究。MCP 存取權限包含在 Pro 中，售價 ${{proMonthlyPrice}}/月起。",
       "b1": "{{mcpTools}} 個 MCP 工具 — 風險評分、咽喉點、衝突、市場、情報簡報",
       "b2": "文件化REST API——一份OpenAPI 3.1規範，一個金鑰",
       "b3": "npm、PyPI、RubyGems和Go上的官方SDK——零依賴、MCP優先",
@@ -648,9 +648,9 @@
       "eyebrow": "存取",
       "title1": "免費是觀測站。",
       "title2": "專業版是行動室。",
-      "sub": "儀表板免費提供——除韌性層外的每個地圖圖層、每個資料來源，無需註冊。Pro 版本新增決策層。",
+      "sub": "該儀表板免費使用（$0）——包含除 Resilience 外的所有地圖圖層，無需註冊。Pro 增加決策層。",
       "freeTitle": "免費版",
-      "freeDesc": "免費版是完整產品，不是試用版。除了 Resilience 外的所有地圖圖層、來自 {{feeds}} 個資訊源的所有資料來源、全部六個監測板塊 — 無需註冊，無試用期限。",
+      "freeDesc": "免費版本是完整產品，不是試用版。包含除 Resilience 外的所有地圖圖層和全部六個監測模組——無需註冊，無試用計時。",
       "freeF1": "除彈性和精選源外的所有地圖圖層",
       "freeF2": "國家簡報、熱點、不穩定性評分",
       "freeF3": "卡點、電纜、級聯分析",
@@ -689,11 +689,12 @@
       "q10": "為什麼 World Monitor 不是 Palantir？",
       "a10": "Palantir 使機構能夠在其內部運營自有資料。World Monitor 從另一個角度出發：它彙集、規範化、關聯和監控公開資料，然後透過免費儀表板和開原始碼釋出該情報層。工作不同，產品也不同。",
       "q11": "Which World Monitor license do I need?",
-      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms."
+      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms.",
+      "sub": "{{answers}} 個關於價格、資料、告警和 AI 存取權限的直接問答。簡而言之：該 dashboard 費用為 $0，無需註冊帳戶，程式碼以 AGPL-3.0 許可證開源。"
     },
     "cta": {
       "title": "我如何開始監控世界地圖？",
-      "subtitle": "在任何瀏覽器中開啟 worldmonitor.app/dashboard，無需帳戶：{{mapLayers}} 個地圖圖層型別，除復原力外全部可免費切換。點選任何國家檢視其情報簡報，或按 ⌘K / Ctrl-K 開啟命令面板。你閱讀此頁面時地圖一直在更新。",
+      "subtitle": "在任何瀏覽器中開啟 worldmonitor.app/dashboard，無需帳戶，費用為 $0：{{mapLayers}} 種地圖圖層型別，除 Resilience 外全部免費切換。點選任何國家檢視其簡報，或按 ⌘K / Ctrl-K 開啟命令面板。你閱讀本頁面的過程中，地圖一直在更新。",
       "button": "率先找到它",
       "note": "免費 · 無需註冊 · 秒速載入",
       "secondary": "或檢視 Pro 計劃 →"
@@ -701,7 +702,7 @@
     "tasks": {
       "eyebrow": "從問題開始",
       "title": "你想了解什麼？",
-      "sub": "選擇與你當前任務相符的證據路線。每條路線都會開啟有來源支撐的檢視，而不是空白儀表板。",
+      "sub": "從{{routes}}條證據線索中選擇與當前任務相符的。每條線索開啟一個有資料來源支撐的檢視，而非空儀表板。",
       "verifyTitle": "驗證突發事件",
       "verifyDesc": "在相信突發新聞宣告之前，請檢查當前危機追蹤器、最新資料和引用的背景資訊。",
       "chokepointTitle": "檢查海峽",

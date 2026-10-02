@@ -37,7 +37,7 @@ export const COUNTRY_VIEW_TOOLS: ToolDef[] = [{
     const parsed = countryViewSchema.safeParse(Object.fromEntries(Object.entries(params).filter(([key]) => key !== 'jmespath')));
     const countryCode = parsed.success ? resolveCountryCode(parsed.data.country_code) : null;
     if (!parsed.success || !countryCode) throw new RpcValidationError('open_country_brief', [{ field: 'country_code', description: 'Supply a recognized country and topic.' }]);
-    return { countryCode, topic: parsed.data.topic, ...(execution?.countryPanel ? { panelRequest: execution.countryPanel } : {}) };
+    return { countryCode, topic: parsed.data.topic, ...(execution?.panelRequest ? { panelRequest: execution.panelRequest } : {}) };
   },
 }, {
   name: 'get_country_brief_section',

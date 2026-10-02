@@ -452,7 +452,7 @@
   "welcome": {
     "meta": {
       "title": "World Monitor — Dashboard di intelligence globale gratuita in tempo reale",
-      "description": "Prima che diventi notizia, tu l'avevi già saputo. Conflitti, strozzature, voli militari, mercati e cyber su una mappa mondiale live gratuita, con analisi AI. Nessuna registrazione.",
+      "description": "Quando diventa notizia, tu lo sai già. Conflitti, strozzature, voli militari, mercati, cyber: una mappa dal vivo gratuita con analisi AI. Nessuna registrazione.",
       "ogTitle": "World Monitor — Quando diventa notizia, tu lo sai già.",
       "ogDescription": "I segnali grezzi del mondo — navi, jet, sirene, cavi, mercati — su una mappa di intelligence live gratuita, con AI che segnala quando convergono. Gratuito, nessuna registrazione."
     },
@@ -485,7 +485,7 @@
       "positioningLink": "WorldMonitor non è un Palantir open-source",
       "asOf": "A partire dal {{date}}",
       "whatIsTitle": "Cos'è World Monitor?",
-      "whatIsBody": "World Monitor è una dashboard gratuita e open-source (AGPL-3.0) utilizzata da 2M+ persone. Trasferisce {{feeds}} feed di news e OSINT da {{providers}} provider attribuiti su un'unica mappa mondiale live con {{mapLayers}} tipi di layer cartografici, coprendo geopolitica, mercati, shipping, aviazione e cyber. Li correla in modo che gli eventi convergenti emergano prima dei titoli. Ogni dato è documentato e ogni metodo è tracciato."
+      "whatIsBody": "World Monitor è una dashboard gratuita ($0), open-source (AGPL-3.0) utilizzata da 2M+ persone. Trasmette {{feeds}} feed di notizie e OSINT da {{providers}} provider attribuiti su un'unica mappa mondiale live con {{mapLayers}} tipi di layer cartografico, coprendo geopolitica, mercati, trasporto marittimo, aviazione e cyber. Li correla in modo che gli eventi convergenti emergano prima dei titoli. Ogni dato è documentato e ogni metodo è tracciato."
     },
     "live": {
       "eyebrow": "Live in questo momento",
@@ -574,17 +574,17 @@
     "firstFive": {
       "eyebrow": "Da zero a orientato",
       "title": "Cosa accade nei tuoi primi cinque minuti sulla mappa?",
-      "sub": "Niente tour, niente stati vuoti, niente muro di registrazione. Questo è quello che succede davvero.",
+      "sub": "Nessuna guida, nessuno stato vuoto, nessun muro di registrazione. Questo è ciò che succede realmente nei primi 5 minuti.",
       "f1Title": "La mappa si muove già",
       "f1Desc": "Conflitti, navi, voli, incendi e interruzioni si visualizzano mentre la pagina carica. Niente da configurare prima.",
       "f2Title": "Clicca un qualsiasi paese",
-      "f2Desc": "Si apre un dossier completo: punteggio di instabilità con i suoi componenti, un brief AI con headline citate, segnali attivi, una timeline di 7 giorni.",
+      "f2Desc": "Si apre un fascicolo completo per quel paese: il suo punteggio di instabilità suddiviso nei componenti che lo determinano, un briefing AI che cita i titoli su cui si basa, i segnali attivi sulla mappa e una cronologia di 7 giorni dei cambiamenti. Non è necessario configurare nulla in anticipo; un clic apre tutto.",
       "f3Title": "Premi ⌘K / Ctrl-K",
       "f3Desc": "{{commands}} comandi. Salta a qualsiasi livello, pannello o paese senza imparare l'interfaccia.",
       "f4Title": "Scegli il tuo filtro",
       "f4Desc": "Mondo, Tech, Finance, Commodity, Energy o Happy — lo stesso motore, sei monitor specializzati, a un clic di distanza.",
       "f5Title": "Hai visto forse un decimo",
-      "f5Desc": "Il resto emerge mentre il mondo si muove — passaggi satellitari, jamming GPS, navi fantasma, cluster di proteste, avvisi di sirena.",
+      "f5Desc": "Quando la mappa si apre su desktop, {{defaultOnLayers}} dei suoi {{mapLayers}} tipi di livello mappa, circa {{defaultOnLayerPct}}%, sono attivi. Gli altri emergono al movimento del mondo: passaggi satellitari, disturbo GPS, navi oscure segnalate da lacune AIS, cluster di proteste e avvisi di sirene di protezione civile. La maggior parte può essere attivata dal menu dei livelli o dalla palette ⌘K.",
       "cta": "Avvia il contatore"
     },
     "depth": {
@@ -607,9 +607,9 @@
       "s14l": "Lingue · RTL incluso",
       "s15l": "Origini di avviso indipendenti",
       "n1Title": "Tracciamento satellitare",
-      "n1Desc": "Posizioni orbitali in tempo reale calcolate nel browser con SGP4 — monitora ISS, Starlink e satelliti militari sopra di te.",
+      "n1Desc": "Posizioni orbitali dal vivo calcolate nel browser con SGP4 e aggiornate ogni 3 secondi — satelliti militari e di osservazione terrestre da CelesTrak, aggiornati ogni 2 ore.",
       "n2Title": "Zone di disturbo GPS",
-      "n2Desc": "Mappa RF-interference in tempo reale che mostra dove il GPS è degradato o falsificato adesso.",
+      "n2Desc": "Mappa giornaliera di interferenza RF dai report degli aerei: le celle dove almeno il 2% degli aerei rileva GPS degradato sono segnalate, oltre il 10% marcate come elevate. Le celle sono esagoni ricostruiti una volta al giorno da quei report, quindi la mappa mostra dove i voli hanno incontrato jamming o spoofing nell'ultimo giorno, non in questo momento.",
       "n3Title": "Intelligence su transiti strategici",
       "n3Desc": "Conteggio navi attraverso lo Stretto di Hormuz, Suez, Bab el-Mandeb e 10 altri stretti — con punteggi di disruzione.",
       "n4Title": "Mappa datacenter AI",
@@ -617,7 +617,7 @@
       "n5Title": "Cavi sottomarini",
       "n5Desc": "{{submarineCables}} cavi sottomarini che trasportano internet, sovrapposti con segnali di interruzione e minaccia.",
       "n6Title": "Tracciamento proteste",
-      "n6Desc": "Rilevamento proteste a doppia fonte con deduplicazione cross-source — segnale, non voce.",
+      "n6Desc": "Rilevamento di proteste da ACLED e GDELT; i report da una sola fonte nella stessa cella 0,1° nello stesso giorno si uniscono in un unico evento — segnale, non voce.",
       "faith": "Non fidarti dei numeri ciecamente —",
       "faithCta": "apri l'app e conta.",
       "faithNote": "Le fonti sono citate su ogni pannello."
@@ -625,7 +625,7 @@
     "agents": {
       "eyebrow": "Per creatori e agenti AI",
       "title": "Come creo su World Monitor dal mio stack?",
-      "sub": "Tutto sulla mappa è anche un'API. Collegala a Claude tramite MCP con {{mcpTools}} strumenti live, chiama gli endpoint REST da qualsiasi luogo, o installa un client nativo per Python, Ruby, Go o JavaScript — il tuo codice esegue ricerche con dati live invece di affidarsi ai dati di addestramento.",
+      "sub": "Tutto sulla mappa è anche un'API. Collegala a Claude tramite MCP con {{mcpTools}} tool live, chiama gli endpoint REST da qualsiasi luogo, o installa un client nativo per Python, Ruby, Go, o JavaScript — il tuo codice ricerca con dati live invece dei ricordi dai dati di training. L'accesso MCP è incluso con Pro, da {{proMonthlyPrice}}$/mese.",
       "b1": "{{mcpTools}} strumenti MCP — score di rischio, chokepoint, conflitti, mercati, briefing",
       "b2": "REST API documentata — una spec OpenAPI 3.1, una chiave",
       "b3": "SDK ufficiali su npm, PyPI, RubyGems e Go — zero dipendenze, MCP-first",
@@ -648,9 +648,9 @@
       "eyebrow": "Accesso",
       "title1": "Free è l'osservatorio.",
       "title2": "Pro è la sala operativa.",
-      "sub": "La dashboard è gratuita — ogni livello di mappa eccetto Resilience, ogni feed, nessuna registrazione. Pro aggiunge il livello decisionale.",
+      "sub": "La dashboard è gratuita a $0 — ogni livello mappa tranne Resilience, senza registrazione. Pro aggiunge il livello decisionale.",
       "freeTitle": "Free",
-      "freeDesc": "Il tier gratuito è un prodotto completo, non una prova. Ogni livello della mappa tranne Resilience, ogni feed da {{feeds}} fonti, tutti e sei i monitor — senza registrazione, senza scadenza di prova.",
+      "freeDesc": "Il livello gratuito è un prodotto completo, non una prova. Ogni livello mappa tranne Resilience, tutti e sei i monitor — senza registrazione, nessun conto alla rovescia.",
       "freeF1": "Tutti i layer mappe tranne Resilience e feed curati",
       "freeF2": "Brief nazionali, hotspot, punteggi di instabilità",
       "freeF3": "Chokepoint, cavi, analisi a cascata",
@@ -689,11 +689,12 @@
       "q10": "Perché World Monitor non è Palantir?",
       "a10": "Palantir rende operativi i dati di un'istituzione all'interno di quella stessa istituzione. World Monitor parte dall'altro capo: assembla, normalizza, correla e monitora i dati del mondo pubblico, quindi pubblica questo livello di intelligence attraverso una dashboard gratuita e codice open-source. Compiti diversi, prodotti diversi.",
       "q11": "Which World Monitor license do I need?",
-      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms."
+      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms.",
+      "sub": "{{answers}} risposte dirette su prezzo, dati, avvisi e accesso all'AI. In breve: il dashboard costa $0, non richiede account e il codice è open source sotto AGPL-3.0."
     },
     "cta": {
       "title": "Come inizio a monitorare la mappa mondiale?",
-      "subtitle": "Apri worldmonitor.app/dashboard in qualsiasi browser, senza account: {{mapLayers}} tipi di layer mappa, tutti tranne Resilience attivabili gratuitamente. Clicca su qualsiasi paese per il suo briefing, o premi ⌘K / Ctrl-K per la palette dei comandi. La mappa continua ad aggiornarsi mentre leggi questa pagina.",
+      "subtitle": "Apri worldmonitor.app/dashboard in qualsiasi browser per $0, senza account: {{mapLayers}} tipi di layer cartografico, tutti gratuiti tranne Resilience. Clicca su qualsiasi paese per il suo briefing, o premi ⌘K / Ctrl-K per la palette dei comandi. La mappa ha continuato ad aggiornarsi mentre leggevi questa pagina.",
       "button": "Scoprilo per primo",
       "note": "Gratuito · Senza iscrizione · Si carica in secondi",
       "secondary": "Oppure visualizza i piani Pro →"
@@ -701,7 +702,7 @@
     "tasks": {
       "eyebrow": "Inizia dalla domanda",
       "title": "Cosa stai cercando di scoprire?",
-      "sub": "Scegli il percorso di prove che corrisponde al compito da svolgere. Ogni rotta apre una visualizzazione supportata da fonti, non una dashboard vuota.",
+      "sub": "Scegli quale dei {{routes}} percorsi di prove corrisponde al compito che hai davanti. Ogni percorso apre una visualizzazione basata su fonti, non una dashboard vuota.",
       "verifyTitle": "Verifica un evento in corso",
       "verifyDesc": "Verifica gli attuali monitoraggi delle crisi, le metriche datate e il contesto citato prima di dare credito a un'affermazione di rottura.",
       "chokepointTitle": "Controlla un punto critico",

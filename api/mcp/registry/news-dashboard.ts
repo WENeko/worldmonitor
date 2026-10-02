@@ -1,4 +1,6 @@
-import { pluginNewsViewSchema, PLUGIN_NEWS_VIEW_INPUT_SCHEMA } from '../../../shared/plugin-news-view';
+import { parseNewsDashboardRequest, NEWS_DASHBOARD_INPUT_SCHEMA } from '../../../shared/plugin-news-view';
+import { newsPanelAdmissionSchema } from '../../../shared/panel-admission';
+import { z } from 'zod';
 import { buildAuthHeaders } from '../auth';
 import { assertToolFetchOk, RpcValidationError } from '../billing-denial';
 import { fetchMcpDownstream } from '../downstream';
@@ -9,12 +11,12 @@ import { NEWS_DASHBOARD_UI_URI } from '../ui/news-dashboard-app';
 export const NEWS_DASHBOARD_TOOLS: ToolDef[] = [{
   name: 'open_news_dashboard',
   title: 'WorldMonitor news and maps',
-  description: 'Open WorldMonitor with its news category panels and interactive map. Returns the current full dashboard feed digest, including publication dates, source provenance inputs, coordinates and coverage. Empty arguments open the dashboard. View arguments configure a rendered instance when delivered by the host. requestedView confirms requested settings, not the applied state of an already-open map.',
+  description: 'Open WorldMonitor with its news panels and interactive map. On dedicated paid MCP plans, one dashboard request includes bounded map snapshot loads; default opens reuse its loaded news for at least five minutes. Explicit refresh starts one new request. API plans retain per-tool billing. Returns the full feed digest with publication dates, source provenance, coordinates and coverage. Empty arguments open the dashboard. View arguments configure the rendered instance; requestedView confirms requested settings, not an already-open map’s applied state.',
   _uiResourceUri: NEWS_DASHBOARD_UI_URI,
   _openaiEntrypoints: [{ type: 'global' }, { type: 'thread' }],
   _outputBudgetBytes: 1048576,
   _apiPaths: ['GET /api/news/v1/list-feed-digest'],
-  inputSchema: PLUGIN_NEWS_VIEW_INPUT_SCHEMA,
+  inputSchema: NEWS_DASHBOARD_INPUT_SCHEMA,
   outputSchema: {
     type: 'object',
     properties: {
@@ -23,14 +25,15 @@ export const NEWS_DASHBOARD_TOOLS: ToolDef[] = [{
       generatedAt: { type: 'string' },
       coverage: { type: 'object' },
       requestedView: { type: 'object' },
+      panelRequest: z.toJSONSchema(newsPanelAdmissionSchema),
     },
     required: ['categories'],
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   _execute: async (params, base, context, execution) => {
-    const parsedView = pluginNewsViewSchema.safeParse(Object.fromEntries(Object.entries(params).filter(([key]) => key !== 'jmespath')));
+    const parsedView = parseNewsDashboardRequest(params);
     if (!parsedView.success) throw new RpcValidationError('open_news_dashboard', [{ field: 'view', description: 'Invalid news view arguments; map center requires both latitude and longitude.' }]);
-    const requestedView = parsedView.data;
+    const requestedView = parsedView.data.view;
     const url = `${base}/api/news/v1/list-feed-digest?variant=full&lang=en`;
     const headers = await buildAuthHeaders(context, 'GET', url, null);
     const response = await fetchMcpDownstream(url, {

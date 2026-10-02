@@ -452,7 +452,7 @@
   "welcome": {
     "meta": {
       "title": "World Monitor — Tabloul de bord gratuit de inteligență globală în timp real",
-      "description": "Până când devine știre, tu deja știai. Conflicte, puncte critice, zboruri militare, piețe și cyber pe o singură hartă vie a lumii, cu analiză AI. Fără înregistrare.",
+      "description": "Până când devine știre, tu deja știai. Conflicte, puncte critice, zboruri militare, piețe, cyber: o hartă live gratuită cu analiză AI. Fără înregistrare.",
       "ogTitle": "World Monitor — Până când devine știre, deja știai.",
       "ogDescription": "Semnalele brute ale lumii — nave, avioane, sirene, cabluri, piețe — pe o singură hartă de inteligență în direct, cu AI care marchează când se converg. Gratuit, fără înregistrare."
     },
@@ -485,7 +485,7 @@
       "positioningLink": "WorldMonitor nu este un Palantir open-source",
       "asOf": "Din {{date}}",
       "whatIsTitle": "Ce este World Monitor?",
-      "whatIsBody": "World Monitor este un dashboard gratuit și open-source (AGPL-3.0) folosit de 2M+ persoane. Transmite {{feeds}} fluxuri de știri și OSINT de la {{providers}} furnizori atribuiți pe o singură hartă mondială live cu {{mapLayers}} tipuri de straturi de hartă, acoperind geopolitică, piețe, transport maritim, aviație și cyber. Le corelează astfel încât evenimentele convergente să iasă în evidență înaintea titlurilor. Fiecare cifră este sursită și fiecare metodă documentată."
+      "whatIsBody": "World Monitor este un dashboard gratuit ($0), open-source (AGPL-3.0) folosit de 2M+ persoane. Transmite {{feeds}} fluxuri de știri și OSINT de la {{providers}} furnizori atribuiți pe o hartă mondială live unificată cu {{mapLayers}} tipuri de straturi de hartă, acoperind geopolitică, piețe, transport maritim, aviație și cyber. Le corelează pentru ca evenimentele convergente să apară înaintea știrilor. Fiecare cifră este sursa și fiecare metodă documentată."
     },
     "live": {
       "eyebrow": "Live chiar acum",
@@ -574,17 +574,17 @@
     "firstFive": {
       "eyebrow": "De la zero la orientare",
       "title": "Ce se întâmplă în primele cinci minute pe hartă?",
-      "sub": "Fără tur, fără stări goale, fără zid de înregistrare. Asta se întâmplă de fapt.",
+      "sub": "Fără ghid, fără stări goale, fără perete de înregistrare. Asta se întâmplă de fapt în primele 5 minute.",
       "f1Title": "Harta se mișcă deja",
       "f1Desc": "Conflictele, vasele, zborurile, incendiile și întreruperile se redau pe măsură ce se încarcă pagina. Nimic de configurat mai întâi.",
       "f2Title": "Fă clic pe orice țară",
-      "f2Desc": "Se deschide un dosar complet: scor de instabilitate cu componentele sale, o scurtă descriere AI cu titluri citate, semnale active, cronologie de 7 zile.",
+      "f2Desc": "Se deschide un dosar complet pentru acea țară: scorul său de instabilitate descompus în componentele care îl determină, o evaluare din IA care citează articolele pe care se bazează, semnalele active pe hartă și o cronologie de 7 zile cu ce s-a schimbat. Nu trebuie să configurezi nimic înainte; un singur clic deschide totul.",
       "f3Title": "Apasă ⌘K / Ctrl-K",
       "f3Desc": "{{commands}} comenzi. Sări la orice strat, panou sau țară fără să înveti interfața mai întâi.",
       "f4Title": "Alege-ți obiectivul",
       "f4Desc": "Lume, Tehnologie, Finanțe, Materii Prime, Energie sau Fericit — același motor, șase monitoare reglate, la o singură clic distanță.",
       "f5Title": "Ai văzut poate o zecime din ea",
-      "f5Desc": "Restul apare pe măsură ce lumea se mișcă — pasaje prin satelit, blocaj GPS, nave întunecate, clustere de proteste, alerte de sirene.",
+      "f5Desc": "Când harta se deschide pe desktop, {{defaultOnLayers}} din {{mapLayers}} tipurile de straturi ale hărții, aproximativ {{defaultOnLayerPct}}%, sunt activate. Restul apar pe măsură ce lumea se mișcă: trecerile satelitare, perturbarea GPS, nave întunecate marcate din lacunele AIS, grupuri de proteste și alertele sirenelor de apărare civilă. Majoritatea pot fi activate din meniul de straturi sau din paleta ⌘K.",
       "cta": "Pornește cronometrul"
     },
     "depth": {
@@ -607,9 +607,9 @@
       "s14l": "Limbi · inclusiv RTL",
       "s15l": "Origini de alerte independente",
       "n1Title": "Urmărire sateliți",
-      "n1Desc": "Poziții orbitale în timp real calculate în browser cu SGP4 — urmărește ISS, Starlink și alte sateliți militari deasupra.",
+      "n1Desc": "Pozițiile orbitale live calculate în-browser cu SGP4 și actualizate la fiecare 3 secunde — sateliți militari și de observație a Pământului de la CelesTrak, reîmprospătați la fiecare 2 ore.",
       "n2Title": "Zone de perturbație GPS",
-      "n2Desc": "Hartă live RF cu interferențe care arată unde GPS este degradat sau falsificat chiar acum.",
+      "n2Desc": "Hartă zilnică de interferență RF din rapoarte de aeronave: celulele în care cel puțin 2% dintre aeronave experimentează GPS degradat sunt marcate, peste 10% marcate ca ridicate. Celulele sunt hexagoane reconstruite o dată pe zi din acele rapoarte, deci harta arată unde zborurile au întâlnit jamming sau spoofing în ultima zi, nu în această clipă.",
       "n3Title": "Intel asupra tranzitului prin puncte critice",
       "n3Desc": "Numărul de nave prin Hormuz, Suez, Bab el-Mandeb și 10 alte strâmtori — cu cotare a perturbării.",
       "n4Title": "Hartă centre de date AI",
@@ -617,7 +617,7 @@
       "n5Title": "Cabluri submarine",
       "n5Desc": "{{submarineCables}} cabluri submarine care transportă internetul, suprapuse cu semnale de întreruperi și amenințări.",
       "n6Title": "Urmărire proteste",
-      "n6Desc": "Detectare dual-sursă a protestelor cu deduplicare între surse — semnal, nu zvon.",
+      "n6Desc": "Detectarea protestelor din ACLED și GDELT; rapoartele de la o singură sursă în aceeași celulă 0.1° în aceeași zi se fuzionează într-un singur eveniment — semnal, nu zvon.",
       "faith": "Nu lua numerele în serios —",
       "faithCta": "deschide aplicația și numără.",
       "faithNote": "Sursele sunt citate pe fiecare panou."
@@ -625,7 +625,7 @@
     "agents": {
       "eyebrow": "Pentru constructori și agenți AI",
       "title": "Cum construiesc pe World Monitor din propriul meu stack?",
-      "sub": "Tot ce este pe hartă este și o API. Conectează-o la Claude prin MCP cu {{mcpTools}} instrumente live, apelează endpoint-urile REST de oriunde, sau instalează un client nativ pentru Python, Ruby, Go sau JavaScript — codul tău face cercetare cu date live în loc de memorii din datele de antrenament.",
+      "sub": "Totul pe hartă este și un API. Conectează-l la Claude prin MCP cu {{mcpTools}} instrumente live, apelează punctele finale REST de oriunde, sau instalează un client nativ pentru Python, Ruby, Go, sau JavaScript — codul tău face cercetare cu date live în loc de amintiri din datele de antrenament. Accesul MCP vine cu Pro, de la ${{proMonthlyPrice}}/lună.",
       "b1": "{{mcpTools}} instrumente MCP — scoruri de risc, puncte vulnerabile, conflicte, piețe, scurte rapoarte",
       "b2": "REST API documentat — o specificație OpenAPI 3.1, o cheie",
       "b3": "SDK-uri oficiale pe npm, PyPI, RubyGems și Go — fără dependințe, MCP-first",
@@ -648,9 +648,9 @@
       "eyebrow": "Acces",
       "title1": "Free este observatorul.",
       "title2": "Pro este sala operațiilor.",
-      "sub": "Tabloul de bord este gratuit — fiecare strat de hartă în afară de Resilience, fiecare flux, fără înregistrare. Pro adaugă stratul de decizie.",
+      "sub": "Dashboard-ul este gratuit la $0 — fiecare strat de hartă cu excepția Resilience, fără înregistrare. Pro adaugă stratul decizional.",
       "freeTitle": "Free",
-      "freeDesc": "Nivelul gratuit este un produs complet, nu o versiune de probă. Fiecare strat de hartă cu excepția Resilience, fiecare flux din {{feeds}} surse, toți șase monitorul — fără înregistrare, fără ceas de probă.",
+      "freeDesc": "Nivelul gratuit este un produs complet, nu o versiune de probă. Fiecare strat de hartă cu excepția Resilience, toate șase monitoare — fără înregistrare, fără limită de timp de probă.",
       "freeF1": "Toate straturile de hartă, cu excepția Resilience și fluxuri curate",
       "freeF2": "Rezumate țări, puncte fierbinți, scoruri de instabilitate",
       "freeF3": "Puncte critice, cabluri, analiză în cascadă",
@@ -689,11 +689,12 @@
       "q10": "De ce World Monitor nu este Palantir?",
       "a10": "Palantir face datele proprii ale unei instituții operaționale în cadrul acesteia. World Monitor pornește de la celălalt capăt: adună, normalizează, corelează și monitorizează datele din domeniul public, apoi publică acel strat de inteligență printr-un tablou de bord gratuit și cod open-source. Sarcini diferite, produse diferite.",
       "q11": "Which World Monitor license do I need?",
-      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms."
+      "a11": "Choose based on who will use the output. Pro's Personal license is for one person using World Monitor for their own research and decisions. Pro Business lets one licensed user use it for company or client work, internal tools, and reports. API Starter covers API use inside one organization, with no customer redistribution. API Business lets that organization embed World Monitor data in products and services for its customers. Enterprise covers custom seats, white-labeling, and deployments. These subscription licenses are separate from the AGPL/MIT source-code licenses. Full terms: worldmonitor.app/docs/terms.",
+      "sub": "{{answers}} răspunsuri directe despre preț, date, alerte și acces AI. Pe scurt: dashboard-ul costă $0, nu necesită cont și codul este open source sub AGPL-3.0."
     },
     "cta": {
       "title": "Cum încep să monitorizez harta lumii?",
-      "subtitle": "Deschide worldmonitor.app/dashboard în orice browser, fără cont: {{mapLayers}} tipuri de straturi pe hartă, fiecare dintre ele, cu excepția Resilience, poate fi activat gratuit. Dă clic pe orice țară pentru brieful ei, sau apasă ⌘K / Ctrl-K pentru paleta de comenzi. Harta a continuat să se actualizeze în timp ce ai citit această pagină.",
+      "subtitle": "Deschide worldmonitor.app/dashboard în orice browser pentru $0, fără cont: {{mapLayers}} tipuri de straturi de hartă, fiecare cu excepția Resilience gratuit pentru activare. Dă clic pe orice țară pentru brieful ei, sau apasă ⌘K / Ctrl-K pentru paleta de comenzi. Harta a continuat să se actualizeze în timp ce ai citit această pagină.",
       "button": "Găsește-l primul",
       "note": "Gratuit · Fără înregistrare · Se încarcă în secunde",
       "secondary": "Sau vezi planuri Pro →"
@@ -701,7 +702,7 @@
     "tasks": {
       "eyebrow": "Începeți cu întrebarea",
       "title": "Ce încercați să aflați?",
-      "sub": "Alegeți traseul de dovezi care se potrivește sarcinii în fața dumneavoastră. Fiecare rută deschide o vizualizare susținută de surse, nu o tablă de bord goală.",
+      "sub": "Alege oricare dintre cele {{routes}} trasee de probe care se potrivesc sarcinii tale. Fiecare traseu deschide o vedere susținută de surse, nu un dashboard gol.",
       "verifyTitle": "Verificați un eveniment de ultimă oră",
       "verifyDesc": "Verificați monitorurile de crize actuale, metricile cu dată și contextul citat înainte de a avea încredere într-o pretenție de ultimă oră.",
       "chokepointTitle": "Verificați un punct de strangulare",

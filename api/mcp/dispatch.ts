@@ -15,8 +15,10 @@ import { mcpErrorFingerprint } from './error-fingerprint';
 import { argBool, summarizeData } from './filters';
 import { evaluateFreshness } from './freshness';
 import { applyJmespath } from './jmespath';
-import { admitCountryPanel, authorizePanelRead, PanelRequestError, type PanelAdmission } from './panel-requests';
-import { isSharedRestCounter, reserveQuota, type McpBudget } from './quota';
+import { admitCountryPanel, admitNewsPanel, authorizePanelRead, PanelRequestError, type PaidPanelAdmission } from './panel-requests';
+import { parseNewsDashboardRequest } from '../../shared/plugin-news-view';
+import type { PanelUsage } from '../../shared/panel-admission';
+import { isSharedRestCounter, reserveQuota, resolveDailyLimit, type McpBudget } from './quota';
 import { reserveFreeAccountAllowance } from './free-account-allowance';
 import { buildMcpStructuredDenial, type McpDenial } from './upgrade';
 import { isQuotaExemptMetadataTool, toolAccess, toolWeight, TOOL_REGISTRY } from './registry/index';
@@ -386,7 +388,8 @@ export async function dispatchToolsCall(
     return mcpDenialResponse({ reason: 'upgrade-required' }, -32002, 403, id, corsHeaders);
   }
 
-  let countryPanel: PanelAdmission | undefined;
+  let panelRequest: PaidPanelAdmission | undefined;
+  let panelUsage: PanelUsage | undefined;
   let panelRead: Awaited<ReturnType<typeof authorizePanelRead>> | undefined;
   const suppliedPanel = p.arguments?.panel_request;
   const callArguments = Object.fromEntries(Object.entries(p.arguments ?? {}).filter(([key]) => key !== 'panel_request'));
@@ -394,7 +397,11 @@ export async function dispatchToolsCall(
     && (context.kind === 'pro' || context.kind === 'user_key');
   try {
     if (dedicatedPanel && tool.name === 'open_country_brief') {
-      countryPanel = await admitCountryPanel(context, budget, deps.redisPipeline, Object.fromEntries(Object.entries(callArguments).filter(([key]) => key !== 'jmespath')));
+      panelRequest = await admitCountryPanel(context, budget, deps.redisPipeline, Object.fromEntries(Object.entries(callArguments).filter(([key]) => key !== 'jmespath')));
+    } else if (dedicatedPanel && tool.name === 'open_news_dashboard') {
+      if (suppliedPanel !== undefined) throw new PanelRequestError('Open or refresh the dashboard without a reader token.', 'invalid');
+      panelRequest = await admitNewsPanel(context, budget, deps.redisPipeline, callArguments);
+      panelRead = await authorizePanelRead(context, deps.redisPipeline, tool.name, {}, panelRequest.token);
     } else if (suppliedPanel !== undefined) {
       if (!dedicatedPanel || budget?.limit === 0) throw new PanelRequestError('This allowance does not support panel requests.', 'invalid');
       panelRead = await authorizePanelRead(context, deps.redisPipeline, tool.name,
@@ -417,7 +424,7 @@ export async function dispatchToolsCall(
     (context.kind === 'pro' || context.kind === 'user_key')
     && tool._freeTier !== true
     && !isMetadataTool
-    && !countryPanel
+    && !panelRequest
     && !panelRead
   ) {
     if (freeAccountAllowance) {
@@ -475,6 +482,12 @@ export async function dispatchToolsCall(
       // No caller-side rollback of the reservation: once we pass this point the
       // tool runs and the daily slot is charged for good (GHSA-hcq5). The only
       // rollback is INSIDE reserveQuota, for the pre-dispatch cap-exceeded case.
+      if (dedicatedPanel && tool._uiResourceUri) {
+        const limit = resolveDailyLimit(budget?.limit);
+        const reset = new Date();
+        reset.setUTCHours(24, 0, 0, 0);
+        panelUsage = { used: reservation.newCount, limit, remaining: limit === null ? null : Math.max(0, limit - reservation.newCount), resetsAt: reset.toISOString(), unit: 'requests' };
+      }
     }
   }
 
@@ -493,7 +506,7 @@ export async function dispatchToolsCall(
       result = panelRead.cached;
     } else if (tool._execute) {
       execution = createMcpToolExecutionContext(req.url);
-      execution.countryPanel = countryPanel;
+      execution.panelRequest = panelRequest;
       result = await tool._execute(
         callArguments,
         execution.downstreamOrigin,
@@ -503,7 +516,16 @@ export async function dispatchToolsCall(
     } else {
       result = await executeTool(tool, callArguments);
     }
-    if (panelRead && panelRead.cached === undefined) await panelRead.save(result);
+    if (panelRead && panelRead.cached === undefined) {
+      if (tool.name === 'open_news_dashboard' && result && typeof result === 'object') {
+        const { requestedView: _view, ...snapshot } = result as Record<string, unknown>;
+        await panelRead.save(snapshot);
+      } else await panelRead.save(result);
+    }
+    if (tool.name === 'open_news_dashboard' && panelRequest && result && typeof result === 'object') {
+      const parsed = parseNewsDashboardRequest(callArguments);
+      result = { ...result, requestedView: parsed.success ? parsed.data.view : {}, panelRequest };
+    }
     // Convex `internal-validate-pro-mcp-token` schedules touchProMcpTokenLastUsed
     // itself (convex/http.ts:1035-1040), so no waitUntil needed here.
     //
@@ -592,7 +614,7 @@ export async function dispatchToolsCall(
         actual_bytes: textBytes,
         hint,
       };
-      return rpcOk(id, { content: [{ type: 'text', text: JSON.stringify(envelope) }], structuredContent: envelope }, corsHeaders);
+      return rpcOk(id, { content: [{ type: 'text', text: JSON.stringify(envelope) }], structuredContent: envelope, ...(panelUsage ? { _meta: { 'worldmonitor/usage': panelUsage } } : {}) }, corsHeaders);
     }
     // Every tool advertises an `outputSchema`, so a strict client rejects a
     // result without `structuredContent` before the model sees it (#8328). A
@@ -605,7 +627,7 @@ export async function dispatchToolsCall(
       reshaped: failed === undefined && (jmespathUsed || summaryUsed),
       rider,
     });
-    return rpcOk(id, { content: [{ type: 'text', text }], structuredContent }, corsHeaders);
+    return rpcOk(id, { content: [{ type: 'text', text }], structuredContent, ...(panelUsage ? { _meta: { 'worldmonitor/usage': panelUsage } } : {}) }, corsHeaders);
   } catch (err: unknown) {
     // `latency_ms` is time-in-tool (from tStart, captured after the quota
     // reservation) so the P95 error-path dashboard isn't skewed by reservation

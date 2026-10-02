@@ -57,29 +57,29 @@ A single MCP tool call is not always one unit, because the tools do not cost the
 | Fetches downstream twice | **3** | `get_country_brief` |
 | Fetches downstream up to four times | **5** | `get_airspace` |
 
-`get_airspace` has a fixed weight of 5, including when only one source or longitude interval is needed. Dateline-crossing countries require two bounded queries per source. Dedicated Pro MCP allowances charge one unit per standalone call. Country-panel requests include their internal readers as described below.
+`get_airspace` has a fixed weight of 5, including when only one source or longitude interval is needed. Dateline-crossing countries require two bounded queries per source. Dedicated Pro MCP allowances charge one unit per standalone call. Embedded panels include their internal readers as described below.
 
 A weighted call is all-or-nothing. With 999 of 1,000 units spent, a 2-unit call is rejected rather than partly served. `describe_tool` and `get_sources` charge nothing, as do all the discovery methods.
 
-You do not have to read this table to know what a call costs. Every `tools/list` and `describe_tool` entry carries its own price at `_meta["worldmonitor/weight"]`, so a client can budget before it calls. The number is what the tool costs; whether it is charged is `_meta["worldmonitor/access"]`'s question, and only an API plan pays the weight — Pro and Pro Business pay one unit per standalone call or country-panel request.
+You do not have to read this table to know what a call costs. Every `tools/list` and `describe_tool` entry carries its own price at `_meta["worldmonitor/weight"]`, so a client can budget before it calls. The number is what the tool costs; whether it is charged is `_meta["worldmonitor/access"]`'s question, and only an API plan pays the weight — Pro and Pro Business pay one unit per standalone call or panel request.
 
 Today the REST and MCP halves reserve against separate counters that each hold the plan's full number, so an MCP-only workload and a REST-only workload both get the whole 1,000 or 10,000. They become one physical counter when REST enforcement turns on. Plan against the combined figure, because that is the allowance the plan sells and the merge will not raise it.
 
-## Paid country-panel requests
+## Paid embedded-panel requests
 
 Pro includes **50 requests per UTC day**. Pro Business includes **250**. Both use a dedicated MCP counter.
 
-Opening a country brief costs **one request**. Its section reads, default assessment, and source coverage use the same paid admission. A request includes up to **64 uncached reads**. Every read retains account authorization and the per-minute burst limit.
+Opening any embedded panel costs **one request**, including its rendered details. The ten single-result widgets already obtain their data in one tool call, and loading a visual shell costs nothing. The country brief and news/maps dashboard also include their internal data calls in that allocation. A country brief includes its section reads, default assessment and source coverage. A news dashboard includes its category panels and bounded hazard snapshots. A request includes up to **64 uncached reads**. Every read retains account authorization and the per-minute burst limit.
 
-Same-country opens share an admission in a five-minute window. The admission lasts five to ten minutes, clipped at UTC midnight. Ready responses are reused while that admission is valid. Topic navigation and repeated questions in the loaded interface reuse ready data for five minutes. Failures are retried rather than cached as successful observations.
+Same-country opens and default news-dashboard opens share their respective admissions in a five-minute window. News display filters share the full loaded digest. The admission lasts five to ten minutes, clipped at UTC midnight. Ready responses are reused while that admission is valid. Topic navigation and repeated questions in the loaded interface reuse ready data for five minutes. Failures are retried rather than cached as successful observations.
 
-**Refresh country** starts a new request and clears loaded section data. **New AI assessment** starts a new request for the assessment. Other standalone data tools still cost one unit each. Custom text-assessment frameworks use standalone billing.
+**Refresh country**, **Refresh news** and **Refresh map data** each start one new request and reload that view’s observations. News refresh includes selected hazard layers. Layer toggles, country topic tabs and local news filters reuse loaded data. **New AI assessment** starts a new request for the assessment. Requested news summaries and translations are separate AI requests, each costing one unit. Other standalone data tools still cost one unit each. Custom text-assessment frameworks use standalone billing.
 
-The country interface shows remaining requests and the local reset time from the latest country admission. Settings and the account-allowance resource read the same daily counter. Reuse cannot extend an admission past expiry or bypass a subscription denial. An admitted request remains charged after an upstream failure.
+All twelve embedded views show remaining requests and the local reset time from their latest observed paid request. Single-result widgets receive usage metadata with their tool result; composite views receive it with their admission. Settings and the account-allowance resource read the same daily counter. Reuse cannot extend an admission past expiry or bypass a subscription denial. An admitted request remains charged after an upstream failure.
 
 API Starter and API Business retain weighted per-tool billing. The panel admission does not exempt an API plan from its REST budget.
 
-The 50 and 250 numerical limits remain the published paid allowances. Their unit now covers a complete country workflow. The [workflow measurement report](https://github.com/koala73/worldmonitor/blob/main/docs/solutions/performance-issues/mcp-country-panel-metering.md) records read counts, reuse, work ceilings, and the limits of the cost evidence.
+The 50 and 250 numerical limits remain the published paid allowances. Their unit covers a complete panel load, rather than each internal call. These numerical caps remain provisional pending provider costs and realistic customer usage. The [workflow measurement report](https://github.com/koala73/worldmonitor/blob/main/docs/solutions/performance-issues/mcp-country-panel-metering.md) records read counts, reuse, work ceilings, and the limits of the cost evidence.
 
 ## Dashboard AI quota
 
@@ -220,7 +220,7 @@ API and MCP plan caps are tracked against the product catalog limits that ship w
 | API Business | 10,000 | 300 | shares the 10,000 | 300 |
 | Enterprise | Unlimited | 1,000 | Unlimited | 1,000 |
 
-Pro and Pro Business have no REST allowance. Their separate counter charges one unit per standalone call or bounded country-panel request. API plans have one budget. The "MCP units / day" column is not an additional allowance on top of the API one, it is the same number, spent at the [per-tool weight](#mcp-calls-against-an-api-plan).
+Pro and Pro Business have no REST allowance. Their separate counter charges one unit per standalone call or bounded panel request. API plans have one budget. The "MCP units / day" column is not an additional allowance on top of the API one, it is the same number, spent at the [per-tool weight](#mcp-calls-against-an-api-plan).
 
 When a paid user approaches or exceeds one of these limits, WorldMonitor records a compact Convex rollup and opens a current account notice in Settings. The daily count is read from the same per-account meter that governs enforcement, so a warning reflects the same usage number the plan is metered against. Daily limits warn at 80% and switch to over-limit at 100%; burst limits only notify on sustained pressure, not a single isolated spike.
 

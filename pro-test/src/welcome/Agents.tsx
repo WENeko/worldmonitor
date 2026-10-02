@@ -3,6 +3,7 @@ import { Check } from 'lucide-react';
 import { CardLinkArrow, cardLinkFocusRing } from './CardLink';
 import { t } from '../i18n';
 import depthProofStats from '../generated/depth-stats.json';
+import copyStats from '../generated/copy-stats.json';
 
 // Registry install commands are product identifiers, not prose — they stay
 // untranslated on purpose (same reason the tool names below do).
@@ -37,7 +38,7 @@ export const Agents = () => (
       >
         <div className="font-mono text-[11px] uppercase tracking-[3px] text-wm-green mb-3">{t('welcome.agents.eyebrow')}</div>
         <h2 className="text-3xl md:text-5xl font-display font-bold tracking-tight mb-6">{t('welcome.agents.title')}</h2>
-        <p className="text-wm-muted mb-6">{t('welcome.agents.sub', depthProofStats)}</p>
+        <p className="text-wm-muted mb-6">{t('welcome.agents.sub', { ...depthProofStats, ...copyStats })}</p>
         <ul className="space-y-3 mb-6 text-sm">
           {[1, 2, 3, 4].map(n => (
             <li key={n} className="flex items-start gap-2.5">

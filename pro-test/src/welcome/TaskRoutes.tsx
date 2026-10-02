@@ -35,7 +35,7 @@ export const TaskRoutes = () => (
           {t('welcome.tasks.title')}
         </h2>
         <p className="mt-4 text-sm leading-relaxed text-wm-muted md:text-base">
-          {t('welcome.tasks.sub')}
+          {t('welcome.tasks.sub', { routes: TASK_ROUTES.length })}
         </p>
       </div>
 
