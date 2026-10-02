@@ -59,6 +59,13 @@
       "removal_issue": null
     },
     {
+      "path": "api/mcp/panel-requests.ts",
+      "category": "internal-helper",
+      "reason": "Bounded paid country-request admission, signed reader scope, and response reuse for the MCP JSON-RPC dispatcher. Exports no HTTP route.",
+      "owner": "@SebastienMelki",
+      "removal_issue": null
+    },
+    {
       "path": "api/mcp/dispatch.ts",
       "category": "external-protocol",
       "reason": "MCP tools/call dispatcher — executeTool (cache-tool path), dispatchToolsCall, per-tool budget gate, telemetry emission, F6 cache_all_null guard. Extracted from api/mcp.ts during the structural split; same external-protocol constraint as the parent shim.",

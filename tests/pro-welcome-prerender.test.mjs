@@ -9,6 +9,10 @@ const welcomeHtml = () =>
   (cachedWelcomeHtml ??= readFileSync(new URL('../public/pro/welcome.html', import.meta.url), 'utf8'));
 const enLocale = () =>
   JSON.parse(readFileSync(new URL('../pro-test/src/locales/en.json', import.meta.url), 'utf8'));
+// The FAQ answers interpolate the same build-measured figures the page renders.
+const proofFacts = () =>
+  JSON.parse(readFileSync(new URL('../pro-test/src/generated/depth-stats.json', import.meta.url), 'utf8'));
+const fillProofFacts = (text, facts) => text.replace(/\{\{(\w+)\}\}/g, (_, key) => String(facts[key]));
 const WELCOME_FAQ_COUNT = 11;
 const CANONICAL_ORIGIN = 'https://www.worldmonitor.app/';
 
@@ -24,6 +28,54 @@ const welcomeJsonLdBlocks = () =>
 const skip = shouldSkipProBuiltOutput();
 guardProBuiltOutput();
 
+// Index scanners rather than regex replacement for reading section text. The
+// input is our own build output, but a single-pass `.replace` can leave a
+// partial tag behind (CodeQL js/incomplete-multi-character-sanitization) and a
+// case-sensitive `<script` pattern misses `<SCRIPT>` (js/bad-tag-filter).
+
+// Drop every <script>/<style> element (any case, closing tag may carry
+// whitespace or attributes). An unterminated element drops the rest.
+function withoutElements(html, tagNames) {
+  const lower = html.toLowerCase();
+  let out = '';
+  let i = 0;
+  while (i < html.length) {
+    const lt = lower.indexOf('<', i);
+    if (lt === -1) return out + html.slice(i);
+    const name = tagNames.find((tag) => lower.startsWith(tag, lt + 1));
+    if (!name) {
+      out += html.slice(i, lt + 1);
+      i = lt + 1;
+      continue;
+    }
+    out += html.slice(i, lt);
+    const close = lower.indexOf(`</${name}`, lt + 1);
+    const end = close === -1 ? -1 : lower.indexOf('>', close);
+    if (end === -1) return out;
+    i = end + 1;
+  }
+  return out;
+}
+
+// Replace each `<...>` tag with `separator`, keeping text between tags. A `<`
+// with no later `>` (or an empty `<>`) stays literal, as with /<[^>]+>/g.
+function tagsToText(html, separator) {
+  let out = '';
+  let i = 0;
+  while (i < html.length) {
+    const lt = html.indexOf('<', i);
+    const gt = lt === -1 ? -1 : html.indexOf('>', lt + 1);
+    if (lt === -1 || gt === -1) return out + html.slice(i);
+    if (gt === lt + 1) {
+      out += html.slice(i, gt + 1);
+    } else {
+      out += html.slice(i, lt) + separator;
+    }
+    i = gt + 1;
+  }
+  return out;
+}
+
 const welcomeRoot = () => {
   const rootMatch = welcomeHtml().match(/<div id="root"(?<attrs>[^>]*)>(?<content>[\s\S]*?)<\/body>/);
   assert.ok(rootMatch?.groups, 'welcome page should contain #root before body close');
@@ -35,6 +87,7 @@ const welcomeRoot = () => {
 
 test('welcome FAQPage JSON-LD matches every visible FAQ entry', { skip }, () => {
   const en = enLocale();
+  const facts = proofFacts();
   const faqPage = welcomeJsonLdBlocks().find((block) => block['@type'] === 'FAQPage');
 
   assert.ok(faqPage, 'welcome.html should include FAQPage JSON-LD');
@@ -42,11 +95,49 @@ test('welcome FAQPage JSON-LD matches every visible FAQ entry', { skip }, () => 
   for (let n = 1; n <= WELCOME_FAQ_COUNT; n += 1) {
     const entry = faqPage.mainEntity[n - 1];
     assert.equal(entry.name, en.welcome.faq[`q${n}`]);
-    assert.equal(entry.acceptedAnswer?.text, en.welcome.faq[`a${n}`]);
+    assert.equal(entry.acceptedAnswer?.text, fillProofFacts(en.welcome.faq[`a${n}`], facts));
   }
+  assert.doesNotMatch(welcomeHtml(), /\{\{\w+\}\}/, 'no raw {{placeholder}} may reach the published page');
+  // The chokepoint answer must state the measured count, not a placeholder.
+  assert.match(faqPage.mainEntity[3].acceptedAnswer.text, new RegExp(`^Yes\\. ${facts.chokepoints} chokepoints`));
   // The structured answer to the Liveuamap question must carry the compare
   // destination itself, not only the DOM anchor derived from it (#7746).
   assert.match(faqPage.mainEntity[4].acceptedAnswer.text, /worldmonitor\.app\/compare\/liveuamap-alternatives/);
+});
+
+// AI answers quote one passage, not the stat rail beside it, so each
+// question-headed passage must carry its own measured figure.
+test('question-headed welcome passages state their own measured figures', { skip }, () => {
+  const facts = proofFacts();
+  const { content } = welcomeRoot();
+  const passageAfter = (heading) => {
+    const at = content.indexOf(`>${heading}</h2>`);
+    assert.ok(at >= 0, `missing heading: ${heading}`);
+    return content.slice(at).match(/<p[^>]*>([\s\S]*?)<\/p>/)?.[1] ?? '';
+  };
+  const whatIs = passageAfter('What is World Monitor?');
+  assert.match(whatIs, new RegExp(`${facts.feeds} news and OSINT feeds from ${facts.providers} attributed providers`));
+  assert.match(whatIs, new RegExp(`${facts.mapLayers} map layer types`));
+  // Resilience is Pro-locked, so the free-start answer must not promise every counted layer.
+  assert.match(passageAfter('How do I start watching the world map?'), new RegExp(`${facts.mapLayers} map layer types, every one except Resilience free to switch on`));
+  assert.match(passageAfter('How do I build on World Monitor from my own stack?'), new RegExp(`${facts.mcpTools} live tools`));
+  assert.match(content, new RegExp(`${facts.mcpTools} MCP tools`));
+});
+
+// The geo.new CIT-02/03 audit judges each H2 section by its opening, roughly
+// the first 60 words, so a figure buried in the fifth FAQ answer does not
+// count. Every H2 section, the noscript fallback included, must open with one.
+test('every H2 section states a figure within its first 60 words', { skip }, () => {
+  const facts = proofFacts();
+  const html = withoutElements(welcomeHtml(), ['script', 'style']);
+  const parts = html.split(/<h2[^>]*>([\s\S]*?)<\/h2>/);
+  assert.ok(parts.length > 20, 'expected the welcome page H2 sections');
+  for (let i = 1; i < parts.length; i += 2) {
+    const heading = tagsToText(parts[i], '').trim();
+    const opening = tagsToText(parts[i + 1], ' ').split(/\s+/).filter(Boolean).slice(0, 60).join(' ');
+    assert.match(opening, /\d/, `"${heading}" opens without a figure: ${opening}`);
+  }
+  assert.match(welcomeHtml(), new RegExp(`${facts.feeds} news and OSINT feeds — onto one live map with ${facts.mapLayers} map layer types`));
 });
 
 test('welcome JSON-LD connects the page, website, application, and publisher', { skip }, () => {

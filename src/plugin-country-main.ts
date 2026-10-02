@@ -2,7 +2,7 @@ import './bootstrap/zod-csp';
 import './styles/base-layer.css';
 import './styles/plugin-country.css';
 import { z } from 'zod';
-import { countryViewSchema } from '../shared/country-brief-host';
+import { countryViewSchema, panelAdmissionSchema, type PanelAdmission } from '../shared/country-brief-host';
 import { resolveCountryCode } from '../shared/country-code-resolve';
 import { BRIEF_TOPICS } from '../shared/country-brief-sections';
 import { isChinaDecisionSignalSnapshot } from '../shared/china-decision-signals';
@@ -20,17 +20,22 @@ import { combineAbortSignals } from '@/services/timeout-signal';
 import type { CountryIntelData } from '@/components/CountryBriefPanel';
 
 async function mountCountryView(): Promise<void> {
+  const usageNotice = document.getElementById('countryUsage')!;
+  const admissions = new Map<string, PanelAdmission>();
+  let admission: PanelAdmission | undefined;
   const status = document.getElementById('countryStatus')!;
   const form = document.getElementById('countryControls') as HTMLFormElement;
   const input = form.elements.namedItem('country') as HTMLInputElement;
   const pending = new Map<number, { resolve: (result: unknown) => void; reject: (error: unknown) => void; cleanup: () => void }>();
   let nextId = 1;
   let revision = 0;
+  let hydratedAt = 0;
   let ready = false;
   let toolsAvailable = false;
   let modelContext = false;
   let linksAvailable = false;
-  let queuedView: unknown;
+  let queuedView: { raw: unknown; receipt?: unknown; fromHost: boolean } | undefined;
+  let hostInput: unknown;
   let contextTimer: ReturnType<typeof setTimeout> | undefined;
   let timeline: CountryTimeline | undefined;
   let openRequest: AbortController | undefined;
@@ -55,10 +60,11 @@ async function mountCountryView(): Promise<void> {
 
   async function call(name: string, args: object, signal: AbortSignal): Promise<unknown> {
     if (!toolsAvailable) throw new CountrySectionError('unavailable', 'This host does not support server tools.');
-    const result = await request('tools/call', { name, arguments: args }, signal) as { isError?: boolean; structuredContent?: unknown; content?: Array<{ type: string; text?: string }> };
+    const panelRequest = admission && ['get_country_brief_section', 'get_country_brief', 'get_country_coverage'].includes(name) ? { panel_request: admission.token } : {};
+    const result = await request('tools/call', { name, arguments: { ...args, ...panelRequest } }, signal) as { isError?: boolean; structuredContent?: unknown; content?: Array<{ type: string; text?: string }> };
     if (result.isError) {
       const denied = /subscription|billing|entitlement|scope|unauthoriz|forbidden/i.test(JSON.stringify(result));
-      throw new CountrySectionError(denied ? 'locked' : 'unavailable', denied ? 'This connection is not authorized for this section.' : 'The source is unavailable.');
+      throw new CountrySectionError(denied ? 'locked' : 'unavailable', denied ? 'This connection is not authorized for this section.' : result.content?.find(item => item.text)?.text ?? 'The source is unavailable.');
     }
     if (result.structuredContent) return result.structuredContent;
     const text = result.content?.find(item => item.type === 'text')?.text;
@@ -73,6 +79,7 @@ async function mountCountryView(): Promise<void> {
   function snapshot() {
     return {
       countryCode: panel.getCode(), countryName: panel.getName(), revision,
+      usage: admission?.usage,
       topic: document.querySelector<HTMLElement>('.cdp-shell')?.dataset.briefTopic,
       sections: Array.from(document.querySelectorAll<HTMLElement>('[data-brief-section]')).map(card => {
         const body = card.querySelector<HTMLElement>('.cdp-card-body')!;
@@ -92,10 +99,18 @@ async function mountCountryView(): Promise<void> {
 
   const assessmentSchema = z.object({ brief: z.string(), countryCode: z.string(), generatedAt: z.union([z.string(), z.number()]).optional(), sources: z.array(z.object({ title: z.string(), source: z.string(), url: z.string(), publishedAt: z.string().optional() })).optional(), evidence: z.array(z.object({ id: z.string(), kind: z.string(), label: z.string(), value: z.string(), source: z.string().optional(), asOf: z.string().optional() }).passthrough()).optional() });
   const assessments = new Map<string, Promise<z.infer<typeof assessmentSchema>>>();
+  const assessmentTimes = new Map<string, number>();
   function getAssessment(code: string, signal: AbortSignal, force = false) {
     const cached = assessments.get(code);
-    if (cached && !force) return cached;
-    const pendingAssessment = call('get_country_brief', { country_code: code }, signal).then(raw => {
+    if (cached && !force && Date.now() - (assessmentTimes.get(code) ?? 0) < 300_000) return cached;
+    const admissionReady = force ? call('open_country_brief', { country_code: code, refresh: true, request_id: crypto.randomUUID() }, signal).then(raw => {
+      const receipt = (raw as { panelRequest?: unknown }).panelRequest;
+      if (receipt === undefined) return;
+      const next = panelAdmissionSchema.parse(receipt);
+      if (next.countryCode !== code || panel.getCode() !== code || signal.aborted) throw new Error('Assessment country changed.');
+      admission = next; admissions.set(code, next); showUsage();
+    }) : Promise.resolve();
+    const pendingAssessment = admissionReady.then(() => call('get_country_brief', { country_code: code }, signal)).then(raw => {
       const result = assessmentSchema.parse(raw);
       if (result.countryCode !== code) throw new Error('Assessment country did not match.');
       return result;
@@ -104,6 +119,8 @@ async function mountCountryView(): Promise<void> {
       throw error;
     });
     assessments.set(code, pendingAssessment);
+    assessmentTimes.set(code, Date.now());
+    if (assessments.size > 30) { const oldest = assessments.keys().next().value!; assessments.delete(oldest); assessmentTimes.delete(oldest); }
     return pendingAssessment;
   }
   const coverageSchema = z.object({
@@ -113,19 +130,73 @@ async function mountCountryView(): Promise<void> {
     sources: z.array(z.object({ source: z.string(), state: z.string() }).passthrough()),
   });
 
-  async function open(raw: unknown, refresh = false): Promise<object> {
-    if (!ready) { queuedView = raw; return { state: 'connecting' }; }
+  const coverages = new Map<string, { expires: number; promise: Promise<z.infer<typeof coverageSchema>> }>();
+  function getCoverage(code: string, signal: AbortSignal) {
+    const cached = coverages.get(code);
+    if (cached && cached.expires > Date.now()) return cached.promise;
+    const promise = call('get_country_coverage', { country_code: code }, signal).then(raw => {
+      const result = coverageSchema.parse(raw);
+      if (result.countryCode !== code) throw new Error('Coverage country did not match.');
+      if (result.degraded && coverages.get(code)?.promise === promise) coverages.delete(code);
+      return result;
+    }).catch(error => {
+      if (coverages.get(code)?.promise === promise) coverages.delete(code);
+      throw error;
+    });
+    coverages.set(code, { expires: Date.now() + 300_000, promise });
+    if (coverages.size > 30) coverages.delete(coverages.keys().next().value!);
+    return promise;
+  }
+
+  function showUsage(): void {
+    usageNotice.hidden = !admission;
+    if (!admission) return;
+    const { limit, resetsAt } = admission.usage;
+    const used = Math.max(admission.usage.used, ...Array.from(admissions.values()).filter(item => item.usage.resetsAt === resetsAt).map(item => item.usage.used));
+    const remaining = limit === null ? null : Math.max(0, limit - used);
+    admission = { ...admission, usage: { ...admission.usage, used, remaining } };
+    const reset = new Date(resetsAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    usageNotice.textContent = `${remaining === null ? 'Unlimited allowance' : `${remaining} of ${limit} requests remaining`}, at the last country request. Resets ${reset}. This country load uses 1 request; its sections and topic tabs are included. Refresh uses 1 new request.`;
+  }
+
+  async function open(raw: unknown, refresh = false, receipt?: unknown, fromHost = false): Promise<object> {
+    if (!ready) { queuedView = { raw, receipt, fromHost }; return { state: 'connecting' }; }
     const argumentsInput = raw && typeof raw === 'object' && !Array.isArray(raw) ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== 'jmespath')) : raw;
     const view = countryViewSchema.parse(argumentsInput);
+    refresh ||= view.refresh;
     const code = resolveCountryCode(view.country_code);
     if (!code) throw new Error('Use a recognized country name or ISO2 code.');
-    if (panel.isVisible() && panel.getCode() === code && !refresh) {
+    const supplied = panelAdmissionSchema.safeParse(receipt);
+    if (receipt !== undefined && (!supplied.success || supplied.data.countryCode !== code || Date.parse(supplied.data.expiresAt) <= Date.now())) throw new Error('This country request is invalid or expired. Open a new country brief.');
+    if (panel.isVisible() && panel.getCode() === code && !refresh && Date.now() - hydratedAt < 300_000) {
+      if (supplied.success && supplied.data.countryCode === code && Date.parse(supplied.data.expiresAt) > Date.now()) { admission = supplied.data; admissions.set(code, admission); showUsage(); }
       panel.selectTopic(view.topic);
       scheduleContext();
       return snapshot();
     }
     const name = getCountryNameByCode(code) ?? new Intl.DisplayNames(['en'], { type: 'region' }).of(code) ?? code;
+    const selectedInput = input.value;
     const openedRevision = ++revision;
+    openRequest?.abort();
+    openRequest = new AbortController();
+    const admissionSignal = openRequest.signal;
+    const previous = admissions.get(code);
+    let nextAdmission = supplied.success && supplied.data.countryCode === code && Date.parse(supplied.data.expiresAt) > Date.now() ? supplied.data : undefined;
+    if (!refresh && !nextAdmission && previous && Date.parse(previous.expiresAt) > Date.now()) nextAdmission = previous;
+    if (!fromHost && (refresh || !nextAdmission)) {
+      status.textContent = `Opening ${name} country brief…`;
+      const result = await call('open_country_brief', { country_code: code, topic: view.topic, refresh, ...(refresh ? { request_id: view.request_id ?? crypto.randomUUID() } : {}) }, admissionSignal) as { panelRequest?: unknown };
+      if (result.panelRequest !== undefined) nextAdmission = panelAdmissionSchema.parse(result.panelRequest);
+      if (nextAdmission && (nextAdmission.countryCode !== code || Date.parse(nextAdmission.expiresAt) <= Date.now())) throw new Error('Country admission did not match or expired.');
+    }
+    if (admissionSignal.aborted || openedRevision !== revision) return { state: 'cancelled' };
+    admission = nextAdmission;
+    if (admission) {
+      admissions.set(code, admission);
+      if (admissions.size > 30) admissions.delete(admissions.keys().next().value!);
+    }
+    showUsage();
+    if (refresh) { source.clearLoadedData(); coverages.delete(code); }
     if (!refresh) {
       timeline?.destroy();
       timeline = undefined;
@@ -133,11 +204,10 @@ async function mountCountryView(): Promise<void> {
       panel.updateMilitaryActivity(null);
     }
     panel.selectTopic(view.topic);
-    input.value = name;
-    openRequest?.abort();
-    openRequest = new AbortController();
-    const signal = combineAbortSignals([panel.signal, openRequest.signal]);
+    if (input.value === selectedInput) input.value = name;
+    const signal = combineAbortSignals([panel.signal, admissionSignal]);
     const current = () => !signal.aborted && panel.getCode() === code && revision === openedRevision;
+    hydratedAt = Date.now();
     controller.hydrate(code, name);
     if (refresh) panel.refreshHostedSections();
     void Promise.all([preloadCountryGeometry(), preloadInfrastructureTables()]).then(() => { if (current()) panel.updateInfrastructure(code); }).catch(() => { if (current()) panel.setSectionFailure('infrastructure', 'unavailable', 'Country infrastructure locations could not be loaded.'); });
@@ -153,8 +223,7 @@ async function mountCountryView(): Promise<void> {
       if (!current() || result.countryCode !== code || assessments.get(code) !== assessment) return;
       panel.updateBrief({ ...result, country: name, code } as CountryIntelData);
     }).catch(() => { if (current() && !assessments.has(code)) panel.setSectionFailure('assessment', 'unavailable', 'The AI assessment could not be loaded. Other country sections remain available.'); });
-    void call('get_country_coverage', { country_code: code }, signal).then(raw => {
-      const coverage = coverageSchema.parse(raw);
+    void getCoverage(code, signal).then(coverage => {
       if (!current() || coverage.countryCode !== code) return;
       panel.updateNews(coverage.headlines.map(item => ({ title: item.title, source: item.source, link: item.url, pubDate: new Date(item.publishedAtMs), isAlert: false })));
       const mount = panel.getTimelineMount();
@@ -192,16 +261,25 @@ async function mountCountryView(): Promise<void> {
       call.cleanup(); pending.delete(message.id);
       if (message.error) {
         const denied = [-32001, -32002].includes(message.error.code) || /subscription|billing|entitlement|scope|unauthoriz|forbidden/i.test(JSON.stringify(message.error));
-        call.reject(new CountrySectionError(denied ? 'locked' : 'unavailable', denied ? 'This connection is not authorized for this section.' : 'The host rejected this request.'));
+        call.reject(new CountrySectionError(denied ? 'locked' : 'unavailable', denied ? 'This connection is not authorized for this section.' : String(message.error.message ?? 'The host rejected this request.')));
       }
       else call.resolve(message.result);
       return;
     }
-    if (message.method === 'ui/notifications/tool-input') void open(message.params?.arguments ?? message.params).catch(error => { status.textContent = error.message; });
+    if (message.method === 'ui/notifications/tool-input') hostInput = message.params?.arguments ?? message.params;
     if (message.method === 'ui/notifications/tool-result') {
       const result = message.params?.result ?? message.params;
-      const data = result?.isError ? undefined : result?.structuredContent;
-      if (data?.countryCode) void open({ country_code: data.countryCode, topic: data.topic ?? 'overview' }).catch(error => { status.textContent = error.message; });
+      if (result?.isError) {
+        hostInput = undefined;
+        status.textContent = result.content?.find((item: { type: string; text?: string }) => item.type === 'text')?.text ?? 'WorldMonitor could not open this country brief.';
+        return;
+      }
+      const data = result?.structuredContent;
+      if (data?.countryCode) {
+        const requested = countryViewSchema.safeParse(hostInput);
+        hostInput = undefined;
+        void open({ country_code: data.countryCode, topic: data.topic ?? 'overview', refresh: requested.success && requested.data.refresh }, false, data.panelRequest, true).catch(error => { status.textContent = error.message; });
+      }
     }
     if (message.method === 'tools/list') send({ id: message.id, result: { tools: [{ name: 'select_country_view', description: 'Change the country or topic in this rendered country brief. Returns the applied country, topic and section states.', inputSchema: { type: 'object', properties: { country_code: { type: 'string' }, topic: { type: 'string', enum: Object.keys(BRIEF_TOPICS) } }, required: ['country_code'] } }] } });
     if (message.method === 'tools/call') void (message.params?.name === 'select_country_view' ? open(message.params.arguments) : Promise.reject(new Error('Unknown country action'))).then(result => send({ id: message.id, result: { structuredContent: result, content: [{ type: 'text', text: JSON.stringify(result) }] } })).catch(error => send({ id: message.id, result: { isError: true, content: [{ type: 'text', text: error.message }] } }));
@@ -248,7 +326,7 @@ async function mountCountryView(): Promise<void> {
   window.addEventListener('pagehide', () => {
     clearTimeout(contextTimer); mutation.disconnect(); panel.hide();
     for (const call of pending.values()) { call.cleanup(); call.reject(new Error('Country view closed')); }
-    pending.clear();
+    pending.clear(); source.clearLoadedData(); admissions.clear(); assessments.clear(); assessmentTimes.clear(); coverages.clear();
   });
 
   async function start(): Promise<void> {
@@ -265,7 +343,7 @@ async function mountCountryView(): Promise<void> {
     window.addEventListener('pagehide', () => resize.disconnect(), { once: true });
     if (['light', 'dark'].includes(initialized.hostContext?.theme ?? '')) document.documentElement.dataset.theme = initialized.hostContext!.theme;
     status.textContent = toolsAvailable ? 'Select a country to open its brief.' : 'This host cannot call the connected country tools.';
-    if (queuedView) await open(queuedView);
+    if (queuedView) await open(queuedView.raw, false, queuedView.receipt, queuedView.fromHost);
   }
   void start().catch(() => { status.textContent = 'The ChatGPT host connection is unavailable. Reload the country view.'; });
 

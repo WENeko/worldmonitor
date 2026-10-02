@@ -452,7 +452,7 @@
   "welcome": {
     "meta": {
       "title": "World Monitor — Free Real-Time Global Intelligence Dashboard",
-      "description": "By the time it's news, you already knew. Conflicts, shipping chokepoints, military flights, markets and cyber on one free live world map, with AI analysis. No signup.",
+      "description": "تا زمانی که خبری می‌شود، شما از قبل می‌دانستید. درگیری‌ها، تنگناهای ژئوپلیتیکی، پروازهای نظامی، بازارها و تهدیدات سایبری بر روی یک نقشه جهانی زنده، با تجزیه‌وتحلیل هوش مصنوعی. بدون نیاز ثبت‌نام.",
       "ogTitle": "World Monitor — By the time it's news, you already knew.",
       "ogDescription": "The world's raw signals — ships, jets, sirens, cables, markets — on one free live intelligence map, with AI that flags when they converge. Free, no signup."
     },
@@ -466,7 +466,8 @@
       "menu": "منو",
       "docs": "Docs",
       "launch": "Launch Dashboard",
-      "agents": "برای عوامل هوش مصنوعی"
+      "agents": "برای عوامل هوش مصنوعی",
+      "skipToContent": "رفتن به محتوا"
     },
     "hero": {
       "eyebrow": "Free global intelligence dashboard · live now",
@@ -484,7 +485,7 @@
       "positioningLink": "WorldMonitor is not an open-source Palantir",
       "asOf": "تا {{date}}",
       "whatIsTitle": "World Monitor چیست؟",
-      "whatIsBody": "World Monitor یک داشبورد رایگان و متن‌باز است که سیگنال‌های ژئوپلیتیک، بازار، کشتیرانی، هوانوری، زیرساخت و سایبری را به صورت زنده بر روی یک نقشه جهانی پخش می‌کند. این ابزار فیدهای جداگانه را در یک تصویر عملیاتی یکپارچه ترکیب می‌کند، همگرایی را قبل از تیتر‌های خبری شناسایی می‌کند و هر رقم از منابع معتبر و هر روش توثیق‌شده است."
+      "whatIsBody": "World Monitor یک داشبورد رایگان و متن‌باز (AGPL-3.0) است که توسط بیش از ۲ میلیون نفر استفاده می‌شود. این ابزار {{feeds}} خبر و منابع اطلاعاتی OSINT را از {{providers}} منبع تأیید‌شده بر روی یک نقشه زنده جهانی با {{mapLayers}} نوع لایه نقشه‌ای نمایش می‌دهد که سیاست جهانی، بازارها، حمل‌ونقل دریایی، هوانوردی و فضای سایبری را پوشش می‌دهد. این ابزار رویدادهای همزمان را تطبیق می‌دهد تا آنها قبل از پخش خبرها ظاهر شوند. هر اطلاعات منبع‌دار و هر روش مستند است."
     },
     "live": {
       "eyebrow": "Live right now",
@@ -509,7 +510,7 @@
     "moments": {
       "eyebrow": "Correlation engine",
       "title": "World Monitor سیگنال‌ها را چگونه همبستگی می‌دهد؟",
-      "sub": "You can find the feeds in a hundred places. The edge is one surface where geopolitics, shipping, commodities, macro, markets, weather, infrastructure, cyber, news and country risk can explain each other.",
+      "sub": "این ابزار {{mapLayers}} نوع لایه نقشه‌ای را بر یک سطح جمع می‌کند تا سیاست جهانی، حمل‌ونقل دریایی، کالاها، اقتصاد کلان، بازارها، آب‌وهوا، زیرساخت‌ها، فضای سایبری، خبرها و ریسک کشوری بتوانند یکدیگر را تبیین کنند. هر کسی می‌تواند منابع را جمع‌آوری کند؛ دیدن آنها که با هم بر روی یک نقشه حرکت می‌کنند، تفاوت‌ساز است.",
       "signalStack": "Signals fused",
       "correlation": "Correlation",
       "bridge1": "Not a list of feeds.",
@@ -518,7 +519,7 @@
         "kicker": "Geopolitics + markets + macro",
         "title1": "The market move",
         "title2": "has a map.",
-        "s1": "Country risk, sanctions, hotspot escalation, official alerts and news velocity show where geopolitical pressure is rising.",
+        "s1": "ریسک کشوری، تحریم‌ها، تصعید در {{hotspots}} نقطه داغ نمره‌دار، هشدارهای رسمی و سرعت خبری نشان می‌دهند کشیش ژئوپلیتیکی کجا در حال افزایش است.",
         "s2": "Ships, chokepoints, flights, cables and infrastructure proximity show whether that pressure can hit supply, trade or capital routes.",
         "s3": "Rates, FX, equities, crypto, energy and safe-haven assets show which market regime is repricing.",
         "s4": "The edge is seeing geopolitical pressure, transmission path and price action together before it becomes a consensus note.",
@@ -532,7 +533,7 @@
         "kicker": "Commodities + chokepoints + weather",
         "title1": "Commodity moves start",
         "title2": "in the physical world.",
-        "s1": "AIS, ports, pipelines, LNG, refineries, waterways and chokepoints show when supply is slowing, rerouting or concentrating.",
+        "s1": "AIS، بندرها، خطوط لوله، LNG، پالایشگاه‌ها، آبراه‌ها و {{chokepoints}} تنگنا نشان می‌دهند چه زمانی تامین کننده آهسته می‌شود، مسیر تغییر می‌دهد یا متمرکز می‌شود.",
         "s2": "Weather, fires, earthquakes, outages and conflict layers show the physical events that can hit production or transport.",
         "s3": "Oil, gas, gold, grains, miners, shipping names and commodity-linked currencies show how the shock prices through.",
         "s4": "Commodity intelligence only works when physical flow, disruption signal and market spread are visible together.",
@@ -546,7 +547,7 @@
         "kicker": "AI infrastructure + energy + climate",
         "title1": "The AI boom has",
         "title2": "a physical balance sheet.",
-        "s1": "AI datacenters sit beside grids, pipelines, LNG, nuclear facilities, cloud regions and power-market exposure.",
+        "s1": "{{aiDatacenters}} مرکز داده هوش مصنوعی در کنار شبکه‌ها، خطوط لوله، LNG، امکانات هسته‌ای، منطقه‌های ابری و قیمت برق قرار دارند.",
         "s2": "Grid stress, outages, heat, fire and weather layers show which compute corridors are under pressure today.",
         "s3": "Company, exchange and macro panels show who is exposed when energy, compute and capital collide.",
         "s4": "AI infrastructure risk only appears when physical assets, climate signals and markets share one screen.",
@@ -559,7 +560,7 @@
       "m4": {
         "kicker": "Cables + outages + trade",
         "title": "The cable break becomes a cascade",
-        "s1": "Subsea cables, landing stations, ports, pipelines and chokepoints are mapped together.",
+        "s1": "{{submarineCables}} کابل‌های زیردریایی، ایستگاه‌های فرود، بندرها، خطوط لوله و تنگناها با هم نقشه‌برداری شده‌اند.",
         "s2": "Internet and BGP anomaly feeds show whether a physical fault is becoming a digital outage.",
         "s3": "Trade corridors, country resilience and redundancy data show who loses fallback routes first.",
         "s4": "Cable damage matters when telecom redundancy, trade corridors and country exposure line up.",
@@ -579,9 +580,9 @@
       "f2Title": "Click any country",
       "f2Desc": "A full dossier opens: instability score with its components, an AI brief with cited headlines, active signals, a 7-day timeline.",
       "f3Title": "Hit ⌘K / Ctrl-K",
-      "f3Desc": "دستورات. بدون یادگیری رابط کاربری ابتدا، به هر لایه، پنل یا کشور بروید.",
+      "f3Desc": "{{commands}} دستور. به هر لایه، پنل یا کشور بپرید بدون یادگیری رابط کاربری.",
       "f4Title": "Pick your lens",
-      "f4Desc": "World، Tech، Finance، Commodity، Energy یا Happy — موتور یکسان، نظارت‌کننده‌های تنظیم‌شده، یک کلیک فاصله.",
+      "f4Desc": "جهانی، فناوری، مالی، کالا، انرژی یا خوشحال — همان موتور، شش مانیتور تنظیم‌شده، یک کلیک فاصله.",
       "f5Title": "You've seen maybe a tenth of it",
       "f5Desc": "The rest surfaces as the world moves — satellite passes, GPS jamming, dark ships, protest clusters, siren alerts.",
       "cta": "Start the clock"
@@ -612,9 +613,9 @@
       "n3Title": "Chokepoint transit intel",
       "n3Desc": "Vessel counts through Hormuz, Suez, Bab el-Mandeb and 10 more straits — with disruption scoring.",
       "n4Title": "AI datacenter map",
-      "n4Desc": "AI datacenters mapped with power and operator metadata — the physical layer of the AI race.",
+      "n4Desc": "{{aiDatacenters}} مرکز داده هوش مصنوعی نقشه‌برداری‌شده با فراداده قدرت و اپراتور — لایه فیزیکی رقابت هوش مصنوعی.",
       "n5Title": "Submarine cables",
-      "n5Desc": "کابل‌های زیرآبی که اینترنت را منتقل می‌کنند، با سیگنال‌های قطع‌خدمات و تهدید بر‌روی آنها.",
+      "n5Desc": "{{submarineCables}} کابل‌های زیردریایی حامل اینترنت، با سیگنال‌های قطع و تهدید بر روی آن.",
       "n6Title": "Protest tracking",
       "n6Desc": "Dual-source protest detection with cross-source deduplication — signal, not rumor.",
       "faith": "Don't take the numbers on faith —",
@@ -624,8 +625,8 @@
     "agents": {
       "eyebrow": "For builders & AI agents",
       "title": "چگونه روی World Monitor از استک خود بسازم؟",
-      "sub": "Everything on the map is also an API. Wire it into Claude over MCP, call the REST endpoints from anywhere, or install a native client for Python, Ruby, Go, or JavaScript — your code researches with live data instead of training-data memories.",
-      "b1": "ابزارهای MCP — نمرات ریسک، نقاط تنگنا، درگیری‌ها، بازارها، خلاصه‌ها",
+      "sub": "همه چیز روی نقشه نیز یک API است. آن را با Claude از طریق MCP با {{mcpTools}} ابزار زنده وصل کنید، نقاط پایانی REST را از هر جایی فراخوانی کنید، یا یک کلاینت بومی برای Python، Ruby، Go یا JavaScript نصب کنید — کد شما با داده‌های زنده تحقیق می‌کند نه با حافظه‌های داده‌های آموزشی.",
+      "b1": "{{mcpTools}} ابزار MCP — امتیازات ریسک، نقاط تنگناء، تنازعات، بازارها، گزارش‌های وضعیت",
       "b2": "REST API مستند‌شده — یک مشخصه OpenAPI 3.1، یک کلید",
       "b3": "Official SDKs on npm, PyPI, RubyGems, and Go — zero-dependency, MCP-first",
       "b4": "JMESPath projection on every call — fetch exactly the fields you need",
@@ -649,7 +650,7 @@
       "title2": "Pro is the operations room.",
       "sub": "داشبورد رایگان است — هر لایه نقشه به جز Resilience، هر فید، بدون ثبت‌نام. Pro لایه تصمیم‌گیری را اضافه می‌کند.",
       "freeTitle": "Free",
-      "freeDesc": "نسخه رایگان یک محصول کامل است، نه یک نسخه آزمایشی. هر لایه نقشه به جز Resilience، هر فید، هر مانیتور — بدون ثبت‌نام، بدون محدودیت زمانی.",
+      "freeDesc": "طبقه رایگان یک محصول کامل است، نه یک نسخه آزمایشی. هر لایه نقشه به‌جز Resilience، هر خوراک از {{feeds}} منبع، هر شش مانیتور — بدون ثبت‌نام، بدون محدودیت زمانی.",
       "freeF1": "تمام لایه‌های نقشه به جز Resilience و خوراک‌های منتخب",
       "freeF2": "Country briefs, hotspots, instability scores",
       "freeF3": "Chokepoints, cables, cascade analysis",
@@ -662,25 +663,25 @@
       "proF4": "MCP، REST API و SDKهای رسمی — ابزارهای زنده تحت یک کلید",
       "proF5": "Custom widget builder for your own panels",
       "cta": "See plans & pricing",
-      "note": "From $39.99/mo · 3 months free when billed annually"
+      "note": "از $39.99 در ماه · ۳ ماه رایگان با پرداخت سالانه"
     },
     "faq": {
       "eyebrow": "No catch",
       "title": "سؤالات متداول درباره World Monitor چیست؟",
       "q1": "Is World Monitor really free?",
-      "a1": "بله. نقشه زنده — هر لایه به جز Resilience، خوراک‌های منتخب، خلاصه‌های کشوری، هشدارهای شکاف، و سطح نظارت — بدون ثبت‌نام و بدون ساعت آزمایشی رایگان است. Pro برای خوراک‌ها پرداخت می‌کند: WM Analyst، موتور سناریو، Route Explorer، خلاصه‌های برنامه‌ریزی‌شده، دسترسی MCP برای کلاینت‌های هوشمند مصنوعی و لایه نقشه Resilience را اضافه می‌کند. بدون تبلیغات، و بدون حساب به این معنی است که هیچ داده کاربری برای فروش نیست.",
+      "a1": "بله. نقشه زنده بدون هزینه و بدون نیاز به ثبت‌نام یا دوره آزمایشی است: {{mapLayers}} نوع لایه نقشه، تمام آن‌ها به جز Resilience، به علاوه خوراک‌های منتخب، خلاصه‌های کشوری، هشدارهای فوری و سطوح نظارتی. Pro برای خوراک‌ها هزینه دارد: WM Analyst، موتور سناریو، Route Explorer، خلاصه‌های برنامه‌ریزی‌شده، دسترسی MCP برای کلاینت‌های AI و لایه نقشه Resilience را اضافه می‌کند. بدون تبلیغ، و بدون حساب به معنای عدم وجود داده‌های کاربری برای فروش است.",
       "q2": "What is a global intelligence dashboard?",
       "a2": "A single live view that fuses signals most tools keep separate: conflict events, ship and aircraft tracking, shipping chokepoints, satellites, subsea cables, pipelines, markets and cyber threats — on one real-time world map, with AI scoring and briefs on top. World Monitor is a free one.",
       "q3": "Where does the data come from?",
-      "a3": "ارائه‌دهندگان نام‌شده عبارتند از ACLED و UCDP برای درگیری، AISStream برای کشتی‌های زنده، OpenSky برای هواپیما، NASA FIRMS برای آتش، USGS برای زلزله، IMF، BIS، FRED و Finnhub برای بازارها و کلان‌اقتصاد — به‌علاوه خوراک‌های اخبار منتخب. هر پنل منابع و مهرزمان خود را درون خط نقل‌قول می‌کند.",
+      "a3": "از {{providers}} منبع معتبر. منابع نام‌برده شامل ACLED و UCDP برای تنازعات، AISStream برای کشتی‌های زندهٔ، OpenSky برای هواپیما، NASA FIRMS برای آتش‌سوزی‌ها، USGS برای زمین‌لرزه‌ها، IMF، BIS، FRED و Finnhub برای بازارها و اقتصاد کلان — به‌علاوهٔ خوراک‌های اخباری منتخب. هر پنل منابع و تمبرهای زمانی خود را درون متن نقل می‌کند.",
       "q4": "Can I watch chokepoints like Hormuz or Bab el-Mandeb in real time?",
-      "a4": "بله. نقاط تنگنا با شمار کشتی‌های AIS زنده، تغییر عبور هفتگی و نمره‌دهی اختلال نظارت می‌شوند — و ناهنجاری‌های چگالی در برابر بازخط چرخشی هر تنگنا پرچم‌دار می‌شوند.",
+      "a4": "بله. {{chokepoints}} گلوگاه، هم تنگه‌ها و هم کانال‌ها، از هرمز و باب‌المندب تا سوئز، با تعداد کشتی AIS زنده، تغییر ترانزیت هفته‌ای و امتیاز اختلال تحت نظارت هستند — و ناهنجاری‌های تراکم نسبت به خط مبنای غلتان هر گلوگاه پرچم‌گذاری می‌شوند.",
       "q5": "How is this different from a conflict map like Liveuamap?",
       "a5": "تنازع یک لایه نقشه است. World Monitor درگیری‌ها را با حمل‌ونقل دریایی، پروازهای نظامی، زیرساخت‌ها، بازارها و فعالیت‌های سایبری ادغام می‌کند — سپس هوش مصنوعی همگرایی را امتیاز‌دهی می‌کند: شاخص‌های عدم‌ثبات، تشدید نقاط داغ، هشدارهای شکست‌خوردگی تأیید‌شده و خلاصه‌های روزانه. World Monitor را با Liveuamap و دیگر نقشه‌های تنازع مقایسه کنید: worldmonitor.app/compare/liveuamap-alternatives. برای گزینه‌های نظارتی گسترده‌تر، به worldmonitor.app/compare/best-geopolitical-risk-dashboards مراجعه کنید.",
       "q6": "Why should I trust an alert?",
-      "a6": "A breaking banner fires only when independent origin types corroborate — news classification, keyword velocity, hotspot escalation, military surges, official sirens — deduplicated and rate-limited. Fewer alerts, real ones.",
+      "a6": "چون یک بنر باید از دروازه‌های ثابت عبور کند. برای مواد خبری طبقه‌بندی‌شده به عنوان تهدید بحرانی یا بالا، و برای سیرن‌های رسمی دفاع مدنی فعال می‌شود. یک هشدار خبری باید کمتر از 15 دقیقه قدیمی باشد، همان مطلب برای 30 دقیقه نگاه داشته می‌شود، و پس از هر هشدار 60 ثانیه توقف وجود دارد مگر اینکه هشدار جدید شدیدتر باشد. تطابق‌های تنها کلیدواژه از منابع پایین‌تر نیز نیاز به تایید AI دارند. سیرن‌ها دروازه‌های سن و توقف را دور می‌زنند زیرا حساس به زمان هستند.",
       "q7": "Can AI agents like Claude or GPT use it?",
-      "a7": "بله. World Monitor یک سرور MCP با رجیستری ابزار زنده ارائه می‌دهد، بنابراین Claude، GPT یا هر عامل سازگار با MCP می‌تواند نمرات ریسک زنده، وضعیت تنگه‌ها، تنازعات، بازارها و خلاصه‌ها را جستجو کند — با پروجکشن JMESPath تا عوامل دقیقاً آنچه را که نیاز دارند بازیابی کنند.",
+      "a7": "بلی. سرور MCP برای World Monitor {{mcpTools}} ابزار زندهٔ برای Claude، GPT یا هر نماینده‌ای سازگار با MCP تعریض می‌کند تا بتوانند امتیازات ریسک، وضعیت نقاط تنگناء، تنازعات، بازارها و گزارش‌های وضعیت را پرسوجو کنند — با پروژکشن JMESPath تا نمایندگان دقیقاً آنچه را که نیاز دارند واکشی کنند.",
       "q8": "Do I need an account?",
       "a8": "No. The dashboard works instantly with no signup. An account only matters when you upgrade to Pro or want settings synced across devices.",
       "q9": "Is it open source?",
@@ -692,7 +693,7 @@
     },
     "cta": {
       "title": "چگونه شروع به رصد نقشه جهانی کنم؟",
-      "subtitle": "در حالی‌که این صفحه را می‌خوانید، حرکت ادامه داشت — تنگه‌ها، نقاط داغ، بازارها، خوراک‌های انتخاب‌شده. یکی از آنها صفحه اول فردا است. آن را اول پیدا کنید — رایگان، بدون حساب.",
+      "subtitle": "worldmonitor.app/dashboard را در هر مرورگری باز کنید، بدون حساب: {{mapLayers}} نوع لایه نقشه، هر یک به جز Resilience برای تبدیل آزاد است. برای دریافت خلاصه هر کشور بر آن کلیک کنید، یا ⌘K / Ctrl-K را برای پالت دستورات فشار دهید. نقشه در حین خواندن این صفحه به‌روز شد.",
       "button": "Find it first",
       "note": "Free · No signup · Loads in seconds",
       "secondary": "Or see Pro plans →"
@@ -704,9 +705,9 @@
       "verifyTitle": "تأیید یک رویداد اخبار شکاف‌ساز",
       "verifyDesc": "پیش از اعتماد به یک خبر شکاف‌ساز، ردیاب بحران‌های فعلی، معیارهای تاریخ‌دار و متن‌های استناد‌شده را بررسی کنید.",
       "chokepointTitle": "بررسی یک نقطه تنگناک",
-      "chokepointDesc": "وضعیت اختلال، جریان کشتی‌ها و ریسک در مسیرهای دریایی حیاتی را بررسی کنید.",
+      "chokepointDesc": "وضعیت اختلال، جریان کشتی‌ها و ریسک را در {{chokepoints}} کانال دریایی بحرانی بررسی کنید.",
       "countryRiskTitle": "توضیح حرکت ریسک کشور",
-      "countryRiskDesc": "سیگنال‌های سیاسی، امنیتی، اقتصادی و تاب‌آوری پشت تغییر کشور را ردیابی کنید.",
+      "countryRiskDesc": "سیگنال‌های سیاسی، امنیتی، اقتصادی و تاب‌آوری پشت تغییر کشوری را پیگیری کنید، با رتبه‌بندی تاب‌آوری برای {{resilienceRanked}} کشور.",
       "open": "باز کردن شواهد"
     }
   },

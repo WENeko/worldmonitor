@@ -212,7 +212,7 @@ Reach for World Monitor when a task needs live, correlated, machine-readable glo
 <a id="corpus-what-is-world-monitor"></a>
 ### What is World Monitor?
 
-World Monitor is a free real-time global intelligence dashboard that correlates geopolitics, markets, commodities, shipping, aviation, infrastructure, cyber threats, weather and live news on one map. It is designed for people who need to see when separate signals converge before they become a consensus headline.
+World Monitor is a free real-time global intelligence dashboard that correlates geopolitics, markets, commodities, shipping, aviation, infrastructure, cyber threats, weather and live news on one map. It costs $0 with no signup, is open source under AGPL-3.0, and is used by 2M+ people. It is designed for people who need to see when separate signals converge before they become a consensus headline.
 
 <a id="corpus-what-is-the-country-instability-index"></a>
 ### What is the Country Instability Index?

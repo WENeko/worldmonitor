@@ -34,7 +34,9 @@ describe('country view MCP boundary', () => {
   };
   it('opens a validated view without changing the narrative tool or fetching an assessment', async () => {
     const { body } = await invoke('open_country_brief', { country_code: 'USA', topic: 'resources' });
-    assert.deepEqual(body.result.structuredContent, { countryCode: 'US', topic: 'resources' });
+    assert.equal(body.result.structuredContent.countryCode, 'US');
+    assert.equal(body.result.structuredContent.topic, 'resources');
+    assert.equal(body.result.structuredContent.panelRequest.usage.remaining, 49);
     const listed = await handler(proReq('POST', { jsonrpc: '2.0', id: 1, method: 'tools/list' }), makeProDeps().deps);
     const tool = (await listed.json()).result.tools.find(tool => tool.name === 'open_country_brief');
     assert.equal(tool._meta.ui.resourceUri, 'ui://worldmonitor/country-view-v1.html');

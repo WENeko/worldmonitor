@@ -45,6 +45,7 @@ export type McpInboundHostClass =
   | 'other';
 
 export interface McpToolExecutionContext {
+  countryPanel?: import('./panel-requests').PanelAdmission;
   inboundHostClass: McpInboundHostClass;
   downstreamOrigin: string;
   downstreamOriginTag: string;

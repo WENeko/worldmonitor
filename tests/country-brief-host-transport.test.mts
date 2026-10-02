@@ -65,11 +65,11 @@ it('bounds active calls and removes aborted queued work without occupying a slot
     return { state: 'ready', section: args.section, value: {}, retrievedAt: '2026-10-01T00:00:00.000Z' };
   });
   const url = 'https://www.worldmonitor.app/api/intelligence/v1/get-country-facts?country_code=US';
-  const first = [fetch(url), fetch(url), fetch(url)];
+  const first = ['US', 'UA', 'GB'].map(code => fetch(url.replace('US', code)));
   const controller = new AbortController();
-  const fourth = fetch(url, { signal: controller.signal });
+  const fourth = fetch(url.replace('US', 'FR'), { signal: controller.signal });
   const cancelled = assert.rejects(fourth);
-  const fifth = fetch(url);
+  const fifth = fetch(url.replace('US', 'DE'));
   controller.abort();
   await cancelled;
   assert.equal(calls, 3);
@@ -91,4 +91,79 @@ it('retains a zero baseline omitted by generated query serialization', async () 
   const client = new IntelligenceServiceClient('https://www.worldmonitor.app', { fetch });
   await client.computeEnergyShockScenario({ countryCode: 'US', chokepointId: 'hormuz_strait', disruptionPct: 0, fuelMode: 'gas' });
   assert.deepEqual(calls, [{ section: 'scenario', arguments: { country_code: 'US', chokepoint_id: 'hormuz_strait', disruption_pct: 0, fuel_mode: 'gas' } }]);
+});
+
+
+it('coalesces duplicate reads, reuses ready data and clears it for an explicit refresh', async () => {
+  let calls = 0;
+  const fetch = createHostCountryFetch(async (_name, args: any) => {
+    calls++;
+    return { state: 'ready', section: args.section, value: { population: '100' }, retrievedAt: '2026-10-01T00:00:00.000Z' };
+  });
+  const url = 'https://www.worldmonitor.app/api/intelligence/v1/get-country-facts?country_code=US';
+  const results = await Promise.all([fetch(url), fetch(url)]);
+  assert.deepEqual(await results[0]!.json(), { population: '100' });
+  assert.equal(calls, 1);
+  await fetch(url);
+  assert.equal(calls, 1);
+  fetch.clear();
+  await fetch(url);
+  assert.equal(calls, 2);
+});
+
+it('does not cache failures and aborting one subscriber preserves the other subscriber', async () => {
+  let calls = 0;
+  let release: () => void = () => {};
+  const wait = new Promise<void>(resolve => { release = resolve; });
+  const fetch = createHostCountryFetch(async (_name, args: any, signal) => {
+    calls++;
+    if (calls === 1) return { state: 'unavailable', section: args.section, reason: 'Source down' };
+    await wait;
+    assert.equal(signal.aborted, false);
+    return { state: 'ready', section: args.section, value: {}, retrievedAt: '2026-10-01T00:00:00.000Z' };
+  });
+  const url = 'https://www.worldmonitor.app/api/intelligence/v1/get-country-facts?country_code=US';
+  await assert.rejects(fetch(url));
+  const controller = new AbortController();
+  const aborted = fetch(url, { signal: controller.signal });
+  const retained = fetch(url);
+  const rejected = assert.rejects(aborted);
+  controller.abort();
+  release();
+  await rejected;
+  await retained;
+  assert.equal(calls, 2);
+});
+
+
+it('expires reused data after five minutes and isolates country cache entries', async t => {
+  const now = Date.now();
+  let time = now;
+  t.mock.method(Date, 'now', () => time);
+  let calls = 0;
+  const fetch = createHostCountryFetch(async (_name, args: any) => {
+    calls++;
+    return { state: 'ready', section: args.section, value: { countryCode: args.arguments.country_code }, retrievedAt: '2026-10-01T00:00:00.000Z' };
+  });
+  const url = 'https://www.worldmonitor.app/api/intelligence/v1/get-country-facts?country_code=US';
+  await fetch(url);
+  await fetch(url.replace('US', 'UA'));
+  await fetch(url);
+  assert.equal(calls, 2);
+  time += 300000;
+  await fetch(url);
+  assert.equal(calls, 3);
+});
+
+
+it('retries a successful transport response that reports an upstream outage', async () => {
+  let calls = 0;
+  const fetch = createHostCountryFetch(async (_name, args: any) => {
+    calls++;
+    return { state: 'ready', section: args.section, value: { upstreamUnavailable: true }, retrievedAt: '2026-10-01T00:00:00.000Z' };
+  });
+  const url = 'https://www.worldmonitor.app/api/intelligence/v1/get-country-risk?country_code=US';
+  await fetch(url);
+  await fetch(url);
+  assert.equal(calls, 2);
 });

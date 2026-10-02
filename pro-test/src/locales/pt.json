@@ -452,7 +452,7 @@
   "welcome": {
     "meta": {
       "title": "World Monitor — Painel Gratuito de Inteligência Global em Tempo Real",
-      "description": "Quando vira notícia, você já sabia. Conflitos, gargalos de navegação, voos militares, mercados e cibernética em um mapa ao vivo gratuito, com análise por IA. Sem cadastro.",
+      "description": "Quando vira notícia, você já sabe. Conflitos, pontos críticos, voos militares, mercados e ciberataques em um único mapa-múndi ao vivo e gratuito, com análise por IA. Sem cadastro.",
       "ogTitle": "World Monitor — Quando vira notícia, você já sabia.",
       "ogDescription": "Os sinais brutos do mundo — navios, jatos, sirenes, cabos, mercados — em um mapa de inteligência ao vivo gratuito, com IA que sinaliza quando convergem. Grátis, sem cadastro."
     },
@@ -466,7 +466,8 @@
       "launch": "Abrir Painel",
       "blog": "Blog",
       "menu": "Menu",
-      "agents": "Para agentes de IA"
+      "agents": "Para agentes de IA",
+      "skipToContent": "Pular para o conteúdo"
     },
     "hero": {
       "eyebrow": "Painel de inteligência global gratuito · agora ao vivo",
@@ -484,7 +485,7 @@
       "positioningLink": "WorldMonitor não é um Palantir de código aberto",
       "asOf": "Em {{date}}",
       "whatIsTitle": "O que é World Monitor?",
-      "whatIsBody": "World Monitor é um dashboard gratuito e de código aberto que transmite sinais de geopolítica, mercados, transporte marítimo, aviação, infraestrutura e cibernética em um único mapa ao vivo. Ele correlaciona feeds separados em uma única imagem operacional e sinaliza convergências antes dos destaques, com cada dado fundamentado e cada metodologia documentada."
+      "whatIsBody": "O World Monitor é um dashboard gratuito e de código aberto (AGPL-3.0) usado por mais de 2 milhões de pessoas. Ele transmite {{feeds}} feeds de notícias e inteligência de {{providers}} provedores atribuídos em um único mapa-múndi ao vivo com {{mapLayers}} tipos de camada de mapa, abrangendo geopolítica, mercados, navegação marítima, aviação e cibersegurança. Correlaciona-os para que eventos convergentes apareçam antes das manchetes. Cada dado é rastreado e cada método documentado."
     },
     "live": {
       "eyebrow": "Ao vivo agora",
@@ -509,7 +510,7 @@
     "moments": {
       "eyebrow": "Mecanismo de correlação",
       "title": "Como o World Monitor correlaciona sinais?",
-      "sub": "Você pode encontrar os feeds em cem lugares. A vantagem é uma superfície única onde geopolítica, navegação, commodities, macro, mercados, clima, infraestrutura, cibernética, notícias e risco país podem se explicar mutuamente.",
+      "sub": "Coloca {{mapLayers}} tipos de camada de mapa em uma única superfície para que geopolítica, navegação marítima, commodities, macro, mercados, clima, infraestrutura, cibersegurança, notícias e risco de país possam se explicar mutuamente. Qualquer pessoa pode coletar os feeds; vê-los se movimentar juntos em um único mapa é o diferencial.",
       "signalStack": "Sinais fundidos",
       "correlation": "Correlação",
       "bridge1": "Não é uma lista de feeds.",
@@ -518,7 +519,7 @@
         "kicker": "Geopolítica + mercados + macro",
         "title1": "O movimento de mercado",
         "title2": "tem um mapa.",
-        "s1": "Risco país, sanções, escalação de pontos quentes, alertas oficiais e velocidade de notícias mostram onde a pressão geopolítica está aumentando.",
+        "s1": "Risco de país, sanções, escalação em {{hotspots}} pontos críticos pontuados, alertas oficiais e velocidade de notícias mostram onde a pressão geopolítica está crescendo.",
         "s2": "Navios, pontos de estrangulamento, voos, cabos e proximidade de infraestrutura mostram se essa pressão pode impactar oferta, rotas comerciais ou de capital.",
         "s3": "Taxas, câmbio, ações, criptografia e ativos refúgio mostram qual regime de mercado está sendo reprificado.",
         "s4": "A vantagem está vendo pressão geopolítica, caminho de transmissão e ação de preço juntos antes que se torne um consenso.",
@@ -532,7 +533,7 @@
         "kicker": "Commodities + pontos de estrangulamento + clima",
         "title1": "Movimentos de commodities começam",
         "title2": "no mundo físico.",
-        "s1": "AIS, portos, dutos, GNL, refinarias, hidrovias e pontos de estrangulamento mostram quando a oferta está desacelerando, se redirecionando ou se concentrando.",
+        "s1": "AIS, portos, oleodutos, GNL, refinarias, hidrovias e {{chokepoints}} pontos críticos mostram quando o suprimento está desacelerando, se rerouting ou se concentrando.",
         "s2": "Clima, incêndios, terremotos, apagões e camadas de conflito mostram os eventos físicos que podem impactar produção ou transporte.",
         "s3": "Petróleo, gás, ouro, grãos, mineradoras, armadores e moedas vinculadas a commodities mostram como o choque é precificado.",
         "s4": "Inteligência de commodities só funciona quando fluxo físico, sinal de disrupção e spread de mercado são visíveis juntos.",
@@ -546,7 +547,7 @@
         "kicker": "Infraestrutura de IA + energia + clima",
         "title1": "O boom de IA tem",
         "title2": "um balanço físico.",
-        "s1": "Datacenters de IA ficam ao lado de redes, dutos, GNL, instalações nucleares, regiões de nuvem e exposição do mercado de energia.",
+        "s1": "{{aiDatacenters}} datacenters de IA ficam ao lado de redes, oleodutos, GNL, instalações nucleares, regiões de nuvem e exposição em mercados de energia.",
         "s2": "Estresse da rede, apagões, calor, incêndio e camadas climáticas mostram quais corredores de computação estão sob pressão hoje.",
         "s3": "Painéis de empresa, câmbio e macro mostram quem está exposto quando energia, computação e capital colidem.",
         "s4": "Risco de infraestrutura de IA só aparece quando ativos físicos, sinais climáticos e mercados compartilham uma tela.",
@@ -559,7 +560,7 @@
       "m4": {
         "kicker": "Cabos + interrupções + comércio",
         "title": "O rompimento de cabo em cascata",
-        "s1": "Cabos submarinos, estações de desembarque, portos, dutos e pontos de estrangulamento estão mapeados juntos.",
+        "s1": "{{submarineCables}} cabos submarinos, estações de desembarque, portos, oleodutos e pontos críticos são mapeados juntos.",
         "s2": "Feeds de anomalias de Internet e BGP mostram se uma falha física está se tornando uma interrupção digital.",
         "s3": "Corredores comerciais, resiliência de países e dados de redundância mostram quem perde rotas de contingência primeiro.",
         "s4": "Danos a cabos importam quando redundância de telecomunicações, corredores comerciais e exposição do país se alinham.",
@@ -579,9 +580,9 @@
       "f2Title": "Clique em qualquer país",
       "f2Desc": "Um dossiê completo abre: pontuação de instabilidade com seus componentes, resumo de IA com manchetes citadas, sinais ativos, cronograma de 7 dias.",
       "f3Title": "Pressione ⌘K / Ctrl-K",
-      "f3Desc": "Comandos. Pule para qualquer camada, painel ou país sem aprender a interface primeiro.",
+      "f3Desc": "{{commands}} comandos. Acesse qualquer camada, painel ou país sem aprender a UI primeiro.",
       "f4Title": "Escolha sua lente",
-      "f4Desc": "World, Tech, Finance, Commodity, Energy ou Happy — mesmo engine, monitores ajustados, um clique de distância.",
+      "f4Desc": "Mundo, Tech, Finanças, Commodities, Energia ou Happy — mesmo motor, seis monitores ajustados, um clique de distância.",
       "f5Title": "Você viu talvez um décimo disso",
       "f5Desc": "O resto aparece conforme o mundo se move — passagens de satélites, jammers GPS, navios fantasmas, aglomerações de protestos, alertas de sirene.",
       "cta": "Comece a contagem"
@@ -612,9 +613,9 @@
       "n3Title": "Inteligência de trânsito em pontos críticos",
       "n3Desc": "Contagem de embarcações através de Hormuz, Suez, Bab el-Mandeb e 10 outros estreitos — com pontuação de disrupção.",
       "n4Title": "Mapa de datacenters de IA",
-      "n4Desc": "Datacenters de IA mapeados com metadados de energia e operador — a camada física da corrida da IA.",
+      "n4Desc": "{{aiDatacenters}} datacenters de IA mapeados com metadados de energia e operador — a camada física da corrida de IA.",
       "n5Title": "Cabos submarinos",
-      "n5Desc": "Cabos submarinos que transportam a internet, sobrepostos com sinais de interrupção e ameaça.",
+      "n5Desc": "{{submarineCables}} cabos submarinos que transportam a internet, sobrepostos com sinais de interrupção e ameaça.",
       "n6Title": "Rastreamento de protestos",
       "n6Desc": "Detecção de protestos de dupla fonte com desduplicação entre fontes — sinal, não boato.",
       "faith": "Não confie apenas nos números —",
@@ -624,8 +625,8 @@
     "agents": {
       "eyebrow": "Para construtores & agentes de IA",
       "title": "Como construo sobre World Monitor a partir da minha própria stack?",
-      "sub": "Tudo no mapa também é uma API. Integre ao Claude via MCP, chame os endpoints REST de qualquer lugar, ou instale um cliente nativo para Python, Ruby, Go ou JavaScript — seu código pesquisa com dados ao vivo em vez de memórias de dados de treinamento.",
-      "b1": "Ferramentas MCP — pontuações de risco, gargalos, conflitos, mercados, resumos",
+      "sub": "Tudo no mapa também é uma API. Integre ao Claude via MCP com {{mcpTools}} ferramentas live, chame os endpoints REST de qualquer lugar, ou instale um cliente nativo para Python, Ruby, Go ou JavaScript — seu código pesquisa com dados live em vez de memórias de treinamento.",
+      "b1": "{{mcpTools}} ferramentas MCP — pontuações de risco, gargalos, conflitos, mercados, briefings",
       "b2": "REST API documentada — uma especificação OpenAPI 3.1, uma chave",
       "b3": "SDKs oficiais no npm, PyPI, RubyGems e Go — sem dependências, MCP-first",
       "b4": "Projeção JMESPath em cada chamada — busque exatamente os campos que você precisa",
@@ -649,7 +650,7 @@
       "title2": "Pro é a sala de operações.",
       "sub": "O dashboard é gratuito — todas as camadas de mapa exceto Resilience, todos os feeds, sem cadastro. Pro adiciona a camada de decisão.",
       "freeTitle": "Grátis",
-      "freeDesc": "O nível gratuito é um produto completo, não uma avaliação. Todas as camadas de mapa exceto Resilience, todos os feeds, todos os monitores — sem cadastro, sem contador de avaliação.",
+      "freeDesc": "O plano gratuito é um produto completo, não uma avaliação. Todas as camadas de mapa exceto Resilience, todos os feeds de {{feeds}} fontes, todos os seis monitores — sem cadastro, sem limite de tempo.",
       "freeF1": "Todas as camadas de mapa exceto Resilience e feeds curados",
       "freeF2": "Resumos de país, pontos de acesso, pontuações de instabilidade",
       "freeF3": "Pontos críticos, cabos, análise em cascata",
@@ -668,19 +669,19 @@
       "eyebrow": "Sem pegadinhas",
       "title": "Quais são as perguntas comuns sobre World Monitor?",
       "q1": "World Monitor é realmente gratuito?",
-      "a1": "Sim. O mapa ao vivo — cada camada exceto Resilience, feeds curados, resumos de país, alertas críticos e superfícies de monitoramento — é gratuito sem cadastro e sem relógio de teste. Pro paga pelos feeds: adiciona WM Analyst, o mecanismo de cenários, Route Explorer, resumos agendados, acesso MCP para clientes de IA e a camada de mapa Resilience. Sem anúncios e sem conta significa que não há dados de usuário para vender.",
+      "a1": "Sim. O mapa ao vivo custa $0 sem cadastro e sem relógio de teste: {{mapLayers}} tipos de camada de mapa, todos exceto Resilience, além de feeds curados, resumos por país, alertas de breaking e superfícies de monitoramento. Pro paga pelos feeds: adiciona WM Analyst, o mecanismo de cenários, Route Explorer, digests agendados, acesso MCP para clientes de IA e a camada de mapa Resilience. Sem anúncios e sem conta significa que não há dados de usuário para vender.",
       "q2": "O que é um dashboard de inteligência global?",
       "a2": "Uma única visualização ao vivo que funde sinais que a maioria das ferramentas mantém separados: eventos de conflito, rastreamento de navios e aeronaves, pontos de estrangulamento de navegação, satélites, cabos submarinos, gasodutos, mercados e ameaças cibernéticas — em um único mapa-múndi em tempo real, com pontuação de IA e resumos no topo. World Monitor é um gratuito.",
       "q3": "De onde vêm os dados?",
-      "a3": "Provedores nomeados incluem ACLED e UCDP para conflitos, AISStream para navios ao vivo, OpenSky para aeronaves, NASA FIRMS para incêndios, USGS para terremotos, IMF, BIS, FRED e Finnhub para mercados e macro — mais feeds de notícias curados. Cada painel cita suas fontes e timestamps inline.",
+      "a3": "De {{providers}} provedores atribuídos. Os nomeados incluem ACLED e UCDP para conflito, AISStream para navios ao vivo, OpenSky para aeronaves, NASA FIRMS para incêndios, USGS para terremotos, IMF, BIS, FRED e Finnhub para mercados e macro — além de feeds de notícias selecionados. Cada painel cita suas fontes e timestamps inline.",
       "q4": "Posso monitorar pontos de estrangulamento como Hormuz ou Bab el-Mandeb em tempo real?",
-      "a4": "Sim. Gargalos são monitorados com contagens ao vivo de navios AIS, mudança de trânsito semana-a-semana e pontuação de disrupção — e anomalias de densidade são sinalizadas contra a linha de base móvel de cada estreito.",
+      "a4": "Sim. {{chokepoints}} pontos de estrangulamento, tanto estreitos quanto canais, de Hormuz e Bab el-Mandeb até Suez, são monitorados com contagens de navios AIS live, mudança de trânsito semana a semana e pontuação de disrupção — e anomalias de densidade são sinalizadas contra a linha de base móvel de cada ponto de estrangulamento.",
       "q5": "Como isso é diferente de um mapa de conflitos como Liveuamap?",
       "a5": "Conflito é uma camada de mapa. World Monitor funde conflitos com navegação marítima, voos militares, infraestrutura, mercados e cibersegurança — e depois a IA pontua a convergência: índices de instabilidade, escalação em pontos críticos, alertas de breaking corroborados e briefings diários. Compare World Monitor com Liveuamap e outros mapas de conflito: worldmonitor.app/compare/liveuamap-alternatives. Para opções mais amplas de monitoramento, veja worldmonitor.app/compare/best-geopolitical-risk-dashboards.",
       "q6": "Por que devo confiar em um alerta?",
-      "a6": "Um banner de breaking dispara apenas quando tipos de origem independentes corroboram — classificação de notícias, velocidade de palavras-chave, escalada de hotspot, picos militares, sirenes oficiais — desduplicados e rate-limited. Menos alertas, alertas reais.",
+      "a6": "Porque um alerta precisa passar por portões fixos. Dispara para histórias classificadas como ameaça crítica ou alta, e para sirenes oficiais de defesa civil. Um alerta de notícia deve ter menos de 15 minutos de idade, a mesma história é retida por 30 minutos, e um repouso de 60 segundos segue qualquer alerta a menos que o novo seja mais severo. Correspondências apenas por palavra-chave de veículos de nível inferior também precisam de confirmação por IA. Sirenes pulam os portões de idade e repouso porque são críticas para o tempo.",
       "q7": "Agentes de IA como Claude ou GPT podem usar?",
-      "a7": "Sim. World Monitor envia um servidor MCP com um registro de ferramentas ativas, então Claude, GPT ou qualquer agente compatível com MCP podem consultar scores de risco ao vivo, status de pontos críticos, conflitos, mercados e briefings — com projeção JMESPath para que agentes obtenham exatamente o que precisam.",
+      "a7": "Sim. O servidor MCP do World Monitor expõe {{mcpTools}} ferramentas ao vivo, então Claude, GPT ou qualquer agente compatível com MCP pode consultar pontuações de risco, status de gargalos, conflitos, mercados e briefings — com projeção JMESPath para que agentes busquem exatamente o que precisam.",
       "q8": "Preciso de uma conta?",
       "a8": "Não. O dashboard funciona instantaneamente sem inscrição. Uma conta só importa quando você atualiza para Pro ou quer sincronizar configurações entre dispositivos.",
       "q9": "É open source?",
@@ -692,7 +693,7 @@
     },
     "cta": {
       "title": "Como começo a monitorar o mapa do mundo?",
-      "subtitle": "Enquanto você lia esta página ela continuou se movimentando — estreitos, focos críticos, mercados, feeds curados. Um deles é a manchete de amanhã. Descubra primeiro — gratuito, sem conta.",
+      "subtitle": "Abra worldmonitor.app/dashboard em qualquer navegador, sem conta: {{mapLayers}} tipos de camadas de mapa, todos exceto Resilience são livres para alternar. Clique em qualquer país para seu resumo, ou pressione ⌘K / Ctrl-K para a paleta de comandos. O mapa continuou atualizando enquanto você lia esta página.",
       "button": "Encontre primeiro",
       "note": "Gratuito · Sem inscrição · Carrega em segundos",
       "secondary": "Ou veja planos Pro →"
@@ -704,9 +705,9 @@
       "verifyTitle": "Verificar um evento de última hora",
       "verifyDesc": "Verifique os rastreadores de crise atuais, métricas datadas e contexto citado antes de confiar em uma notícia de última hora.",
       "chokepointTitle": "Verificar um ponto de estrangulamento",
-      "chokepointDesc": "Inspecione o status de interrupção, fluxos de navios e risco em passagens marítimas críticas.",
+      "chokepointDesc": "Inspecione o status de interrupções, fluxos de navios e riscos em {{chokepoints}} passagens marítimas críticas.",
       "countryRiskTitle": "Explicar uma mudança de risco país",
-      "countryRiskDesc": "Rastreie os sinais políticos, de segurança, econômicos e de resiliência por trás da mudança de um país.",
+      "countryRiskDesc": "Rastreie sinais políticos, de segurança, econômicos e de resiliência por trás da mudança em um país, com resiliência classificada para {{resilienceRanked}} países.",
       "open": "Abrir evidências"
     }
   },

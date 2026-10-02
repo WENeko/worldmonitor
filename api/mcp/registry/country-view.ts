@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { COUNTRY_READERS, countryReaderSchema, countryViewSchema } from '../../../shared/country-brief-host';
+import { COUNTRY_READERS, countryReaderSchema, countryViewSchema, panelAdmissionSchema } from '../../../shared/country-brief-host';
 import { BRIEF_TOPICS } from '../../../shared/country-brief-sections';
 import { resolveCountryCode } from '../../../shared/country-code-resolve';
 import { buildAuthHeaders } from '../auth';
@@ -11,7 +11,8 @@ import { COUNTRY_VIEW_UI_URI } from '../ui/news-dashboard-app';
 export const COUNTRY_VIEW_TOOLS: ToolDef[] = [{
   name: 'open_country_brief',
   title: 'WorldMonitor country brief',
-  description: 'Open the interactive WorldMonitor country brief with its assessment, source evidence, resilience, energy, trade and security sections. Use for country brief requests and follow-up topic navigation. The interface loads sections progressively through the authenticated connection. Section availability and dates are shown in the view. Use get_country_brief only when the user explicitly wants a text assessment.',
+  _subscriptionOnly: true,
+  description: 'Open the interactive WorldMonitor country brief with its assessment, source evidence, resilience, energy, trade and security sections. Use for country brief requests and follow-up topic navigation. On dedicated paid MCP plans, one country request includes its internal section loads. Same-country opens reuse the request for five minutes. Explicit refresh starts a new request. API plans retain per-tool weighted billing. The interface loads sections progressively through the authenticated connection. Section availability and dates are shown in the view. Use get_country_brief only when the user explicitly wants a text assessment.',
   _uiResourceUri: COUNTRY_VIEW_UI_URI,
   _openaiEntrypoints: [{ type: 'global' }, { type: 'thread' }],
   _outputBudgetBytes: 4096,
@@ -21,20 +22,22 @@ export const COUNTRY_VIEW_TOOLS: ToolDef[] = [{
     properties: {
       country_code: { type: 'string', minLength: 2, maxLength: 100, description: 'Country name or ISO2 code.' },
       topic: { type: 'string', enum: Object.keys(BRIEF_TOPICS) },
+      request_id: { type: 'string', format: 'uuid', description: 'Stable ID for an explicit refresh. Retries with the same ID share one paid admission.' },
+      refresh: { type: 'boolean', description: 'Start a new paid panel request and refresh loaded observations. Default false reuses the current same-country request.' },
     },
     required: ['country_code'],
   },
   outputSchema: {
     type: 'object',
-    properties: { countryCode: { type: 'string' }, topic: { type: 'string', enum: Object.keys(BRIEF_TOPICS) } },
+    properties: { countryCode: { type: 'string' }, topic: { type: 'string', enum: Object.keys(BRIEF_TOPICS) }, panelRequest: z.toJSONSchema(panelAdmissionSchema) },
     required: ['countryCode', 'topic'],
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  _execute: async params => {
+  _execute: async (params, _base, _context, execution) => {
     const parsed = countryViewSchema.safeParse(Object.fromEntries(Object.entries(params).filter(([key]) => key !== 'jmespath')));
     const countryCode = parsed.success ? resolveCountryCode(parsed.data.country_code) : null;
     if (!parsed.success || !countryCode) throw new RpcValidationError('open_country_brief', [{ field: 'country_code', description: 'Supply a recognized country and topic.' }]);
-    return { countryCode, topic: parsed.data.topic };
+    return { countryCode, topic: parsed.data.topic, ...(execution?.countryPanel ? { panelRequest: execution.countryPanel } : {}) };
   },
 }, {
   name: 'get_country_brief_section',
@@ -46,6 +49,7 @@ export const COUNTRY_VIEW_TOOLS: ToolDef[] = [{
   inputSchema: {
     type: 'object',
     properties: {
+      panel_request: { type: 'string', maxLength: 160, description: 'Server-issued paid country-panel request token. Only the embedded country view supplies this.' },
       section: { type: 'string', enum: Object.keys(COUNTRY_READERS) },
       arguments: { type: 'object', additionalProperties: { type: ['string', 'number', 'boolean'] } },
     },

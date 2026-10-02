@@ -452,7 +452,7 @@
   "welcome": {
     "meta": {
       "title": "World Monitor — Dashibodi ya Kijamii-Simu ya Wakati Halisi Bila Malipo",
-      "description": "Wakati ilivyokuwa hadithi, tayari ulijua. Mgogoro, njia za meli, kuruka kwa jeshi, soko, na cyber kwenye ramani moja ya moja kwa moja ya wakati halisi, na uchambuzi wa AI. Hakuna jina lako.",
+      "description": "Wakati ilivyokuwa habari, tayari ulijua. Migogoro, njia muhimu, ndege za kijeshi, soko na cyber kwenye ramani moja ya dunia inayoishi, yenye uchambuzi wa AI. Bila usajili.",
       "ogTitle": "World Monitor — Wakati ilivyokuwa hadithi, tayari ulijua.",
       "ogDescription": "Maajabu ya dunia — meli, ndege, mvua ya kengele, kebo, soko — kwenye ramani moja ya kijamii-simu ya wakati halisi, na AI inayofungua wakati inapogeana. Libre, hakuna jina lako."
     },
@@ -466,7 +466,8 @@
       "menu": "Menyu",
       "docs": "Hati",
       "launch": "Anzisha Dashibodi",
-      "agents": "Kwa ajili ya mawakala wa AI"
+      "agents": "Kwa ajili ya mawakala wa AI",
+      "skipToContent": "Ruka hadi maudhui"
     },
     "hero": {
       "eyebrow": "Dashibodi ya akili za kimataifa · sasa moja kwa moja",
@@ -484,7 +485,7 @@
       "positioningLink": "WorldMonitor si Palantir ya chanzo wazi",
       "asOf": "Kufikia {{date}}",
       "whatIsTitle": "World Monitor ni nini?",
-      "whatIsBody": "World Monitor ni dashboard ya bure, ya chanzo wazi ambayo inapokezana maalamiko ya kisiasa, soko, usafirishaji wa bahari, avioni, miundombinu, na ishara za cyber kwenye ramani moja ya ulimwengu inayoishi. Inahusiana na mtiririko tofauti katika picha moja ya uendeshaji na inaashiria muunganisho kabla ya manukuu, na kila takwimu ina chanzo na kila njia imedokezwa."
+      "whatIsBody": "World Monitor ni dashboard ya bure, ya chanzo wazi (AGPL-3.0) inayotumiwa na watu 2M+. Inatiririsha vyanzo {{feeds}} vya habari na OSINT kutoka kwa watoa huduma {{providers}} waliotajwa, kwenye ramani moja hai ya dunia yenye aina {{mapLayers}} za tabaka za ramani, ikijumuisha siasa za kijiografia, masoko, usafirishaji wa baharini, usafiri wa anga na usalama wa mtandao. Inaviunganisha ili matukio yanayokutana yaonekane kabla ya vichwa vya habari. Kila takwimu ina chanzo na kila mbinu imeandikwa."
     },
     "live": {
       "eyebrow": "Moja kwa moja sasa sasa",
@@ -509,7 +510,7 @@
     "moments": {
       "eyebrow": "Injini ya uunganisho",
       "title": "World Monitor inahusisha mawingu vipi?",
-      "sub": "Unaweza kupata malia kwenye maeneo mia. Ukingo ni uso mmoja ambapo simu za kijiografia, mitambo ya baharini, chakula, macro, soko, tabia nchi, miundombinu, cyber, habari na hatari ya nchi zinaweza kueleza kila mmoja.",
+      "sub": "Inaweka {{mapLayers}} aina za tabaka la ramani kwenye uso mmoja ili geopolitiki, usambazaji wa baharini, bidhaa, macro, soko, hali ya anga, miundombinu, usalama wa mtandao, habari na hatari ya nchi iweze kueleza kila mmoja. Mtu yeyote anaweza kukusanya chanzo; kuona jinsi wanavyosogea pamoja kwenye ramani moja ndio tofauti.",
       "signalStack": "Ishara zilizounganishwa",
       "correlation": "Mahusiano",
       "bridge1": "Sio orodha ya malia.",
@@ -518,7 +519,7 @@
         "kicker": "Simu za kijiografia + soko + macro",
         "title1": "Hoja ya soko",
         "title2": "ina ramani.",
-        "s1": "Hatari ya nchi, marufuku, kuongezeka kwa mahali hatari, ilani rasmi na kasi ya habari zinaonyesha mahali ambapo shinikizo la simu ya jiografia linakwea.",
+        "s1": "Hatari ya nchi, adhabu za kimataifa, kupanda kwa joto katika {{hotspots}} maeneo yenye alama, arifa rasmi na kasi ya habari zinaonyesha mahali ambapo shinikizo la kisiasa linakwea.",
         "s2": "Meli, njia nyingi za biashara, ndege, kebo na karibu ya miundombinu zinaonyesha kama shinikizo hilo linaweza kuathiri njia za usambazaji, biashara au mtaji.",
         "s3": "Viwango, FX, hisa, kriptografia, nishati na mali salama zinaonyesha ni rejimu gani ya soko inabadilishwa bei.",
         "s4": "Ukingo unakumbuka shinikizo la kisiasa, njia ya usambazaji na hatua ya bei pamoja kabla hajafika kwa mujibu wa kawaida.",
@@ -532,7 +533,7 @@
         "kicker": "Bidhaa + njia nyingi za biashara + tabia nchi",
         "title1": "Harakati za bidhaa huanza",
         "title2": "katika ulimwengu halisi.",
-        "s1": "AIS, bandari, mabomba, LNG, viwanda vya kuhariri, njia za maji na njia nyingi za biashara zinaonyesha wakati usambazaji unapobagua, kuruta upya au kuunganisha.",
+        "s1": "AIS, bandari, mabomba, LNG, mafuta ya kueleza, njia za maji na {{chokepoints}} njia muhimu zinaonyesha wakati bidhaa inapobania, kuelekezwa upya au kukamatia.",
         "s2": "Tabia nchi, moto, matetemeko ya ardhi, kusimama na tabaka la mgogoro zinaonyesha matukio ya kimwili yanayoweza kuathiri uzalishaji au usambazaji.",
         "s3": "Mafuta, gesi, dhahabu, nafaka, wanavimba, majina ya usambazaji na pesa zilizounganishwa na bidhaa zinaonyesha jinsi mshtuko unavyobadilisha bei.",
         "s4": "Akili za bidhaa hufanya kazi tu wakati mtiririko wa kimwili, ishara ya mgogoro na waj wa bidhaa vinaweza kuonekana pamoja.",
@@ -546,7 +547,7 @@
         "kicker": "Miundombinu ya AI + nishati + tabia nchi",
         "title1": "Ukuaji wa AI una",
         "title2": "karatasi ya mizani ya kimwili.",
-        "s1": "Vituo vya AI viko karibu na gridi, mabomba, LNG, vifaa vya nyuklia, maeneo ya wingu na waj wa soko la nishati.",
+        "s1": "{{aiDatacenters}} vituo vya AI vinasimama kando ya mizani, mabomba, LNG, miundombinu ya nyuklia, miti ya mabingu na wadhamini wa soko la nishati.",
         "s2": "Shinikizo la gridi, kusimama, joto, moto na tabaka la tabia nchi zinaonyesha ni korida gani za hesabu ziko chini ya shinikizo leo.",
         "s3": "Paneli za kampuni, ubadilishanaji na macro zinaonyesha nani atakayeathiriwa wakati nishati, hesabu na mtaji wanapokatiana.",
         "s4": "Hatari ya miundombinu ya AI inaonekana tu wakati mali ya kimwili, ishara za tabia nchi na soko zinashiriki skrini moja.",
@@ -559,7 +560,7 @@
       "m4": {
         "kicker": "Kebo + kusimama + biashara",
         "title": "Kebo iliyokatwa inakuwa mfululizo",
-        "s1": "Kebo za chini ya bahari, vituo vya kumkaribisha, bandari, mabomba na njia nyingi za biashara zimeramani pamoja.",
+        "s1": "{{submarineCables}} kablai chini ya bahari, kituo cha kumtua, bandari, mabomba na njia muhimu zimechorwa pamoja.",
         "s2": "Mitandao na mitazamo ya BGP anomaly inaonyesha kama hitilafu ya kimwili inakuwa kusimama kwa dijitali.",
         "s3": "Njia za biashara, uimara wa nchi na data ya kujirudiana zinaonyesha nani anayepoteza njia za kurudi nyuma kwanza.",
         "s4": "Uharibifu wa kebo huwa na umuhimu wakati ulinganifu wa simu, njia za biashara na muktadha wa nchi zinaunganisha.",
@@ -579,9 +580,9 @@
       "f2Title": "Bofya nchi yoyote",
       "f2Desc": "Karatasi kamili inafungua: alama ya tokuwa na utulivu na sehemu zake, muhtasari wa AI na kichwa cha habari, ishara zinazofanya kazi, muda wa siku 7.",
       "f3Title": "Bonyeza ⌘K / Ctrl-K",
-      "f3Desc": "Amri. Ruka kwenye tabaka lolote, paneli au nchi bila kujifunza UI kwanza.",
+      "f3Desc": "{{commands}} amri. Ruka kwa safu yoyote, paneli au nchi bila kujifunza UI kwanza.",
       "f4Title": "Chagua mtazamo wako",
-      "f4Desc": "Ulimwengu, Teknolohia, Fedha, Bidhaa, Nishati au Furaha — injini sawa, wilayiti zinazofuatiliwa, kwa kubofya mara moja.",
+      "f4Desc": "Dunia, Teknolohia, Fedha, Bidhaa, Nishati au Furaha — injini sawa, walijibizaji sita yenye tafsiri, mkutano mmoja.",
       "f5Title": "Umeoona huenda kama sehemu ya kumi tu",
       "f5Desc": "Salio linatokea kadri ulimwengu unavyosonga — kupita kwa satelaiti, kuingiliwa kwa GPS, meli zenye giza, matanzu ya maandamano, onyo za simu.",
       "cta": "Anza saa"
@@ -612,9 +613,9 @@
       "n3Title": "Akhabar ya kupitia sehemu nyingi",
       "n3Desc": "Idadi ya meli kupitia Hormuz, Suez, Bab el-Mandeb na kumega nyingine 10 — na alama ya usumbufu.",
       "n4Title": "Ramani ya kituo cha AI",
-      "n4Desc": "Vituo 313 vya AI kinachoangaziwa na nguvu na takwimu za mwendeshaji — safu halisi ya tinutiya ya AI.",
+      "n4Desc": "{{aiDatacenters}} vituo vya AI vilivyochorwa pamoja na nishati na metadata ya mpiga kazi — safu ya vifaa ya mbio ya AI.",
       "n5Title": "Kebo chini ya bahari",
-      "n5Desc": "Kebo za chini ya bahari zinazobeba mtandao wa intaneti, zilizozuia na maalamishi ya matata na hatari.",
+      "n5Desc": "{{submarineCables}} kablai chini ya bahari inayobeba mtandao, zikiwekwa kwenye juu na alama za matengenezo na hatari.",
       "n6Title": "Ufuatiliaji wa maandamano",
       "n6Desc": "Kugundua maandamano kutoka vyanzo viwili na kuondoa nakala kutoka vyanzo tofauti — ishara halisi, si uvumi.",
       "faith": "Usitegemee namba kwa imani tu —",
@@ -624,8 +625,8 @@
     "agents": {
       "eyebrow": "Kwa wajenzi & wakalishi wa AI",
       "title": "Ninajenga vipi kwenye World Monitor kutoka kwenye stack yangu?",
-      "sub": "Kila kitu kwenye ramani pia ni API. Innunuze ndani ya Claude kupitia MCP, piga simu endpoints za REST kutoka mahali popote, au sakinisha mteja asili kwa Python, Ruby, Go, au JavaScript — nambari yako inasoma na data hai badala ya kumbukumbu za data ya mafunzo.",
-      "b1": "Zana za MCP — alama za hatari, alama kali, migogoro, soko, muhtasari",
+      "sub": "Kila kitu kwenye ramani pia ni API. Unganisha kwenye Claude kupitia MCP na {{mcpTools}} zana hai, piga simu endpoints za REST kutoka mahali popote, au sakinisha mteja asilia kwa Python, Ruby, Go, au JavaScript — msimbo wako unafanya utafiti na data hai badala ya kumbukumbu za data za mafunzo.",
+      "b1": "{{mcpTools}} zana za MCP — alama za hatari, njia zenye kizuizi, migogoro, soko, muhtasari",
       "b2": "REST API iliyoandaliwa — kielezo kimoja cha OpenAPI 3.1, ufunguo mmoja",
       "b3": "SDKs rasmi kwenye npm, PyPI, RubyGems, na Go — hakuna utegemezi, MCP kwanza",
       "b4": "Makadirio ya JMESPath kwa kila simu — leteni sehemu halisi tu unazohitaji",
@@ -649,7 +650,7 @@
       "title2": "Pro ni chumba cha uendeshaji.",
       "sub": "Dashboard ni bure — kila safu ya ramani isipokuwa Resilience, kila zuia, hakuna usajili. Pro inaongeza safu ya uamuzi.",
       "freeTitle": "Bure",
-      "freeDesc": "Kiwango cha bure ni bidhaa kamili, si jaribio. Kila safu ya ramani isipokuwa Resilience & zuia 500+, kila zuia, kila monitor — hakuna usajili, hakuna saa ya jaribio.",
+      "freeDesc": "Safu ya bure ni bidhaa kamili, si jaribio. Kila tabaka la ramani isipokuwa Resilience, kila mtiririko kutoka {{feeds}} vyanzo, waangalizi wote sita — hakuna usajili, hakuna saa ya jaribio.",
       "freeF1": "Tabaka zote za ramani isipokuwa Endurance & milo iliyoteuliwa",
       "freeF2": "Briefing za nchi, vituo vya hatari, alama za haba na amani",
       "freeF3": "Vituo vikuu, nyuzinyuzi, uchambuzi wa mlipuko",
@@ -662,25 +663,25 @@
       "proF4": "MCP, REST API & SDKs rasmi — zana za moja kwa moja chini ya ufunguo mmoja",
       "proF5": "Mjenzi wa widget unaobadilika kwa paneli zako",
       "cta": "Angalia mipango & bei",
-      "note": "Kutoka $39.99/mwezi · miezi 3 bure inapobaliwa kila mwaka"
+      "note": "Kutoka $39.99/mwezi · miezi 3 bure inapolipwa kila mwaka"
     },
     "faq": {
       "eyebrow": "Hakuna utamu",
       "title": "Maswali yapi ya kawaida kuhusu World Monitor?",
       "q1": "Je, World Monitor ni halisi bure?",
-      "a1": "Ndiyo. Ramani ya moja kwa moja — kila tabaka isipokuwa Endurance, milo iliyoteuliwa, muhtasari wa nchi, onyo za kuvunja, na uso wa ufuatiliaji — ni bure bila kusajili na bila saa ya jaribio. Pro hulipa milo: inaongeza WM Analyst, injini ya hali, Route Explorer, muhtasari uliowekwa ratiba, upatikanaji wa MCP kwa wateja wa AI na tabaka la ramani la Endurance. Hakuna matangazo, na hakuna akaunti inamaanisha hakuna data ya mtumiaji kuuza.",
+      "a1": "Ndiyo. Ramani ya moja kwa moja inagharimu $0 bila kujisajili na bila kikomo cha muda wa majaribio: aina {{mapLayers}} za safu za ramani, zote isipokuwa Resilience, pamoja na milisho iliyochaguliwa, muhtasari wa nchi, arifa za dharura na nyuso za ufuatiliaji. Pro hulipia milisho: inaongeza WM Analyst, injini ya hali, Route Explorer, muhtasari ulioratibiwa, ufikiaji wa MCP kwa wateja wa AI na safu ya ramani ya Resilience. Hakuna matangazo, na kutokuwa na akaunti kunamaanisha hakuna data ya watumiaji ya kuuza.",
       "q2": "KDashboard ya ujumbe wa ulimwengu ni nini?",
       "a2": "Muonekano mmoja hai unaounganisha ishara ambazo zana nyingi huziweka tofauti: matukio ya migogoro, ufuatiliaji wa meli na ndege, vituo vya utoaji, satelaiti, nyuzinyuzi chini ya bahari, bomba la kuweka, soko na hatari za kiberaneti — kwenye ramani moja ya ulimwengu halisi, na alama ya AI na briefing juu. World Monitor ni moja bure.",
       "q3": "Data inatoka wapi?",
-      "a3": "Watoaji waliotajwa ni pamoja na ACLED na UCDP kwa migogoro, AISStream kwa vyombo vya moja kwa moja, OpenSky kwa ndege, NASA FIRMS kwa moto, USGS kwa matetemeko, IMF, BIS, FRED na Finnhub kwa soko na macro — pamoja na milo ya habari iliyoteuliwa. Kila paneli inataja vyanzo vyake na vinyago ndani.",
+      "a3": "Kutoka kwa {{providers}} watoa huduma wenye jina maalum. Kati yao ni ACLED na UCDP kwa migogoro, AISStream kwa chombo hai, OpenSky kwa ndege, NASA FIRMS kwa moto, USGS kwa tetemeko, IMF, BIS, FRED na Finnhub kwa soko na macro — pamoja na mitindo ya habari iliyochaguliwa. Kila paneli hutaja vyanzo vyake na wakati wake mwenyewe.",
       "q4": "Je, naweza kuandamana vituo vikuu kama Hormuz au Bab el-Mandeb wakati halisi?",
-      "a4": "Ndiyo. Alama kali zinafuatiliwa na hesabu za AIS za vyombo vya moja kwa moja, mabadiliko ya mabara katika wiki na alama ya kusulia — na ubalozi wa wiani unaflagiwa dhidi ya tukio la kila tangi.",
+      "a4": "Ndiyo. {{chokepoints}} vituo vya kubana njia za meli, vikiwemo mlango bahari na mifereji, kutoka Hormuz na Bab el-Mandeb hadi Suez, vinafuatiliwa kwa hesabu hai za meli za AIS, mabadiliko ya upitaji wiki kwa wiki na alama za usumbufu — na hitilafu za msongamano zinaripotiwa dhidi ya kipimo cha msingi kinachosonga cha kila kituo.",
       "q5": "Hii ni tofauti gani na ramani ya migogoro kama Liveuamap?",
       "a5": "Mgogoro ni safu moja ya ramani. World Monitor inaunganisha migogoro na usambazaji wa baharini, ndege za kijeshi, miundombinu, soko na cyber — kisha AI inascore muunganisho: fahirisi za ukosefu wa uthabiti, kupanda kwa haraka kwa pointi moto, onyo za kuvunjika zinazothibitishwa na ripoti fupi za kila siku. Linganisha World Monitor na Liveuamap na ramani nyingine za mgogoro: worldmonitor.app/compare/liveuamap-alternatives. Kwa chaguo zaidi za ufuatiliaji, tazama worldmonitor.app/compare/best-geopolitical-risk-dashboards.",
       "q6": "Kwa nini ninapaswa kuamini arifa?",
-      "a6": "Bendera ya kuzuia inatoka tu wakati aina za chanzo zinazojitegemea zinarudia — uainishaji wa habari, kasi ya maneno muhimu, kupanda kwa moto moto, miongezeko ya kijeshi, sireni rasmi — isiyo na kurudia na kuzuia kwa kiwango. Tahadhari chache, za kweli.",
+      "a6": "Kwa sababu bendera lazima ichague milango iliyowekwa. Inapiga kwa hadithi zinatarafiwa kuwa hatari muhimu au ya kiwango cha juu, na kwa siren za haraka za ulinzi wa raia. Onyo la hadithi lazima liwe chini ya dakika 15 za zamani, hadithi sawa inabakisha kwa dakika 30, na kupumzika kwa sekunde 60 kunafuata onyo lolote isipokuwa mpya ni kali zaidi. Mechi ya neno tu kutoka vyanzo vya kiwango cha chini pia zinahitaji uthibitisho wa AI. Siren zinaruka milango ya umri na kupumzika kwa sababu zinakuwa muhimu kwa wakati.",
       "q7": "Je, mawakili wa AI kama Claude au GPT yanaweza kuutumia?",
-      "a7": "Ndiyo. World Monitor inasambaza seva ya MCP yenye rejista ya zana hai, kwa hivyo Claude, GPT au wakala yeyote yanayoambatana na MCP yanaweza kuuliza alama za hatari hai, hali ya njia nyingi, misiliano, soko na muhtasari — na JMESPath inayokamatia ili wakala wapate kile kinachohitajika.",
+      "a7": "Ndiyo. Seva ya MCP ya World Monitor inatoa zana hai {{mcpTools}}, kwa hiyo Claude, GPT au wakala yeyote anayeoana na MCP anaweza kuuliza alama za hatari, hali ya vituo vya kubana njia za meli, migogoro, masoko na muhtasari — kwa uchujaji (projection) wa JMESPath ili mawakala wapate hasa kile wanachohitaji.",
       "q8": "Je, nahitaji akaunti?",
       "a8": "Hapana. Dasibodi inafanya kazi haraka bila kuweka akaunti. Akaunti ni muhimu tu wakati wa kuongeza kwa Pro au wakati unataka mipango kusambazwa katika vifaa.",
       "q9": "Je, ni chanzo wazi?",
@@ -692,7 +693,7 @@
     },
     "cta": {
       "title": "Ninaanzia vipi kuangalia ramani ya dunia?",
-      "subtitle": "Wakati unasoma ukurasa huu uliendelea kusonga — pweza, pointi kali, soko, zana zilizochaguliwa. Moja yao ni ukurasa wa mbele wa kesho. Ipate kwanza — bila malipo, hakuna akaunti.",
+      "subtitle": "Fungua worldmonitor.app/dashboard katika kivinjari yoyote, bila akaunti: {{mapLayers}} aina za tabaka la ramani, kila moja isipokuwa Resilience inaweza kuwashwa bure. Bofya nchi yoyote kwa muhtasari wake, au bonyeza ⌘K / Ctrl-K kwa palet ya amri. Ramani imebaki ikiingia habari wakati unasoma ukurasa huu.",
       "button": "Itafuta kwanza",
       "note": "Bure · Hakuna kuweka akaunti · Inapakia kwa sekunde",
       "secondary": "Au ona mipango ya Pro →"
@@ -704,9 +705,9 @@
       "verifyTitle": "Thibitisha tukio linaloipiga ghafla",
       "verifyDesc": "Angalia vivuo vya mgogoro vya sasa, mipimo ya tarehe, na muktadha unaorejelewa kabla ya kuamini dai linalovunja habari.",
       "chokepointTitle": "Angalia mahali pa kuzuia",
-      "chokepointDesc": "Chunguza hali ya usumbufu, mtiririko wa vyombo, na hatari katika njia muhimu za bahari.",
+      "chokepointDesc": "Chunguza hali ya usumbufu, mtiririko wa vyombo, na hatari katika {{chokepoints}} njia muhimu za bahari.",
       "countryRiskTitle": "Eleza harakati ya hatari ya nchi",
-      "countryRiskDesc": "Fuatilia maaashimiano ya kisiasa, usalama, kiuchumi, na upinzani nyuma ya mabadiliko ya nchi.",
+      "countryRiskDesc": "Fuata alama za kisiasa, usalama, uchumi, na upinzani nyuma ya mabadiliko ya nchi, yenye upinzani ulioainishwa kwa {{resilienceRanked}} nchi.",
       "open": "Fungua ushahidi"
     }
   },

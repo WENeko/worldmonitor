@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import us from './fixtures/country-brief-us.json' with { type: 'json' };
 
@@ -7,7 +7,7 @@ const root = process.cwd();
 test.use({ serviceWorkers: 'block' });
 
 type HostCall = { name: string; arguments: Record<string, unknown> };
-async function installCountryHost(page: Page) {
+async function installCountryHost(page: Page, fullExposure = false, initialOpenError?: string) {
   const calls: HostCall[] = [];
   const requestNames = new Map<number, string>();
   const cancelled: string[] = [];
@@ -17,7 +17,13 @@ async function installCountryHost(page: Page) {
   const contexts: Array<{ countryCode: string; topic: string; sections: Array<{ section: string; state: string; renderedText: string }> }> = [];
   const links: string[] = [];
   let failFacts = false;
+  let quotaExceeded = false;
+  let admissions = 0;
+  const admitted = new Set<string>();
   let delayUS = false;
+  let delayAdmission = false;
+  let releaseAdmission: () => void = () => {};
+  const admissionDelayed = new Promise<void>(resolve => { releaseAdmission = resolve; });
   let releaseUS: () => void = () => {};
   const delayed = new Promise<void>(resolve => { releaseUS = resolve; });
   const unmanaged: string[] = [];
@@ -41,6 +47,15 @@ async function installCountryHost(page: Page) {
     if (params.name === 'get_country_brief') return { structuredContent: { ...us.brief, countryCode: code, brief: `Controlled ${code} assessment. Source observations, not live acceptance.` } };
     if (params.name === 'get_country_coverage' && delayCoverage) await coverageDelayed;
     if (params.name === 'get_country_coverage') return { structuredContent: { countryCode: code, countryName: code, generatedAt: '2026-10-01T15:00:00Z', degraded: false, headlines: [{ title: `Controlled ${code} source article`, source: 'Fixture publisher', url: 'https://example.com/evidence', publishedAtMs: 1790863200000 }], events: [], sources: [{ source: 'news', state: 'ready' }, { source: 'events', state: 'unavailable' }] } };
+    if (params.name === 'open_country_brief') {
+      if (initialOpenError) return { isError: true, content: [{ type: 'text', text: initialOpenError }] };
+      if (code === 'US' && delayAdmission) await admissionDelayed;
+      if (quotaExceeded) throw new Error('Daily MCP quota exceeded (50 requests/day). Resets at next UTC midnight.');
+      const reused = admitted.has(code) && !args.refresh;
+      if (!reused) admissions++;
+      admitted.add(code);
+      return { structuredContent: { countryCode: code, topic: args.topic ?? 'overview', panelRequest: { token: `${code}.controlled-admission-${admissions}`, countryCode: code, expiresAt: new Date(Date.now() + 300000).toISOString(), reused, usage: { used: admissions, limit: 50, remaining: 50 - admissions, resetsAt: '2026-10-03T00:00:00.000Z', unit: 'requests' } } } };
+    }
     const section = String(args.section);
     if (section === 'facts' && code === 'US' && delayUS) await delayed;
     if (section === 'facts' && failFacts) return { structuredContent: { section, state: 'unavailable', reason: 'Controlled source failure' } };
@@ -55,7 +70,8 @@ async function installCountryHost(page: Page) {
       markets: { markets: [], dataAvailable: true },
       housing: { data: { bisPropertyResidential: { entries: [{ countryCode: code, indexValue: 156.4, yoyChange: -2.1, qoqChange: null, period: '2026-Q1' }] }, bisDsr: { entries: [{ countryCode: code, dsrPct: 8, change: 1.3, period: '2026-Q1' }] } } },
       imf: { data: {} },
-      exposure: { exposures: [] },
+      exposure: { exposures: fullExposure ? [{ chokepointId: 'hormuz', chokepointName: 'Strait of Hormuz', exposureScore: 0.2 }] : [], primaryChokepointId: 'hormuz', vulnerabilityIndex: 0.2, fetchedAt: '2026-10-01' },
+      dependency: { flags: [], primaryExporterIso2: 'CN', primaryExporterShare: 0.2 },
       commodities: { vulnerabilities: [], upstreamUnavailable: true },
       products: { products: [] },
       debt: { entries: [] },
@@ -77,14 +93,19 @@ async function installCountryHost(page: Page) {
       try {
         const result = await (window as unknown as { countryHost: (method: string, params: object, id?: number) => Promise<object> }).countryHost(event.data.method, event.data.params, event.data.id);
         frame.contentWindow!.postMessage({ jsonrpc: '2.0', id: event.data.id, result }, '*');
-        if (event.data.method === 'ui/initialize') frame.contentWindow!.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/tool-input', params: { country_code: 'US', topic: 'overview' } }, '*');
-      } catch {
-        frame.contentWindow!.postMessage({ jsonrpc: '2.0', id: event.data.id, error: { code: -32603, message: 'Controlled host failure' } }, '*');
+        if (event.data.method === 'ui/initialize') {
+          const args = { country_code: 'US', topic: 'overview' };
+          frame.contentWindow!.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/tool-input', params: args }, '*');
+          const opened = await (window as unknown as { countryHost: (method: string, params: object) => Promise<object> }).countryHost('tools/call', { name: 'open_country_brief', arguments: args });
+          frame.contentWindow!.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: opened }, '*');
+        }
+      } catch (error) {
+        frame.contentWindow!.postMessage({ jsonrpc: '2.0', id: event.data.id, error: { code: -32603, message: String(error) } }, '*');
       }
     });
     frame.srcdoc = html.replace('<head>', `<head><base href="${location.origin}/">`);
   }, html);
-  return { calls, contexts, links, unmanaged, cancelled, delayCoverage: () => { delayCoverage = true; }, releaseCoverage, fail: () => { failFacts = true; }, recover: () => { failFacts = false; }, delay: () => { delayUS = true; }, release: releaseUS };
+  return { calls, contexts, links, unmanaged, cancelled, quota: () => { quotaExceeded = true; }, get admissions() { return admissions; }, delayAdmission: () => { delayAdmission = true; }, releaseAdmission, delayCoverage: () => { delayCoverage = true; }, releaseCoverage, fail: () => { failFacts = true; }, recover: () => { failFacts = false; }, delay: () => { delayUS = true; }, release: releaseUS };
 }
 
 test('built opaque country view uses the shared sections, host reads, sources and actual report output', async ({ page }, info) => {
@@ -92,6 +113,7 @@ test('built opaque country view uses the shared sections, host reads, sources an
   const frame = page.frameLocator('iframe');
   await expect(frame.locator('.cdp-country-name')).toHaveText(/United States/);
   await expect(frame.locator('[data-brief-section=facts]')).toContainText('Washington, D.C.');
+  await expect(frame.locator('#countryUsage')).toContainText('49 of 50 requests remaining');
   await expect(frame.locator('[data-brief-section=factors]')).toContainText('Production');
   await expect(frame.locator('[data-brief-section]')).toHaveCount(23);
   expect(await frame.locator('#deep-dive-content').evaluate(el => el.getBoundingClientRect().width)).toBeGreaterThan(1000);
@@ -146,12 +168,18 @@ test('refresh keeps prior observations and delayed country work cannot repaint a
   await expect.poll(() => host.cancelled).toContain('get_country_coverage');
   host.releaseCoverage();
   expect(host.calls.filter(call => call.name === 'get_country_brief')).toHaveLength(1);
+  await expect(frame.locator('#countryUsage')).toContainText('46 of 50 requests remaining');
   await frame.getByRole('button', { name: 'New AI assessment', exact: true }).click();
   await expect.poll(() => host.calls.filter(call => call.name === 'get_country_brief').length).toBe(2);
   host.recover();
   host.delay();
+  host.delayAdmission();
+  const beforeRefreshAdmissions = host.admissions;
   await frame.getByRole('button', { name: 'Refresh country', exact: true }).click();
   await frame.getByRole('textbox', { name: 'Country name or code' }).fill('Ukraine');
+  host.releaseAdmission();
+  await expect(frame.locator('#countryUsage')).toContainText(`${49 - beforeRefreshAdmissions} of 50 requests remaining`);
+  await expect(frame.getByRole('textbox', { name: 'Country name or code' })).toHaveValue('Ukraine');
   await frame.getByRole('button', { name: 'Open country', exact: true }).click();
   await expect(frame.locator('.cdp-country-name')).toHaveText('Ukraine');
   host.release();
@@ -181,4 +209,62 @@ test('decision calculations and their JSON download use the authenticated host s
   expect(JSON.stringify(saved)).toContain('2026-05');
   expect(host.calls.filter(call => call.arguments.section === 'scenario')).toHaveLength(2);
   expect(host.unmanaged).toEqual([]);
+});
+
+
+test('country navigation and repeated questions reuse reads and show a quota denial without losing observations', async ({ page }, info) => {
+  const start = performance.now();
+  const host = await installCountryHost(page, true);
+  const frame = page.frameLocator('iframe');
+  await expect(frame.locator('[data-brief-section=facts]')).toContainText('Washington, D.C.');
+  await expect.poll(() => host.calls.filter(call => call.arguments.section === 'exposure').length).toBe(10);
+  await expect.poll(() => host.contexts.at(-1)?.sections.filter(section => section.state === 'loading').length).toBe(0);
+  await expect.poll(() => host.calls.filter(call => call.arguments.section === 'dependency').length).toBe(10);
+  const initialMs = performance.now() - start;
+  const initialReads = host.calls.length;
+  await frame.getByRole('button', { name: 'Open country', exact: true }).click();
+  await frame.getByRole('button', { name: 'Economy & trade', exact: true }).click();
+  await frame.getByRole('button', { name: 'Resources & infrastructure', exact: true }).click();
+  expect(host.calls).toHaveLength(initialReads);
+  expect(host.admissions).toBe(1);
+  expect(host.calls.filter(call => call.arguments.section === 'risk')).toHaveLength(1);
+  expect(host.calls.filter(call => call.name !== 'open_country_brief').every(call => call.arguments.panel_request === 'US.controlled-admission-1')).toBe(true);
+  await frame.getByRole('textbox', { name: 'Country name or code' }).fill('Ukraine');
+  await frame.getByRole('button', { name: 'Open country', exact: true }).click();
+  await expect(frame.locator('[data-brief-section=facts]')).toContainText('Kyiv');
+  await expect.poll(() => host.contexts.at(-1)?.countryCode).toBe('UA');
+  await expect.poll(() => host.contexts.at(-1)?.sections.filter(section => section.state === 'loading').length).toBe(0);
+  const beforeReturn = host.calls.length;
+  await frame.getByRole('textbox', { name: 'Country name or code' }).fill('United States');
+  await frame.getByRole('button', { name: 'Open country', exact: true }).click();
+  await expect(frame.locator('[data-brief-section=facts]')).toContainText('Washington, D.C.');
+  await expect.poll(() => host.contexts.at(-1)?.countryCode).toBe('US');
+  expect(host.admissions).toBe(2);
+  const returnCalls = host.calls.length - beforeReturn;
+  expect(host.calls.filter(call => call.arguments.section === 'facts')).toHaveLength(2);
+  const beforeRefresh = host.calls.length;
+  const beforeRefreshAdmissions = host.admissions;
+  await frame.getByRole('button', { name: 'Refresh country', exact: true }).click();
+  await expect.poll(() => host.admissions).toBe(beforeRefreshAdmissions + 1);
+  await expect.poll(() => host.calls.filter(call => call.arguments.section === 'dependency').length).toBe(30);
+  await expect.poll(() => host.contexts.at(-1)?.sections.filter(section => section.state === 'loading').length).toBe(0);
+  const refreshCalls = host.calls.length - beforeRefresh;
+  await expect(frame.locator('#countryUsage')).toContainText('47 of 50 requests remaining');
+  host.quota();
+  const beforeDenied = host.calls.length;
+  await frame.getByRole('button', { name: 'Refresh country', exact: true }).click();
+  await expect(frame.locator('#countryStatus')).toContainText('Daily MCP quota exceeded');
+  await expect(frame.locator('#countryStatus')).toContainText('UTC midnight');
+  await expect(frame.locator('[data-brief-section=facts]')).toContainText('Washington, D.C.');
+  expect(host.calls).toHaveLength(beforeDenied + 1);
+  await writeFile(info.outputPath('country-request-cost.json'), JSON.stringify({ measuredSurface: 'built opaque iframe, controlled host', initialHostCalls: initialReads, initialDailyUnits: 1, initialMs: Math.round(initialMs), repeatedCountryAndTopicsCalls: 0, navigationBackHostCalls: returnCalls, navigationBackDailyUnits: 0, refreshHostCalls: refreshCalls, refreshDailyUnits: 1, deniedRefreshSectionCalls: 0, deniedRefreshDailyUnits: 0 }, null, 2));
+});
+
+test('an initial host open denial displays its reason without section loads', async ({ page }) => {
+  const host = await installCountryHost(page, false, 'Daily MCP quota exceeded (50 requests/day). Resets at next UTC midnight.');
+  const frame = page.frameLocator('iframe');
+  await expect(frame.locator('#countryStatus')).toContainText('Daily MCP quota exceeded');
+  await expect(frame.locator('#countryStatus')).toContainText('UTC midnight');
+  await expect(frame.locator('#countryUsage')).toBeHidden();
+  expect(host.calls.map(call => call.name)).toEqual(['open_country_brief']);
 });

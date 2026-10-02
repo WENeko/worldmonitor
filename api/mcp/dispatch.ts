@@ -15,6 +15,7 @@ import { mcpErrorFingerprint } from './error-fingerprint';
 import { argBool, summarizeData } from './filters';
 import { evaluateFreshness } from './freshness';
 import { applyJmespath } from './jmespath';
+import { admitCountryPanel, authorizePanelRead, PanelRequestError, type PanelAdmission } from './panel-requests';
 import { isSharedRestCounter, reserveQuota, type McpBudget } from './quota';
 import { reserveFreeAccountAllowance } from './free-account-allowance';
 import { buildMcpStructuredDenial, type McpDenial } from './upgrade';
@@ -385,6 +386,27 @@ export async function dispatchToolsCall(
     return mcpDenialResponse({ reason: 'upgrade-required' }, -32002, 403, id, corsHeaders);
   }
 
+  let countryPanel: PanelAdmission | undefined;
+  let panelRead: Awaited<ReturnType<typeof authorizePanelRead>> | undefined;
+  const suppliedPanel = p.arguments?.panel_request;
+  const callArguments = Object.fromEntries(Object.entries(p.arguments ?? {}).filter(([key]) => key !== 'panel_request'));
+  const dedicatedPanel = !freeAccountAllowance && budget?.allowance !== 'api'
+    && (context.kind === 'pro' || context.kind === 'user_key');
+  try {
+    if (dedicatedPanel && tool.name === 'open_country_brief') {
+      countryPanel = await admitCountryPanel(context, budget, deps.redisPipeline, Object.fromEntries(Object.entries(callArguments).filter(([key]) => key !== 'jmespath')));
+    } else if (suppliedPanel !== undefined) {
+      if (!dedicatedPanel || budget?.limit === 0) throw new PanelRequestError('This allowance does not support panel requests.', 'invalid');
+      panelRead = await authorizePanelRead(context, deps.redisPipeline, tool.name,
+        Object.fromEntries(Object.entries(callArguments).filter(([key]) => key !== 'jmespath')), suppliedPanel);
+    }
+  } catch (error) {
+    if (!(error instanceof PanelRequestError)) throw error;
+    if (error.code === 'quota') return mcpDenialResponse({ reason: 'quota-exceeded', limit: error.limit ?? 0, sharedWithRestApi: false }, -32029, 429, id, corsHeaders, { retryAfter: String(secondsUntilUtcMidnight()) });
+    if (error.code === 'backend') return quotaBackendUnavailableResponse(id, corsHeaders);
+    return rpcError(id, error.code === 'reads' ? -32029 : -32602, error.message, { ...corsHeaders, ...(error.retryAfter ? { 'Retry-After': String(error.retryAfter) } : {}) }, undefined, error.code === 'reads' ? 429 : 200);
+  }
+
   // user_key (#4859) consumes the same per-user daily budget as pro: cache
   // tools read Upstash directly (no downstream gateway metering), so an
   // unquota'd user_key would be an unmetered data loophole bounded only by
@@ -395,6 +417,8 @@ export async function dispatchToolsCall(
     (context.kind === 'pro' || context.kind === 'user_key')
     && tool._freeTier !== true
     && !isMetadataTool
+    && !countryPanel
+    && !panelRead
   ) {
     if (freeAccountAllowance) {
       const reservation = await reserveFreeAccountAllowance(
@@ -465,17 +489,21 @@ export async function dispatchToolsCall(
   let execution: McpToolExecutionContext | undefined;
   try {
     let result: unknown;
-    if (tool._execute) {
+    if (panelRead?.cached !== undefined) {
+      result = panelRead.cached;
+    } else if (tool._execute) {
       execution = createMcpToolExecutionContext(req.url);
+      execution.countryPanel = countryPanel;
       result = await tool._execute(
-        p.arguments ?? {},
+        callArguments,
         execution.downstreamOrigin,
         context,
         execution,
       );
     } else {
-      result = await executeTool(tool, p.arguments ?? {});
+      result = await executeTool(tool, callArguments);
     }
+    if (panelRead && panelRead.cached === undefined) await panelRead.save(result);
     // Convex `internal-validate-pro-mcp-token` schedules touchProMcpTokenLastUsed
     // itself (convex/http.ts:1035-1040), so no waitUntil needed here.
     //
