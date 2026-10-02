@@ -52,7 +52,8 @@ export function createHostCountryFetch(call: (name: string, args: object, signal
           if (requestedCountry && returnedCountry && requestedCountry !== returnedCountry) throw new Error('Country identity mismatch');
           const text = JSON.stringify(result.value);
           const bytes = new TextEncoder().encode(text).length;
-          if (bytes <= MAX_ENTRY_BYTES && !requestSignal.aborted && result.value.upstreamUnavailable !== true) {
+          if (bytes <= MAX_ENTRY_BYTES && !requestSignal.aborted && result.value.upstreamUnavailable !== true
+            && !(Array.isArray(result.value.missing) && result.value.missing.length)) {
             while (cacheBytes + bytes > MAX_CACHE_BYTES && cache.size) {
               const oldest = cache.keys().next().value!;
               cacheBytes -= cache.get(oldest)!.bytes;

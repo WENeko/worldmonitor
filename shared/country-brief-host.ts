@@ -12,7 +12,17 @@ export const countryViewSchema = z.object({
   topic: z.enum(Object.keys(BRIEF_TOPICS) as [keyof typeof BRIEF_TOPICS, ...Array<keyof typeof BRIEF_TOPICS>]).default('overview'),
 }).strict();
 
+const activityBoundsSchema = {
+  ne_lat: z.coerce.number().min(-90).max(90).default(0),
+  ne_lon: z.coerce.number().min(-180).max(180).default(0),
+  sw_lat: z.coerce.number().min(-90).max(90).default(0),
+  sw_lon: z.coerce.number().min(-180).max(180).default(0),
+};
+
 export const COUNTRY_READERS = {
+  flights: { path: '/api/military/v1/list-military-flights', args: z.object({ ...activityBoundsSchema, page_size: z.coerce.number().int().min(100).max(100).default(100), operator: z.literal('MILITARY_OPERATOR_UNSPECIFIED').default('MILITARY_OPERATOR_UNSPECIFIED'), aircraft_type: z.literal('MILITARY_AIRCRAFT_TYPE_UNSPECIFIED').default('MILITARY_AIRCRAFT_TYPE_UNSPECIFIED'), cursor: z.string().max(200).default('') }).strict() },
+  vessels: { path: '/api/maritime/v1/get-vessel-snapshot', args: z.object({ ne_lat: z.coerce.number().pipe(z.literal(0)).default(0), ne_lon: z.coerce.number().pipe(z.literal(0)).default(0), sw_lat: z.coerce.number().pipe(z.literal(0)).default(0), sw_lon: z.coerce.number().pipe(z.literal(0)).default(0), include_candidates: z.literal('true').default('true') }).strict() },
+  fleet: { path: '/api/military/v1/get-usni-fleet-report', args: z.object({ }).strict() },
   facts: { path: '/api/intelligence/v1/get-country-facts', args: z.object({ country_code: z.string().regex(/^[A-Z]{2}$/) }).strict() },
   energy: { path: '/api/intelligence/v1/get-country-energy-profile', args: z.object({ country_code: z.string().regex(/^[A-Z]{2}$/) }).strict() },
   maritime: { path: '/api/intelligence/v1/get-country-port-activity', args: z.object({ country_code: z.string().regex(/^[A-Z]{2}$/) }).strict() },

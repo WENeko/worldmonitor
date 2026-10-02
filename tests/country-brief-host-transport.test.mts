@@ -136,6 +136,19 @@ it('does not cache failures and aborting one subscriber preserves the other subs
 });
 
 
+it('retries partial bootstrap data and reuses the recovered snapshot', async () => {
+  let calls = 0;
+  const fetch = createHostCountryFetch(async (_name, args: any) => {
+    calls++;
+    return { state: 'ready', section: args.section, value: { data: { imfMacro: { countries: { US: { inflationPct: 2.5, year: 2026 } } } }, missing: calls === 1 ? ['imfGrowth'] : [] }, retrievedAt: '2026-10-02T00:00:00.000Z' };
+  });
+  const url = 'https://www.worldmonitor.app/api/bootstrap?keys=imfMacro,imfGrowth,imfLabor,imfExternal';
+  assert.deepEqual((await (await fetch(url)).json()).missing, ['imfGrowth']);
+  assert.deepEqual((await (await fetch(url)).json()).missing, []);
+  await fetch(url);
+  assert.equal(calls, 2);
+});
+
 it('expires reused data after five minutes and isolates country cache entries', async t => {
   const now = Date.now();
   let time = now;
@@ -166,4 +179,25 @@ it('retries a successful transport response that reports an upstream outage', as
   await fetch(url);
   await fetch(url);
   assert.equal(calls, 2);
+});
+
+it('maps generated activity reads to bounded host readers without opening an unmanaged stream', async () => {
+  const { MilitaryServiceClient } = await import('../src/generated/client/worldmonitor/military/v1/service_client');
+  const { MaritimeServiceClient } = await import('../src/generated/client/worldmonitor/maritime/v1/service_client');
+  const calls: Array<{ section: string; arguments: Record<string, unknown> }> = [];
+  const fetch = createHostCountryFetch(async (_name, args: any) => {
+    calls.push(args);
+    return { state: 'ready', section: args.section, value: {}, retrievedAt: '2026-10-02T00:00:00.000Z' };
+  });
+  const military = new MilitaryServiceClient('https://www.worldmonitor.app', { fetch });
+  const maritime = new MaritimeServiceClient('https://www.worldmonitor.app', { fetch });
+  await military.listMilitaryFlights({ neLat: 45, neLon: 0, swLat: 20, swLon: -80, pageSize: 100, cursor: 'next', operator: 'MILITARY_OPERATOR_UNSPECIFIED', aircraftType: 'MILITARY_AIRCRAFT_TYPE_UNSPECIFIED' });
+  await maritime.getVesselSnapshot({ neLat: 0, neLon: 0, swLat: 0, swLon: 0, includeCandidates: true, includeTankers: false });
+  await military.getUSNIFleetReport({ forceRefresh: false });
+  assert.deepEqual(calls.map(call => call.section), ['flights', 'vessels', 'fleet']);
+  assert.equal(calls[0]!.arguments.ne_lon, 0);
+  assert.equal(calls[0]!.arguments.cursor, 'next');
+  assert.equal(calls[0]!.arguments.page_size, 100);
+  assert.equal(calls[1]!.arguments.include_candidates, 'true');
+  assert.deepEqual(calls[2]!.arguments, {});
 });

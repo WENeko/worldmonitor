@@ -160,6 +160,7 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
   private newsBody: HTMLElement | null = null;
   private militaryBody: HTMLElement | null = null;
   private defenseIndustrialBody: HTMLElement | null = null;
+  private defenseIndustrialFailure: { state: 'locked' | 'unavailable'; reason: string } | null = null;
   private currentMilitarySummary: CountryDeepDiveMilitarySummary | null = null;
   private currentDefenseIndustrial: GetDefenseIndustrialBaseResponse | null = null;
   private infrastructureBody: HTMLElement | null = null;
@@ -280,9 +281,16 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
   }
 
   public setSectionFailure(id: BriefSectionId, state: 'locked' | 'unavailable', reason: string): void {
+    if (id === 'military') {
+      this.defenseIndustrialFailure = { state, reason };
+      if (state === 'locked') this.currentDefenseIndustrial = null;
+      this.renderDefenseIndustrialBase();
+      return;
+    }
     const section = this.sections.find(section => section.id === id);
     if (!section) return;
     if (state === 'locked') {
+      this.setSectionCoverage(id, []);
       this.outputClose?.();
       if (id === 'trade') { this.cachedTradeExposureData = null; this.cachedSectors = []; }
     }
@@ -300,6 +308,23 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
 
   public setMap(map: MapContainer | null): void {
     this.map = map;
+  }
+
+  public setSectionCoverage(id: BriefSectionId, missing: string[]): void {
+    const section = this.sections.find(section => section.id === id);
+    if (!section) return;
+    section.card.querySelector('.cdp-section-coverage')?.remove();
+    section.card.dataset.briefCoverage = missing.length ? 'partial' : 'complete';
+    if (!missing.length) return;
+    const labels: Record<string, string> = {
+      imfMacro: 'inflation and fiscal indicators', imfGrowth: 'growth and GDP',
+      imfLabor: 'employment', imfExternal: 'external trade',
+      bisDsr: 'household debt service', bisPropertyResidential: 'residential property',
+      bisPropertyCommercial: 'commercial property',
+    };
+    const notice = this.el('div', 'cdp-empty cdp-section-coverage', `Partial coverage. Unavailable data: ${missing.map(key => labels[key] ?? 'additional measurements').join(', ')}. Available measurements remain visible.`);
+    notice.setAttribute('role', 'status');
+    section.card.append(notice);
   }
 
   public get signal(): AbortSignal {
@@ -550,10 +575,13 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
 
   public updateMilitaryActivity(summary: CountryDeepDiveMilitarySummary | null): void {
     this.currentMilitarySummary = summary;
+    const card = this.militaryBody?.closest('section');
+    if (card) card.dataset.briefCoverage = summary ? summary.coverage ?? 'complete' : 'partial';
     this.renderMilitaryActivity();
   }
 
   public updateDefenseIndustrialBase(data: GetDefenseIndustrialBaseResponse | null): void {
+    this.defenseIndustrialFailure = null;
     this.currentDefenseIndustrial = data;
     this.renderDefenseIndustrialBase();
   }
@@ -610,12 +638,13 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     if (summary) {
       const stats = this.el('div', 'cdp-military-grid');
       stats.append(
-        this.metric(t('countryBrief.ownFlights'), String(summary.ownFlights), 'cdp-chip-neutral'),
-        this.metric(t('countryBrief.foreignFlights'), String(summary.foreignFlights), summary.foreignFlights > 0 ? 'cdp-chip-danger' : 'cdp-chip-neutral'),
-        this.metric(t('countryBrief.navalVessels'), String(summary.nearbyVessels), 'cdp-chip-neutral'),
-        this.metric(t('countryBrief.foreignPresence'), summary.foreignPresence ? t('countryBrief.detected') : t('countryBrief.notDetected'), summary.foreignPresence ? 'cdp-chip-danger' : 'cdp-chip-success'),
+        this.metric(t('countryBrief.ownFlights'), summary.ownFlights === null ? 'Unavailable' : String(summary.ownFlights), 'cdp-chip-neutral'),
+        this.metric(t('countryBrief.foreignFlights'), summary.foreignFlights === null ? 'Unavailable' : String(summary.foreignFlights), (summary.foreignFlights ?? 0) > 0 ? 'cdp-chip-danger' : 'cdp-chip-neutral'),
+        this.metric(t('countryBrief.navalVessels'), summary.nearbyVessels === null ? 'Unavailable' : String(summary.nearbyVessels), 'cdp-chip-neutral'),
+        this.metric(t('countryBrief.foreignPresence'), summary.foreignPresence === null ? 'Unknown' : summary.foreignPresence ? t('countryBrief.detected') : t('countryBrief.notDetected'), summary.foreignPresence === null ? 'cdp-chip-neutral' : summary.foreignPresence ? 'cdp-chip-danger' : 'cdp-chip-success'),
       );
       this.militaryBody.append(stats);
+      for (const note of summary.coverageNotes ?? []) this.militaryBody.append(this.el('p', 'cdp-economic-source', note));
 
       const basesTitle = this.el('div', 'cdp-subtitle', t('countryBrief.nearestBases'));
       this.militaryBody.append(basesTitle);
@@ -653,6 +682,13 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
       body.append(this.makeProLocked(t('countryBrief.defenseIndustrialBase.proLocked')));
       return;
     }
+    const failure = this.defenseIndustrialFailure;
+    if (failure?.state === 'locked') {
+      const notice = this.makeProLocked(failure.reason);
+      notice.dataset.briefState = 'locked';
+      body.append(notice);
+      return;
+    }
     // Pro (#6438). The gate lives here rather than only at the fetch site
     // because renderMilitaryActivity() also re-runs on updateMilitaryActivity,
     // whose free-tier flight/base data stays free — without this the section
@@ -662,13 +698,14 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
       return;
     }
     if (!this.currentDefenseIndustrial?.available) {
-      body.append(this.makeEmpty('Defense-industrial observations are unavailable.'));
+      body.append(this.makeEmpty(failure?.reason ?? 'Defense-industrial observations are unavailable.'));
       return;
     }
     body.append(renderDefenseIndustrialSection(
       this.currentDefenseIndustrial,
       (label, value, chipClass) => this.metric(label, value, chipClass),
     ));
+    if (failure) body.append(this.makeEmpty(`${failure.reason} Previously loaded observations remain visible.`));
   }
 
   public updateInfrastructure(countryCode: string): void {
@@ -3498,6 +3535,7 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     this.map?.clearHighlightedRoute();
     this.scoreCard = null;
     this.currentMilitarySummary = null;
+    this.defenseIndustrialFailure = null;
     this.currentDefenseIndustrial = null;
     this.defenseIndustrialBody = null;
     this.energyBody = null;

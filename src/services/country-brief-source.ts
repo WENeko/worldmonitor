@@ -1,6 +1,6 @@
 import { IS_EMBEDDED_PREVIEW } from '@/utils/embedded-preview';
 import type { createHostCountryFetch } from './country-brief-host-transport';
-import { IntelligenceServiceClient, MarketServiceClient, MilitaryServiceClient, EconomicServiceClient, TradeServiceClient, SupplyChainServiceClient, ResilienceServiceClient, ScorecardServiceClient, PredictionServiceClient } from '@/services/generated-rpc-clients';
+import { IntelligenceServiceClient, MarketServiceClient, MilitaryServiceClient, MaritimeServiceClient, EconomicServiceClient, TradeServiceClient, SupplyChainServiceClient, ResilienceServiceClient, ScorecardServiceClient, PredictionServiceClient } from '@/services/generated-rpc-clients';
 import { getRpcBaseUrl } from '@/services/rpc-client';
 import { premiumFetch } from '@/services/premium-fetch';
 import { hasPremiumAccess } from '@/services/panel-gating';
@@ -23,6 +23,7 @@ function createCountryBriefSource(fetcher: typeof fetch & { clear?: () => void }
     economic: new EconomicServiceClient(base, options),
     trade: new TradeServiceClient(base, options),
     military: new MilitaryServiceClient(base, options),
+    vessels: new MaritimeServiceClient(base, options),
     prediction: new PredictionServiceClient(base, options),
     supply,
     food: async (code: string, signal: AbortSignal) => mode === 'website' ? (await import('@/services/resilience')).getFoodStocks({ countryCode: code, signal }) : resilience.getFoodStocks({ countryCode: code, commodity: '' }, { signal }),

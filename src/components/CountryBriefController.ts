@@ -77,13 +77,13 @@ export class CountryBriefController {
       const stock = await this.source.market.getCountryStockIndex({ countryCode: code }, { signal });
       return { ...stock, price: String(stock.price), weekChangePercent: String(stock.weekChangePercent) };
     }, stock => { latestStock = stock; this.panel.updateStock(stock); updated?.stock?.(stock); });
-    const imfPromise = this.read('economic', async signal => {
+    const imfPromise = this.read<ImfCountryBundle & { missing?: string[] }>('economic', async signal => {
       if (this.source.mode === 'website') return getImfCountryBundle(code);
       const body = await this.source.fetch('https://www.worldmonitor.app/api/bootstrap?keys=imfMacro,imfGrowth,imfLabor,imfExternal', { signal }).then(res => res.json()) as { data?: {
         imfMacro?: { countries?: Record<string, ImfMacroEntry> }; imfGrowth?: { countries?: Record<string, ImfGrowthEntry> }; imfLabor?: { countries?: Record<string, ImfLaborEntry> }; imfExternal?: { countries?: Record<string, ImfExternalEntry> };
-      } };
-      return { macro: body.data?.imfMacro?.countries?.[code] ?? null, growth: body.data?.imfGrowth?.countries?.[code] ?? null, labor: body.data?.imfLabor?.countries?.[code] ?? null, external: body.data?.imfExternal?.countries?.[code] ?? null, fetchedAt: 0 };
-    }, bundle => { this.panel.updateEconomicIndicators?.(buildImfEconomicIndicators(bundle)); if (latestStock) this.panel.updateStock(latestStock); updated?.imf?.(bundle); });
+      }; missing?: string[] };
+      return { macro: body.data?.imfMacro?.countries?.[code] ?? null, growth: body.data?.imfGrowth?.countries?.[code] ?? null, labor: body.data?.imfLabor?.countries?.[code] ?? null, external: body.data?.imfExternal?.countries?.[code] ?? null, fetchedAt: 0, missing: body.missing ?? [] };
+    }, bundle => { this.panel.updateEconomicIndicators?.(buildImfEconomicIndicators(bundle)); this.panel.setSectionCoverage?.('economic', bundle.missing ?? []); if (latestStock) this.panel.updateStock(latestStock); updated?.imf?.(bundle); });
     void this.read('facts', signal => this.source.intelligence.getCountryFacts({ countryCode: code }, { signal }), facts => this.panel.updateCountryFacts?.({ ...facts, population: Number(facts.population) }));
     void this.read('energy', signal => this.source.intelligence.getCountryEnergyProfile({ countryCode: code }, { signal }), energy => this.panel.updateEnergyProfile?.(energy));
     void this.read('maritime', signal => this.source.intelligence.getCountryPortActivity({ countryCode: code }, { signal }), maritime => this.panel.updateMaritimeActivity?.(maritime));
@@ -97,8 +97,9 @@ export class CountryBriefController {
       const url = this.source.mode === 'host' ? 'https://www.worldmonitor.app/api/bootstrap?keys=bisDsr,bisPropertyResidential,bisPropertyCommercial' : toApiUrl('/api/bootstrap?keys=bisDsr,bisPropertyResidential,bisPropertyCommercial');
       const response = await this.source.fetch(url, { signal });
       if (!response.ok) throw new Error('Housing unavailable');
-      return projectCountryHousing(await response.json(), code);
-    }, housing => this.panel.updateHousingCycle?.(housing));
+      const body = await response.json() as HousingPayload & { missing?: string[] };
+      return { ...projectCountryHousing(body, code), missing: body.missing ?? [] };
+    }, housing => { this.panel.updateHousingCycle?.(housing); this.panel.setSectionCoverage?.('housing', housing.missing); });
     this.refreshPremium();
     return { stockPromise, imfPromise };
   }

@@ -3,10 +3,13 @@ import { COUNTRY_READERS, countryReaderSchema, countryViewSchema, panelAdmission
 import { BRIEF_TOPICS } from '../../../shared/country-brief-sections';
 import { resolveCountryCode } from '../../../shared/country-code-resolve';
 import { buildAuthHeaders } from '../auth';
-import { assertToolFetchOk, RpcValidationError, throwIfBillingDenial } from '../billing-denial';
+import { assertToolFetchOk, BillingDenialError, RpcValidationError, throwIfBillingDenial } from '../billing-denial';
+import { readBoundedResponseBody } from '../bounded-body';
 import { fetchMcpDownstream } from '../downstream';
 import type { ToolDef } from '../types';
 import { COUNTRY_VIEW_UI_URI } from '../ui/news-dashboard-app';
+
+const COUNTRY_SECTION_BUDGET_BYTES = 524288;
 
 export const COUNTRY_VIEW_TOOLS: ToolDef[] = [{
   name: 'open_country_brief',
@@ -41,10 +44,10 @@ export const COUNTRY_VIEW_TOOLS: ToolDef[] = [{
   },
 }, {
   name: 'get_country_brief_section',
-  description: 'Read one fixed country-view dataset for the embedded country brief. The section chooses a reviewed reader and its bounded arguments. Returns a ready, locked or unavailable state. Native observation dates remain in value; retrievedAt only records retrieval. Does not accept URLs, headers or arbitrary RPC paths.',
+  description: 'Read one fixed country-view dataset for the embedded country brief. The section chooses a reviewed reader and its bounded arguments, including geographic flight observations, the bounded global AIS candidate snapshot and the reported fleet roster. Flight coverage follows provider redistribution permissions. Returns a ready, locked or unavailable state. Native observation dates remain in value; retrievedAt only records retrieval. Does not accept URLs, headers or arbitrary RPC paths.',
   _subscriptionOnly: true,
   _weight: 2,
-  _outputBudgetBytes: 524288,
+  _outputBudgetBytes: COUNTRY_SECTION_BUDGET_BYTES,
   _apiPaths: [...new Set(Object.values(COUNTRY_READERS).filter(reader => reader.path !== '/api/bootstrap').map(reader => `GET ${reader.path}`))],
   inputSchema: {
     type: 'object',
@@ -75,13 +78,54 @@ export const COUNTRY_VIEW_TOOLS: ToolDef[] = [{
     const reader = COUNTRY_READERS[section];
     const args = reader.args.safeParse(parsed.data.arguments);
     if (!args.success) throw new RpcValidationError('get_country_brief_section', [{ field: 'arguments', description: 'Invalid arguments for this country section.' }]);
-    const query = new URLSearchParams(Object.entries(args.data).map(([key, value]) => [key, String(value)]));
-    const url = `${base}${reader.path}${query.size ? `?${query}` : ''}`;
-    const headers = await buildAuthHeaders(context, 'GET', url, null);
-    const response = await fetchMcpDownstream(url, { headers: { ...headers, 'User-Agent': 'WorldMonitor-MCP/1.0' }, signal: AbortSignal.timeout(15_000) }, execution);
-    throwIfBillingDenial(response, section);
-    if (response.status === 401 || response.status === 403) return { state: 'locked', section, reason: 'This connection is not authorized for this section.' };
-    await assertToolFetchOk(response, section, { preserveBackoff: true });
-    return { state: 'ready', section, value: await response.json(), retrievedAt: new Date().toISOString() };
+    const bootstrapKeys = reader.path === '/api/bootstrap' && 'keys' in args.data ? args.data.keys.split(',') : undefined;
+    const queries = bootstrapKeys
+      ? bootstrapKeys.map(key => new URLSearchParams({ keys: key, public: '1' }))
+      : [new URLSearchParams(Object.entries(args.data).map(([key, value]) => [key, String(value)]))];
+    const results = await Promise.allSettled(queries.map(async query => {
+      const url = `${base}${reader.path}${query.size ? `?${query}` : ''}`;
+      const headers = bootstrapKeys ? {} : await buildAuthHeaders(context, 'GET', url, null);
+      const response = await fetchMcpDownstream(url, { headers: { ...headers, 'User-Agent': 'WorldMonitor-MCP/1.0' }, signal: AbortSignal.timeout(15_000) }, execution);
+      throwIfBillingDenial(response, section);
+      if (response.status === 401 || response.status === 403) return null;
+      await assertToolFetchOk(response, section, { preserveBackoff: true });
+      return bootstrapKeys
+        ? z.object({ data: z.record(z.string(), z.unknown()), missing: z.array(z.string()) }).parse(JSON.parse(new TextDecoder().decode(await readBoundedResponseBody(response, COUNTRY_SECTION_BUDGET_BYTES))))
+        : response.json();
+    }));
+    const denial = results.find(result => result.status === 'rejected' && result.reason instanceof BillingDenialError);
+    if (denial?.status === 'rejected') throw denial.reason;
+    if (results.some(result => result.status === 'fulfilled' && result.value === null)) return { state: 'locked', section, reason: 'This connection is not authorized for this section.' };
+    const failure = results.find(result => result.status === 'rejected');
+    if (failure?.status === 'rejected' && (!bootstrapKeys || results.every(result => result.status === 'rejected'))) throw failure.reason;
+    const values = results.map(result => result.status === 'fulfilled' ? result.value : undefined);
+    const retrievedAt = new Date().toISOString();
+    let value = values[0];
+    if (bootstrapKeys) {
+      const data: Record<string, unknown> = {};
+      const missing: string[] = [];
+      values.forEach((body, index) => {
+        const key = bootstrapKeys[index]!;
+        if (body === undefined) { missing.push(key); return; }
+        const result = body;
+        if (result.missing.includes(key) || result.data[key] === undefined || result.data[key] === null) missing.push(key);
+        else {
+          const candidate = { ...data, [key]: result.data[key] };
+          const candidateMissing = bootstrapKeys.filter(name => !(name in candidate));
+          const candidateResult = { state: 'ready', section, value: { data: candidate, missing: candidateMissing }, retrievedAt };
+          if (new TextEncoder().encode(JSON.stringify(candidateResult)).byteLength > COUNTRY_SECTION_BUDGET_BYTES) missing.push(key);
+          else data[key] = result.data[key];
+        }
+      });
+      if (!Object.keys(data).length) {
+        if (failure?.status === 'rejected') throw failure.reason;
+        return { state: 'unavailable', section, reason: 'These country datasets are currently unavailable.' };
+      }
+      value = { data, missing };
+    }
+    if (section === 'flights' && (!Array.isArray(value?.flights) || (!value.flights.length && !(parsed.data.arguments?.cursor && value.pagination?.totalCount > 0)))) return { state: 'unavailable', section, reason: 'Flight observations are unavailable or unconfirmed. An empty provider response is not evidence of zero activity.' };
+    if (section === 'fleet' && !value?.report) return { state: 'unavailable', section, reason: 'The reported fleet roster is unavailable.' };
+    if (section === 'vessels' && (!value?.dataAvailable || !value.snapshot?.status?.connected || !Number.isFinite(value.snapshot.snapshotAt) || value.snapshot.snapshotAt <= 0 || Date.now() - value.snapshot.snapshotAt > 3_600_000 || value.snapshot.snapshotAt > Date.now() + 300_000)) return { state: 'unavailable', section, reason: 'The live AIS snapshot is unavailable or stale.' };
+    return { state: 'ready', section, value, retrievedAt };
   },
 }];

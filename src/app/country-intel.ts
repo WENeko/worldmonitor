@@ -1,3 +1,4 @@
+import { COUNTRY_ACTIVITY_BOUNDS, isCountryActivityCoordinate, projectCountryMilitaryActivity } from '@/services/country-military-activity';
 import { CountryBriefController, projectChinaCountrySummary } from '@/components/CountryBriefController';
 import { createWebsiteCountryBriefSource } from '@/services/country-brief-source';
 import { hasTemporalBaselineSnapshot } from '@/services/temporal-baseline';
@@ -31,10 +32,7 @@ import {
   getCountryAtCoordinates,
   getCountryCentroid,
   hasCountryGeometry,
-  isCoordinateInCountry,
   ME_STRIKE_BOUNDS,
-  iso3ToIso2Code,
-  nameToCountryCode,
   preloadCountryGeometry,
 } from '@/services/country-geometry';
 import { getCountryData, TIER1_COUNTRIES, type CountryScore } from '@/services/country-instability';
@@ -66,8 +64,8 @@ import {
   type BriefSource,
 } from '@/utils/brief-sources';
 import type { IntelBriefEvidence } from '@/utils/format-intel-brief';
-import { getNearbyInfrastructure, preloadInfrastructureTables } from '@/services/related-assets';
-import { getCachedMilitaryBases, preloadMilitaryBases } from '@/services/military-base-config';
+import { preloadInfrastructureTables } from '@/services/related-assets';
+import { preloadMilitaryBases } from '@/services/military-base-config';
 import { toFlagEmoji } from '@/utils/country-flag';
 import { buildDependencyGraph } from '@/services/infrastructure-cascade';
 import { getActiveFrameworkForPanel, subscribeFrameworkChange } from '@/services/analysis-framework-store';
@@ -1296,38 +1294,7 @@ export class CountryIntelManager implements AppModule {
   }
 
   private buildMilitarySummary(code: string, country: string): CountryDeepDiveMilitarySummary {
-    const hasGeoShape = hasCountryGeometry(code) || !!CountryIntelManager.COUNTRY_BOUNDS[code];
-    const flights = this.ctx.intelligenceCache.military?.flights ?? [];
-    const vessels = this.ctx.intelligenceCache.military?.vessels ?? [];
-
-    const flightsInCountry = flights.filter((flight) =>
-      hasGeoShape ? this.isInCountry(flight.lat, flight.lon, code) : this.sameCountry(code, country, flight.operatorCountry)
-    );
-    const ownFlights = flightsInCountry.filter((flight) => this.sameCountry(code, country, flight.operatorCountry)).length;
-    const foreignFlights = Math.max(0, flightsInCountry.length - ownFlights);
-
-    const vesselsInCountry = vessels.filter((vessel) =>
-      hasGeoShape ? this.isInCountry(vessel.lat, vessel.lon, code) : this.sameCountry(code, country, vessel.operatorCountry)
-    );
-    const foreignVessels = vesselsInCountry.filter((vessel) => !this.sameCountry(code, country, vessel.operatorCountry)).length;
-
-    const centroid = getCountryCentroid(code, CountryIntelManager.COUNTRY_BOUNDS);
-    const nearbyBases = centroid
-      ? getNearbyInfrastructure(centroid.lat, centroid.lon, ['base']).slice(0, 3).map((base) => ({
-        id: base.id,
-        name: base.name,
-        distanceKm: base.distanceKm,
-        country: getCachedMilitaryBases().find((entry) => entry.id === base.id)?.country,
-      }))
-      : [];
-
-    return {
-      ownFlights,
-      foreignFlights,
-      nearbyVessels: vesselsInCountry.length,
-      nearestBases: nearbyBases,
-      foreignPresence: foreignFlights > 0 || foreignVessels > 0,
-    };
+    return projectCountryMilitaryActivity(code, country, this.ctx.intelligenceCache.military?.flights ?? [], this.ctx.intelligenceCache.military?.vessels ?? []);
   }
 
   private buildEconomicIndicators(
@@ -1395,26 +1362,6 @@ export class CountryIntelManager implements AppModule {
     return indicators.slice(0, 6);
   }
 
-  private sameCountry(code: string, country: string, raw: string | undefined): boolean {
-    if (!raw) return false;
-    const normalized = raw.trim();
-    if (!normalized) return false;
-
-    const upper = normalized.toUpperCase();
-    if (upper === code) return true;
-    if (upper.length === 3) {
-      const iso2 = iso3ToIso2Code(upper);
-      if (iso2 === code) return true;
-    }
-
-    const fromName = nameToCountryCode(normalized.toLowerCase());
-    if (fromName === code) return true;
-
-    const countryLower = country.toLowerCase();
-    const rawLower = normalized.toLowerCase();
-    return rawLower === countryLower || CountryIntelManager.countryTermIndex(rawLower, countryLower) !== -1;
-  }
-
   private mapSignalType(type: string): CountryDeepDiveSignalDetails['recentHigh'][number]['type'] {
     if (type === 'military_flight' || type === 'military_vessel') return 'MILITARY';
     if (type === 'protest') return 'PROTEST';
@@ -1477,13 +1424,7 @@ export class CountryIntelManager implements AppModule {
   }
 
   private isInCountry(lat: number, lon: number, code: string): boolean {
-    const precise = isCoordinateInCountry(lat, lon, code);
-    if (precise === true) return true;
-    // When precise geometry returns false (coastal/polygon precision) or null (not loaded),
-    // fall through to bounding box — matches CII's coordsToBoundsCountry fallback
-    const b = CountryIntelManager.COUNTRY_BOUNDS[code];
-    if (!b) return false;
-    return lat >= b.s && lat <= b.n && lon >= b.w && lon <= b.e;
+    return isCountryActivityCoordinate(lat, lon, code);
   }
 
   // Near = bounding-box padded by ~2° (~220 km). Captures vessels/aircraft in
@@ -1498,20 +1439,7 @@ export class CountryIntelManager implements AppModule {
     return lat >= b.s - pad && lat <= b.n + pad && lon >= b.w - pad && lon <= b.e + pad;
   }
 
-  static COUNTRY_BOUNDS: Record<string, { n: number; s: number; e: number; w: number }> = {
-    ...ME_STRIKE_BOUNDS,
-    CN: { n: 53.6, s: 18.2, e: 134.8, w: 73.5 }, TW: { n: 25.3, s: 21.9, e: 122, w: 120 },
-    JP: { n: 45.5, s: 24.2, e: 153.9, w: 122.9 }, KR: { n: 38.6, s: 33.1, e: 131.9, w: 124.6 },
-    KP: { n: 43.0, s: 37.7, e: 130.7, w: 124.2 }, IN: { n: 35.5, s: 6.7, e: 97.4, w: 68.2 },
-    PK: { n: 37, s: 24, e: 77, w: 61 }, AF: { n: 38.5, s: 29.4, e: 74.9, w: 60.5 },
-    UA: { n: 52.4, s: 44.4, e: 40.2, w: 22.1 }, RU: { n: 82, s: 41.2, e: 180, w: 19.6 },
-    BY: { n: 56.2, s: 51.3, e: 32.8, w: 23.2 }, PL: { n: 54.8, s: 49, e: 24.1, w: 14.1 },
-    EG: { n: 31.7, s: 22, e: 36.9, w: 25 }, LY: { n: 33, s: 19.5, e: 25, w: 9.4 },
-    SD: { n: 22, s: 8.7, e: 38.6, w: 21.8 }, US: { n: 49, s: 24.5, e: -66.9, w: -125 },
-    GB: { n: 58.7, s: 49.9, e: 1.8, w: -8.2 }, DE: { n: 55.1, s: 47.3, e: 15.0, w: 5.9 },
-    FR: { n: 51.1, s: 41.3, e: 9.6, w: -5.1 }, TR: { n: 42.1, s: 36, e: 44.8, w: 26 },
-    BR: { n: 5.3, s: -33.8, e: -34.8, w: -73.9 },
-  };
+  static COUNTRY_BOUNDS = COUNTRY_ACTIVITY_BOUNDS;
 
   // The alias table and the matching rules moved to
   // shared/country-headline-match.ts (#7526) so the country-coverage RPC can

@@ -65,6 +65,114 @@ describe('country view MCP boundary', () => {
     ]) assert.equal((await invoke('get_country_brief_section', args)).body.error.code, -32602);
     assert.equal(requests.length, 0);
   });
+  it('loads IMF and housing through the real public bootstrap boundary within one paid country request', async () => {
+    const bootstrap = (await import('../api/bootstrap.js')).default;
+    const { BOOTSTRAP_CACHE_KEYS } = await import('../api/_bootstrap-tier-keys.js');
+    const datasets = {
+      imfMacro: { countries: { US: { inflationPct: 2.5, year: 2026 } } },
+      imfGrowth: { countries: { US: { realGdpGrowthPct: 1.8, year: 2026 } } },
+      imfLabor: { countries: { US: { unemploymentPct: 4.1, year: 2026 } } },
+      imfExternal: { countries: { US: { exportsUsd: 123, year: 2026 } } },
+      bisDsr: { entries: [{ countryCode: 'US', dsrPct: 11.5, period: '2026-Q1' }] },
+      bisPropertyResidential: { entries: [{ countryCode: 'US', indexValue: 150, period: '2026-Q1' }] },
+      bisPropertyCommercial: { entries: [{ countryCode: 'US', indexValue: 110, period: '2026-Q1' }] },
+    };
+    process.env.UPSTASH_REDIS_REST_URL = 'https://country-bootstrap-redis.test';
+    process.env.UPSTASH_REDIS_REST_TOKEN = 'controlled-bootstrap-token';
+    globalThis.fetch = async (url, init) => {
+      if (new URL(url).origin === 'https://country-bootstrap-redis.test') {
+        const commands = JSON.parse(init.body);
+        return Response.json(commands.map(([, key]) => ({ result: JSON.stringify(datasets[Object.keys(datasets).find(name => BOOTSTRAP_CACHE_KEYS[name] === key)]) })));
+      }
+      requests.push({ url: String(url), init });
+      return bootstrap(new Request(url, init));
+    };
+    const { deps, pipe } = makeProDeps();
+    const invokePaid = async (name, args) => (await handler(proReq('POST', callBody(name, args)), deps)).json();
+    const opened = await invokePaid('open_country_brief', { country_code: 'US' });
+    const panel_request = opened.result.structuredContent.panelRequest.token;
+    for (const [section, keys] of [
+      ['imf', 'imfMacro,imfGrowth,imfLabor,imfExternal'],
+      ['housing', 'bisDsr,bisPropertyResidential,bisPropertyCommercial'],
+    ]) {
+      const args = { section, arguments: { keys }, panel_request };
+      const result = (await invokePaid('get_country_brief_section', args)).result?.structuredContent;
+      assert.equal(result?.state, 'ready', `${section} must accept paid MCP without an API key`);
+      assert.deepEqual(result.value, { data: Object.fromEntries(keys.split(',').map(key => [key, datasets[key]])), missing: [] });
+      await invokePaid('get_country_brief_section', args);
+    }
+    assert.equal(pipe.count, 1);
+    assert.equal(requests.length, 7);
+    for (const { url, init } of requests) {
+      assert.equal(new URL(url).searchParams.get('public'), '1');
+      assert.equal(new URL(url).searchParams.get('keys').includes(','), false);
+      assert.equal(new Headers(init.headers).get('X-WM-MCP-User-Id'), null);
+      assert.equal(new Headers(init.headers).get('X-WorldMonitor-Key'), null);
+    }
+  });
+  for (const partial of [false, true]) it(`retries ${partial ? 'partial' : 'missing'} bootstrap data under the same country allocation`, async () => {
+    let recovered = false;
+    globalThis.fetch = async (url, init) => {
+      requests.push({ url: String(url), init });
+      const key = new URL(url).searchParams.get('keys');
+      const missing = !recovered && (!partial || key === 'imfGrowth');
+      return Response.json({ data: missing ? {} : { [key]: { countries: { US: { year: 2026 } } } }, missing: missing ? [key] : [] });
+    };
+    const { deps, pipe } = makeProDeps();
+    const invokePaid = async (name, args) => (await handler(proReq('POST', callBody(name, args)), deps)).json();
+    const opened = await invokePaid('open_country_brief', { country_code: 'US' });
+    const args = { section: 'imf', arguments: { keys: 'imfMacro,imfGrowth,imfLabor,imfExternal' }, panel_request: opened.result.structuredContent.panelRequest.token };
+    const first = (await invokePaid('get_country_brief_section', args)).result.structuredContent;
+    assert.equal(first.state, partial ? 'ready' : 'unavailable');
+    if (partial) {
+      assert.deepEqual(first.value.missing, ['imfGrowth']);
+      assert.equal(first.value.data.imfMacro.countries.US.year, 2026);
+    }
+    recovered = true;
+    const second = (await invokePaid('get_country_brief_section', args)).result.structuredContent;
+    assert.equal(second.state, 'ready');
+    assert.deepEqual(second.value.missing, []);
+    await invokePaid('get_country_brief_section', args);
+    assert.equal(requests.filter(request => new URL(request.url).pathname === '/api/bootstrap').length, 8);
+    assert.equal(pipe.count, 1);
+  });
+  it('preserves bootstrap backoff and rejects oversized or malformed upstream payloads', async () => {
+    const args = { section: 'housing', arguments: { keys: 'bisDsr,bisPropertyResidential,bisPropertyCommercial' } };
+    globalThis.fetch = async () => new Response('temporarily unavailable', { status: 503, headers: { 'Retry-After': '7' } });
+    const backoff = await invoke('get_country_brief_section', args);
+    assert.equal(backoff.response.status, 503);
+    assert.equal(backoff.response.headers.get('Retry-After'), '7');
+    for (const response of [() => Response.json({}), () => new Response('x'.repeat(524289))]) {
+      globalThis.fetch = async () => response();
+      const failed = await invoke('get_country_brief_section', args);
+      assert.ok(failed.body.error);
+      assert.equal(failed.body.result, undefined);
+    }
+  });
+  it('retains successful siblings when one bootstrap dataset fails', async () => {
+    for (const failure of [() => new Response('unavailable', { status: 503 }), () => { throw new DOMException('Timed out', 'TimeoutError'); }, () => Response.json({})]) {
+      globalThis.fetch = async url => new URL(url).searchParams.get('keys') === 'imfGrowth'
+        ? failure() : Response.json({ data: { [new URL(url).searchParams.get('keys')]: { countries: { US: { year: 2026 } } } }, missing: [] });
+      const { body } = await invoke('get_country_brief_section', { section: 'imf', arguments: { keys: 'imfMacro,imfGrowth,imfLabor,imfExternal' } });
+      assert.equal(body.result.structuredContent.state, 'ready');
+      assert.deepEqual(body.result.structuredContent.value.missing, ['imfGrowth']);
+      assert.equal(body.result.structuredContent.value.data.imfMacro.countries.US.year, 2026);
+      assert.equal(body.result.structuredContent.value.data.imfGrowth, undefined);
+    }
+  });
+  it('bounds the assembled bootstrap result while keeping fitting datasets visible', async () => {
+    globalThis.fetch = async url => {
+      const key = new URL(url).searchParams.get('keys');
+      return Response.json({ data: { [key]: { countries: { US: { year: 2026 } }, padding: '測'.repeat(60000) } }, missing: [] });
+    };
+    const { body } = await invoke('get_country_brief_section', { section: 'imf', arguments: { keys: 'imfMacro,imfGrowth,imfLabor,imfExternal' } });
+    const result = body.result.structuredContent;
+    assert.equal(result.state, 'ready');
+    assert.equal(result._budget_exceeded, undefined);
+    assert.deepEqual(Object.keys(result.value.data), ['imfMacro', 'imfGrowth']);
+    assert.deepEqual(result.value.missing, ['imfLabor', 'imfExternal']);
+    assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 524288);
+  });
   it('serves only the fixed country build with no credentials and a separate CSP', async () => {
     const { readCountryView, COUNTRY_VIEW_META } = await import('../api/mcp/ui/news-dashboard-app.ts');
     globalThis.fetch = async (url, init) => {

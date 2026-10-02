@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { HMAC_SECRET, callBody, makeProDeps, proReq } from './helpers/mcp-pro-deps.mjs';
 import { admitCountryPanel, authorizePanelRead, PANEL_READ_LIMIT } from '../api/mcp/panel-requests.ts';
+import { countryActivityQueries } from '../shared/country-activity-query.ts';
 import { envPrefix } from '../server/_shared/pro-mcp-token.ts';
 
 const originalFetch = globalThis.fetch;
@@ -16,7 +17,13 @@ describe('paid country workflow through the MCP handler', () => {
     process.env.MCP_INTERNAL_HMAC_SECRET = HMAC_SECRET;
     process.env.MCP_TELEMETRY = 'false';
     fetched = [];
-    globalThis.fetch = async url => { fetched.push(String(url)); return Response.json({ countryCode: 'US', available: true }); };
+    globalThis.fetch = async url => {
+      fetched.push(String(url));
+      const parsed = new URL(url);
+      return Response.json(parsed.pathname === '/api/bootstrap'
+        ? { data: { [parsed.searchParams.get('keys')]: { available: true } }, missing: [] }
+        : { countryCode: 'US', available: true });
+    };
     handler = (await import('../api/mcp.ts')).mcpHandler;
   });
   afterEach(() => {
@@ -82,13 +89,70 @@ describe('paid country workflow through the MCP handler', () => {
       const read = await invoke(deps, 'get_country_brief_section', { section, arguments: args, panel_request: token });
       assert.equal(read.body.result?.structuredContent?.state, 'ready', `included reader ${section}`);
     }
-    assert.equal(fetched.length, readers.length);
+    assert.equal(fetched.length, readers.length + 5);
     assert.equal(pipe.count, 1);
     for (const name of ['get_country_brief', 'get_country_coverage']) {
       const read = await authorizePanelRead(context, pipe.pipeline, name, { country_code: 'US' }, token);
       await read.save({ countryCode: 'US', brief: 'Controlled assessment', headlines: [] });
       assert.equal((await authorizePanelRead(context, pipe.pipeline, name, { country_code: 'US' }, token)).cached.countryCode, 'US');
     }
+    assert.equal(pipe.count, 1);
+  });
+  it('includes country flight, AIS and roster reads in one allocation and denies a different viewport', async () => {
+    globalThis.fetch = async url => {
+      fetched.push(String(url));
+      const path = new URL(url).pathname;
+      return Response.json(path.endsWith('list-military-flights') ? { flights: [{ id: 'controlled' }] }
+        : path.endsWith('get-vessel-snapshot') ? { dataAvailable: true, snapshot: { snapshotAt: Date.now(), status: { connected: true } } }
+          : { report: { vessels: [] } });
+    };
+    const { deps, pipe } = makeProDeps();
+    const opened = await invoke(deps, 'open_country_brief', { country_code: 'US' });
+    const panel_request = opened.body.result.structuredContent.panelRequest.token;
+    const bounds = countryActivityQueries('US')[0];
+    for (const section of ['flights', 'vessels', 'fleet']) {
+      const args = section === 'flights' ? bounds : {};
+      const read = await invoke(deps, 'get_country_brief_section', { section, arguments: args, panel_request });
+      assert.equal(read.body.result?.structuredContent?.state, 'ready', section);
+      assert.equal(pipe.count, 1);
+    }
+    const oversized = await invoke(deps, 'get_country_brief_section', { section: 'vessels', arguments: bounds, panel_request });
+    assert.equal(oversized.body.error?.code, -32602);
+    const fetchedBefore = fetched.length;
+    const denied = await invoke(deps, 'get_country_brief_section', { section: 'flights', arguments: countryActivityQueries('CN')[0], panel_request });
+    assert.equal(denied.body.error?.code, -32602);
+    assert.equal(fetched.length, fetchedBefore);
+    assert.equal(pipe.count, 1);
+    for (const argumentsValue of [{ ...bounds, page_size: 1000 }, { ...bounds, operator: 'MILITARY_OPERATOR_USAF' }, { ...bounds, include_tankers: 'true' }]) {
+      const rejected = await invoke(deps, 'get_country_brief_section', { section: 'flights', arguments: argumentsValue, panel_request });
+      assert.equal(rejected.body.error?.code, -32602);
+    }
+  });
+  it('accepts an empty completed flight continuation but rejects the provider failure sentinel', async () => {
+    const { deps, pipe } = makeProDeps();
+    const opened = await invoke(deps, 'open_country_brief', { country_code: 'US' });
+    const panel_request = opened.body.result.structuredContent.panelRequest.token;
+    const args = { section: 'flights', arguments: { ...countryActivityQueries('US')[0], cursor: '1' }, panel_request };
+    globalThis.fetch = async () => Response.json({ flights: [], pagination: { nextCursor: '', totalCount: 1 } });
+    assert.equal((await invoke(deps, 'get_country_brief_section', args)).body.result?.structuredContent?.state, 'ready');
+    globalThis.fetch = async () => Response.json({ flights: [], pagination: { nextCursor: '', totalCount: 0 } });
+    args.arguments.cursor = '2';
+    assert.equal((await invoke(deps, 'get_country_brief_section', args)).body.result?.structuredContent?.state, 'unavailable');
+    assert.equal(pipe.count, 1);
+  });
+  it('does not cache unavailable military observations within a paid country request', async () => {
+    const { deps, pipe } = makeProDeps();
+    const opened = await invoke(deps, 'open_country_brief', { country_code: 'US' });
+    const panel_request = opened.body.result.structuredContent.panelRequest.token;
+    globalThis.fetch = async url => { fetched.push(String(url)); return Response.json({ flights: [], dataAvailable: false }); };
+    for (const section of ['flights', 'vessels', 'fleet']) {
+      const argumentsValue = section === 'flights' ? countryActivityQueries('US')[0] : {};
+      for (let i = 0; i < 2; i++) {
+        const read = await invoke(deps, 'get_country_brief_section', { section, arguments: argumentsValue, panel_request });
+        assert.equal(read.body.result?.structuredContent?.state, 'unavailable');
+      }
+    }
+    assert.equal(fetched.length, 6);
     assert.equal(pipe.count, 1);
   });
   it('returns HTTP 429 with Retry-After at the read ceiling and does not fetch or charge again', async () => {

@@ -229,7 +229,7 @@ const EXCLUDED_FROM_MCP_PARITY = new Map([
   ["POST /api/economic/v1/get-fred-series-batch",
     "manual-mapping: parameterized cache key not statically resolvable — equivalent data covered by sibling cache tool at the prefix level"],
 
-  // === deferred-to-future-tool (58) ===
+  // === deferred-to-future-tool (57) ===
   ["GET /api/news/v1/list-country-headlines",
     "deferred-to-future-tool: country snapshot capture reads existing full RSS caches; a future country_headlines tool can expose this uncapped country pool"],
   ["GET /api/consumer-prices/v1/get-consumer-price-basket-series",
@@ -315,8 +315,6 @@ const EXCLUDED_FROM_MCP_PARITY = new Map([
     "deferred-to-future-tool: pure-read but no MCP tool exposes market:defi-tokens:v1 yet — bundle into a future expanded-domain tool"],
   ["GET /api/market/v1/list-other-tokens",
     "deferred-to-future-tool: pure-read but no MCP tool exposes market:other-tokens:v1 yet — bundle into a future expanded-domain tool"],
-  ["GET /api/military/v1/get-usni-fleet-report",
-    "deferred-to-future-tool: pure-read but no MCP tool exposes usni-fleet:sebuf:v1 yet — bundle into a future expanded-domain tool"],
   ["GET /api/military/v1/list-defense-patents",
     "deferred-to-future-tool: pure-read but no MCP tool exposes patents:defense:latest yet — bundle into a future expanded-domain tool"],
   ["GET /api/resilience/v1/get-runtime-manifest",
