@@ -35,6 +35,7 @@ let applyingTimeRange = false;
 let modelContext = false;
 let sourceSelect: HTMLSelectElement;
 let categorySelect: HTMLSelectElement;
+let countryBriefButton: HTMLButtonElement;
 let serverTools = false;
 let openLinks = false;
 let hazardSnapshot: PluginHazardSnapshot | undefined;
@@ -213,6 +214,8 @@ async function updateView(next: PluginNewsView, reset: boolean): Promise<object>
   if (reset && !next.country) map.clearCountryHighlight();
   renderDigest();
   if (next.query !== undefined) { search.open(); search.applyQuery(next.query); }
+  countryBriefButton.disabled = !view.country;
+  countryBriefButton.textContent = view.country ? `${view.country} country brief` : 'Select a country for its brief';
   const receipt = { applied: true, view, center: map.getCenter(), map: map.getState(), ...(hazardSnapshot && activeSources.length ? { hazardSnapshot: { coverage, loadedAt: hazardSnapshot.loadedAt, scope: 'global', limitPerSource: hazardSnapshot.limitPerSource } } : {}), ...(renderer ? { renderer } : {}) };
   if (modelContext) void request('ui/update-model-context', { content: [{ type: 'text', text: JSON.stringify(receipt) }] }).catch(() => {});
   return receipt;
@@ -296,6 +299,16 @@ async function start(): Promise<void> {
     if (key === 'source') sourceSelect = select;
     else categorySelect = select;
   }
+  countryBriefButton = document.createElement('button');
+  countryBriefButton.type = 'button';
+  countryBriefButton.className = 'search-btn';
+  countryBriefButton.disabled = true;
+  countryBriefButton.textContent = 'Select a country for its brief';
+  countryBriefButton.addEventListener('click', () => {
+    if (!view.country) return;
+    void request('ui/message', { content: [{ type: 'text', text: `Open the WorldMonitor country brief for ${view.country}.` }] }).catch(() => { status.textContent = 'This host cannot open the country brief. Ask for this country’s brief in the conversation.'; });
+  });
+  document.getElementById('pluginActions')!.appendChild(countryBriefButton);
   const clear = document.createElement('button');
   clear.type = 'button';
   clear.className = 'search-btn';

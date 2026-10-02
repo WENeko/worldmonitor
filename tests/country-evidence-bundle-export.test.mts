@@ -621,7 +621,7 @@ describe('country evidence bundle export', () => {
 
     assert.match(dossierSource, /exportCountryEvidenceMarkdown/);
     assert.match(dossierSource, /cdp-evidence-export-btn/);
-    assert.match(dossierSource, /if \(!hasPremiumAccess\(getAuthState\(\)\)\)/);
+    assert.match(dossierSource, /if \(!this\.canRequestPremium\(\)\)/);
     assert.match(dossierSource, /trackGateHit\('evidence-export'\)/);
     assert.match(dossierSource, /this\.exportEvidenceBundle\(\)/);
     assert.match(dossierSource, /exportCountryEvidenceMarkdown\(data\)/);

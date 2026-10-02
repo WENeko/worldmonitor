@@ -14704,6 +14704,12 @@
           "path": "src/app/panel-layout.ts"
         },
         {
+          "path": "src/components/CountryBriefController.ts"
+        },
+        {
+          "path": "src/components/CountryDeepDivePanel.ts"
+        },
+        {
           "path": "src/components/RuntimeConfigPanel.ts"
         },
         {
@@ -14717,6 +14723,15 @@
         },
         {
           "path": "src/embed/embed-url.ts"
+        },
+        {
+          "path": "src/plugin-country-main.ts"
+        },
+        {
+          "path": "src/services/country-brief-host-transport.ts"
+        },
+        {
+          "path": "src/services/country-brief-source.ts"
         }
       ]
     },

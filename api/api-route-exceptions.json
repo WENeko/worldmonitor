@@ -10,6 +10,13 @@
       "removal_issue": null
     },
     {
+      "path": "api/mcp/registry/country-view.ts",
+      "category": "external-protocol",
+      "reason": "MCP country-view tool definitions and fixed section readers. The external MCP protocol defines the tool/resource envelopes; this module exports no HTTP route and reads existing sebuf RPCs plus fixed bootstrap datasets.",
+      "owner": "@koala73",
+      "removal_issue": null
+    },
+    {
       "path": "api/ask.ts",
       "category": "external-protocol",
       "reason": "NLWeb /ask endpoint (Microsoft NLWeb protocol) — request/response envelope (_meta {response_type, version}, SSE start/result/complete event stream) dictated by the NLWeb spec, not something we can redefine as proto. Anonymous discovery answers over the public MCP tool catalog only; per-IP limit registered in ENDPOINT_RATE_POLICIES and enforced in-handler.",

@@ -6,6 +6,7 @@ import { compressDescription, utf8ByteLength } from '../utils';
 import { CACHE_TOOLS } from './cache-tools';
 import { NLP_TOOLS } from './nlp-tools';
 import { RPC_TOOLS } from './rpc-tools';
+import { COUNTRY_VIEW_TOOLS } from './country-view';
 import { NEWS_DASHBOARD_TOOLS } from './news-dashboard';
 import { SOURCE_TOOLS } from './source-tools';
 import { MACRO_TOOLS } from './macro-tools';
@@ -19,7 +20,7 @@ import { PUBLIC_DOMAIN_TOOLS } from './public-domain-tools';
 // returns the available-list sorted before responding. NLP_TOOLS is appended
 // last so extracting it from rpc-tools.ts left every other tool's position
 // unchanged. SOURCE_TOOLS is appended after it for the same reason.
-export const TOOL_REGISTRY: ToolDef[] = [...CACHE_TOOLS, ...RPC_TOOLS, ...NLP_TOOLS, ...SOURCE_TOOLS, ...NEWS_DASHBOARD_TOOLS, ...MACRO_TOOLS, ...STOCK_TOOLS, ...COST_SHOCK_TOOLS, ...PUBLIC_DOMAIN_TOOLS];
+export const TOOL_REGISTRY: ToolDef[] = [...CACHE_TOOLS, ...RPC_TOOLS, ...NLP_TOOLS, ...SOURCE_TOOLS, ...NEWS_DASHBOARD_TOOLS, ...MACRO_TOOLS, ...STOCK_TOOLS, ...COST_SHOCK_TOOLS, ...PUBLIC_DOMAIN_TOOLS, ...COUNTRY_VIEW_TOOLS];
 export const FREE_TIER_TOOL_NAMES: ReadonlySet<string> = new Set(
   TOOL_REGISTRY.filter((tool) => tool._freeTier === true).map((tool) => tool.name),
 );

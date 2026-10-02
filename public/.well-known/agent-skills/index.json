@@ -54,9 +54,9 @@
     {
       "name": "fetch-country-brief",
       "type": "skill-md",
-      "description": "Retrieve the current AI-generated strategic intelligence brief for a country, keyed by ISO 3166-1 alpha-2 code. Use when the user asks for a summary of the current geopolitical, economic, or security situation in a specific country.",
+      "description": "Open the WorldMonitor country interface in a UI-capable MCP host. Use the text assessment endpoint for explicit text-only requests or clients without embedded UI.",
       "url": "https://worldmonitor.app/.well-known/agent-skills/fetch-country-brief/SKILL.md",
-      "digest": "sha256:da0911e598596a393f956f84d2903f340565ae9d3b14411d1812fadd1aa2bf4c"
+      "digest": "sha256:a5b9c7bb0059c4b7bf582870b1e62650fe1e1ab7ad3be893f4534894fa482aa9"
     },
     {
       "name": "fetch-news-digest",

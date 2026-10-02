@@ -545,7 +545,8 @@ for (const currentPopularity of [0, undefined]) {
     const missing = { ...validResponse.data[0], current_popularity: currentPopularity, percentage_of_usual: 0 };
     run.state.source = { success: true, data: [missing] };
     await advance(run);
-    assert.deepEqual(run.state.cache, previous, 'all missing signals must preserve expiry');
+    assert.deepEqual(run.state.cache.get(payloadKey), previous.get(payloadKey), 'all missing signals must preserve expiry');
+    assert.equal(run.state.cache.get(metaKey).data.lastLiveAt, previous.get(metaKey).data.lastLiveAt, 'no data never renews lastLiveAt');
     run.state.source.data.push({ ...validResponse.data[0], place_id: 'normal', current_popularity: 100, percentage_of_usual: 100 });
     await advance(run);
     const status = run.state.cache.get(payloadKey).data.data.pizzint;
@@ -790,6 +791,20 @@ test('quiet hours keep health OK after the live payload expires', async () => {
   assert.equal(meta.recordCount, 0);
   assert.equal(meta.lastLiveAt, payload.data.data.pizzint.updatedAt, 'lastLiveAt is carried, not refreshed');
   assert.equal(classifyPizzint(run.state).status, 'OK');
+});
+
+test('PizzINT answering with only missing live values keeps the capped heartbeat, like BestTime', async () => {
+  const run = harness();
+  await run.seed();
+  const lastLiveAt = run.state.cache.get(metaKey).data.lastLiveAt;
+  run.state.source = { success: true, data: [{ ...validResponse.data[0], current_popularity: 0, percentage_of_usual: 0 }] };
+  for (let tick = 0; tick < 8; tick++) await advance(run);
+  const meta = run.state.cache.get(metaKey).data;
+  assert.equal(meta.fetchedAt, run.state.now, 'PizzINT answered, so the heartbeat advances');
+  assert.equal(meta.lastLiveAt, lastLiveAt);
+  assert.equal(classifyPizzint(run.state).status, 'OK', 'an overnight PizzINT poll is quiet hours, not an outage');
+  while (run.state.now - lastLiveAt < 25 * 60 * 60_000) await advance(run);
+  assert.equal(classifyPizzint(run.state).status, 'STALE_SEED', 'the 24h lastLiveAt cap still catches dead sensors');
 });
 
 test('quiet hours stop counting as healthy 24 hours after the last live reading', async () => {

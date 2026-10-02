@@ -2025,7 +2025,7 @@ export const CACHE_TOOLS: ToolDef[] = [
   {
     name: 'get_energy_intelligence',
     _outputBudgetBytes: 131072,
-    description: 'Energy supply, prices, storage, disruptions, and policy: EIA petroleum stocks, electricity prices (Ember), gas storage (GIE), fuel shortages, fossil & renewable shares, active energy disruptions, government crisis policies.',
+    description: 'Energy supply, prices, storage, disruptions, and policy: EIA petroleum stocks, electricity prices (Ember), national natural-gas storage (GIE), fuel shortages, fossil & renewable shares, active energy disruptions, government crisis policies. Gas-storage observations include country fill percentage, stored TWh and observation date; _countries is only a coverage index. Null observations mean unavailable, not zero.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2056,10 +2056,25 @@ export const CACHE_TOOLS: ToolDef[] = [
     //   resilience:fossil-electricity-share:v1   -> fossil-electricity-share
     //   economic:worldbank-renewable:v1          -> worldbank-renewable
     outputSchema: cacheEnvelope({
-      'eia-petroleum': { type: ['object', 'null'] },
+      'eia-petroleum': { type: ['object', 'null'], additionalProperties: {
+        type: 'object', properties: {
+          current: { type: 'number' }, previous: { type: ['number', 'null'] }, date: { type: 'string' },
+          unit: { type: 'string', description: 'Source unit. Stocks and production use thousand barrels and thousand barrels per day; prices use USD per barrel.' },
+        },
+      } },
       index: { type: ['object', 'null'], properties: { regions: { type: 'array', items: { type: 'object' } } } },
       _all: { type: ['object', 'null'] },
       _countries: { type: ['array', 'object', 'null'] },
+      'gas-storage': { type: ['object', 'null'], additionalProperties: {
+        type: 'object', properties: {
+          iso2: { type: 'string' }, countryName: { type: 'string' },
+          fillPct: { type: 'number', description: 'National natural-gas storage fill percentage.' },
+          fillPctChange1d: { type: 'number', description: 'Change in percentage points.' },
+          gasTwh: { type: 'number', description: 'Stored natural gas in terawatt-hours.' },
+          trend: { type: 'string' }, date: { type: 'string', description: 'Observation date.' },
+          seededAt: { type: 'string' },
+        },
+      } },
       'fuel-shortages': { type: ['object', 'null'], properties: { shortages: { type: ['object', 'array', 'null'] } } },
       disruptions: { type: ['object', 'null'], properties: { events: { type: ['object', 'array', 'null'] } } },
       'crisis-policies': { type: ['object', 'null'], properties: { policies: { type: 'array', items: { type: 'object' } } } },
@@ -2074,6 +2089,7 @@ export const CACHE_TOOLS: ToolDef[] = [
       const countries = resolveCountryFilter(params.country, 'country');
       if (countries.length > 0) {
         data._all = pickMapKeys(data._all, countries);
+        data['gas-storage'] = pickMapKeys(data['gas-storage'], countries);
         pickNestedMap(data, 'fossil-electricity-share', 'countries', countries);
         // energy:gas-storage:v1:_countries is a string[] of ISO2 codes — match
         // the entry directly; the `?.iso2` fallback tolerates an object shape.
@@ -2089,6 +2105,9 @@ export const CACHE_TOOLS: ToolDef[] = [
       // _countries is a top-level string[] — capArrays handles top-level arrays;
       // in the energy bundle it's the only such array, so no collateral damage.
       capArrays(data, limit);
+      if (limit > 0 && data['gas-storage'] && typeof data['gas-storage'] === 'object') {
+        data['gas-storage'] = Object.fromEntries(Object.entries(data['gas-storage']).slice(0, limit));
+      }
       const ds = argStrList(params.dataset);
       if (ds.length > 0) {
         const map: Record<string, string> = {
@@ -2096,11 +2115,13 @@ export const CACHE_TOOLS: ToolDef[] = [
           'fuel-shortages': 'fuel-shortages', disruptions: 'disruptions', 'crisis-policies': 'crisis-policies',
           'fossil-share': 'fossil-electricity-share', renewable: 'worldbank-renewable',
         };
-        return selectDatasets(data, compact(ds.map((d) => map[d])));
+        const selected = compact(ds.map((d) => map[d]));
+        if (ds.includes('gas-storage')) selected.push('gas-storage');
+        return selectDatasets(data, selected);
       }
       return data;
     },
-    // Broad 9-key energy bundle mirroring get_economic_data. Cadences span
+    // Broad 10-key energy bundle mirroring get_economic_data. Cadences span
     // hourly (electricity prices) to annual (World Bank renewable share); use
     // _freshnessChecks with per-key maxStaleMin pulled from
     // api/health.js::SEED_META so a slow-cadence key doesn't drag the
@@ -2110,12 +2131,14 @@ export const CACHE_TOOLS: ToolDef[] = [
       'energy:electricity:v1:index',              // BOOTSTRAP_KEYS::electricityPrices
       'energy:ember:v1:_all',                     // STANDALONE_KEYS::emberElectricity
       'energy:gas-storage:v1:_countries',         // BOOTSTRAP_KEYS::gasStorageCountries
+      'energy:gas-storage:v1:all',
       'energy:fuel-shortages:v1',                 // STANDALONE_KEYS::fuelShortages
       'energy:disruptions:v1',                    // STANDALONE_KEYS::energyDisruptions
       'energy:crisis-policies:v1',                // STANDALONE_KEYS::energyCrisisPolicies
       'resilience:fossil-electricity-share:v1',   // STANDALONE_KEYS::fossilElectricityShare
       'economic:worldbank-renewable:v1',          // BOOTSTRAP_KEYS::renewableEnergy
     ],
+    _cacheLabels: { 'energy:gas-storage:v1:all': 'gas-storage' },
     _freshnessChecks: [
       { key: 'seed-meta:energy:eia-petroleum',                  maxStaleMin: 4320 },   // daily bundle; 72h = 3× interval
       { key: 'seed-meta:energy:electricity-prices',             maxStaleMin: 3000 },   // one snapshot per UTC day, tried at 14/17/20/23 UTC; two days + 2h margin

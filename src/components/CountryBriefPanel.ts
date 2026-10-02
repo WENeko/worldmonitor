@@ -202,6 +202,7 @@ export interface CountryPortActivityData {
 }
 
 export interface CountryBriefPanel {
+  setSectionFailure?(id: import('../../shared/country-brief-sections').BriefSectionId, state: 'locked' | 'unavailable', reason: string): void;
   show(country: string, code: string, score: CountryScore | null, signals: CountryBriefSignals): void;
   hide(): void;
   showLoading(): void;

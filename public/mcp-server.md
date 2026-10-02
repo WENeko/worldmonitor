@@ -27,7 +27,7 @@ The server ships tools covering world and country briefs, country risk and resil
 
 ## MCP Apps
 
-World Monitor supports MCP Apps (`io.modelcontextprotocol/ui`) with interactive `ui://` app shells. The linked tools are `get_country_risk`, `get_world_brief`, `get_country_brief`, `get_market_data`, `get_chokepoint_status`, `get_news_intelligence`, `get_conflict_events`, `get_natural_disasters`, `get_prediction_markets`, and `get_forecast_predictions`; their UI resources are:
+World Monitor supports MCP Apps (`io.modelcontextprotocol/ui`) with interactive `ui://` app shells. The linked tools are `get_country_risk`, `get_world_brief`, `get_country_brief`, `get_market_data`, `get_chokepoint_status`, `get_news_intelligence`, `get_conflict_events`, `get_natural_disasters`, `get_prediction_markets`, `get_forecast_predictions`, `open_news_dashboard`, and `open_country_brief`; their UI resources are:
 
 - `ui://worldmonitor/country-risk.html`
 - `ui://worldmonitor/world-brief.html`
@@ -39,6 +39,8 @@ World Monitor supports MCP Apps (`io.modelcontextprotocol/ui`) with interactive 
 - `ui://worldmonitor/natural-disasters.html`
 - `ui://worldmonitor/prediction-markets.html`
 - `ui://worldmonitor/forecasts.html`
+- `ui://worldmonitor/news-dashboard.html`
+- `ui://worldmonitor/country-view-v1.html`
 
 Hosts discover the links through `_meta.ui.resourceUri` in `tools/list`, enumerate the shells through `resources/list`, and fetch each template with `resources/read`. `ui://` reads are public and quota-exempt because they return static, data-free HTML; live data still arrives through a normal authenticated `tools/call`. Full contract: [MCP Apps](https://www.worldmonitor.app/docs/mcp-apps).
 

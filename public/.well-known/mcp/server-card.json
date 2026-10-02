@@ -3,12 +3,12 @@
   "kind": "product",
   "description": "WorldMonitor's live global-intelligence stack as an MCP server: real-time markets, conflict events, aviation, maritime, energy, climate, health, displacement, supply chain, and AI-generated regional briefs.",
   "icon": "https://www.worldmonitor.app/favico/apple-touch-icon.png",
-  "version": "1.25.0",
+  "version": "1.26.0",
   "url": "https://worldmonitor.app/mcp",
   "serverUrl": "https://worldmonitor.app/mcp",
   "serverInfo": {
     "name": "worldmonitor",
-    "version": "1.25.0",
+    "version": "1.26.0",
     "description": "WorldMonitor's live global-intelligence stack as an MCP server: real-time markets, conflict events, aviation, maritime, energy, climate, health, displacement, supply chain, and AI-generated regional briefs.",
     "vendor": "WorldMonitor",
     "homepage": "https://www.worldmonitor.app"
@@ -160,7 +160,7 @@
     },
     {
       "name": "get_energy_intelligence",
-      "description": "Energy supply, prices, storage, disruptions, and policy: EIA petroleum stocks, electricity prices (Ember), gas storage (GIE), fuel shortages, fossil & renewable shares, active energy disruptions, government crisis policies.",
+      "description": "Energy supply, prices, storage, disruptions, and policy: EIA petroleum stocks, electricity prices (Ember), national natural-gas storage (GIE), fuel shortages, fossil & renewable shares, active energy disruptions, government crisis policies. Gas-storage observations include country fill percentage, stored TWh and observation date; _countries is only a coverage index. Null observations mean unavailable, not zero.",
       "_meta": {
         "worldmonitor/access": "free-account"
       }
@@ -307,7 +307,7 @@
     },
     {
       "name": "get_country_brief",
-      "description": "AI-generated per-country intelligence brief. Produces an LLM-analyzed geopolitical and economic assessment for the given country. Supports analytical frameworks for structured lenses. Returns groundingStories alongside sources: the digest articles used to ground the brief, each with corroborationCount, corroboration, mentionCount, and lifecycle storyPhase, so an agent can weigh how well-corroborated the underlying reporting is; corroboration.state (single-publisher, tier4-only, corroborated, unknown) describes coverage, not accuracy. When the news digest is serving retained (stale) content, that grounding is DROPPED and the brief is generated without it; pass allow_stale=true to ground on the retained snapshot instead. Either way the digestCoverage block reports what the grounding was.",
+      "description": "Text-only AI assessment, one section of the country brief. Use open_country_brief for ordinary country brief requests, the embedded country interface and topic navigation. Produces an LLM-analyzed geopolitical and economic assessment for the given country. Supports analytical frameworks for structured lenses. Returns groundingStories alongside sources: the digest articles used to ground the brief, each with corroborationCount, corroboration, mentionCount, and lifecycle storyPhase, so an agent can weigh how well-corroborated the underlying reporting is; corroboration.state (single-publisher, tier4-only, corroborated, unknown) describes coverage, not accuracy. When the news digest is serving retained (stale) content, that grounding is DROPPED and the brief is generated without it; pass allow_stale=true to ground on the retained snapshot instead. Either way the digestCoverage block reports what the grounding was.",
       "_meta": {
         "worldmonitor/access": "subscription"
       }
@@ -619,6 +619,20 @@
       "_meta": {
         "worldmonitor/access": "subscription"
       }
+    },
+    {
+      "name": "open_country_brief",
+      "description": "Open the interactive WorldMonitor country brief with its assessment, source evidence, resilience, energy, trade and security sections. Use for country brief requests and follow-up topic navigation. The interface loads sections progressively through the authenticated connection. Section availability and dates are shown in the view. Use get_country_brief only when the user explicitly wants a text assessment.",
+      "_meta": {
+        "worldmonitor/access": "subscription"
+      }
+    },
+    {
+      "name": "get_country_brief_section",
+      "description": "Read one fixed country-view dataset for the embedded country brief. The section chooses a reviewed reader and its bounded arguments. Returns a ready, locked or unavailable state. Native observation dates remain in value; retrievedAt only records retrieval. Does not accept URLs, headers or arbitrary RPC paths.",
+      "_meta": {
+        "worldmonitor/access": "subscription"
+      }
     }
   ],
   "toolCategories": [
@@ -714,9 +728,11 @@
         "ui://worldmonitor/conflict-events.html",
         "ui://worldmonitor/natural-disasters.html",
         "ui://worldmonitor/prediction-markets.html",
-        "ui://worldmonitor/forecasts.html"
+        "ui://worldmonitor/forecasts.html",
+        "ui://worldmonitor/news-dashboard.html",
+        "ui://worldmonitor/country-view-v1.html"
       ],
-      "note": "MCP Apps support: tools with an interactive surface carry `_meta.ui.resourceUri` (get_country_risk → country-risk.html, get_world_brief → world-brief.html, get_country_brief → country-brief.html, get_market_data → market-radar.html, get_chokepoint_status → chokepoint-monitor.html, get_news_intelligence → news-intelligence.html, get_conflict_events → conflict-events.html, get_natural_disasters → natural-disasters.html, get_prediction_markets → prediction-markets.html, get_forecast_predictions → forecasts.html). Issue `resources/list` to enumerate ui:// app shells and `resources/read` to fetch them — ui:// reads are public + quota-exempt (static, data-free templates); live data reaches the shell via host postMessage after a normal tools/call."
+      "note": "MCP Apps support: tools with an interactive surface carry `_meta.ui.resourceUri` (get_country_risk → country-risk.html, get_world_brief → world-brief.html, get_country_brief → country-brief.html, get_market_data → market-radar.html, get_chokepoint_status → chokepoint-monitor.html, get_news_intelligence → news-intelligence.html, get_conflict_events → conflict-events.html, get_natural_disasters → natural-disasters.html, get_prediction_markets → prediction-markets.html, get_forecast_predictions → forecasts.html, open_news_dashboard → news-dashboard.html, open_country_brief → country-view-v1.html). Issue `resources/list` to enumerate ui:// app shells and `resources/read` to fetch them — ui:// reads are public + quota-exempt (static, data-free templates); live data reaches the shell via host postMessage after a normal tools/call."
     }
   },
   "features": {

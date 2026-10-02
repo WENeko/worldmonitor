@@ -5904,7 +5904,7 @@ components:
                     description: |-
                         Week-over-week change in millions of barrels. Positive = build (bearish), negative = draw (bullish).
                          Absent for the oldest week when no prior week is available for comparison.
-            description: CrudeInventoryWeek represents one week of US crude oil stockpile data from EIA WCRSTUS1.
+            description: CrudeInventoryWeek represents one week of US commercial crude oil stockpile data from EIA WCESTUS1.
         GetNatGasStorageRequest:
             type: object
             description: GetNatGasStorageRequest is the request message for GetNatGasStorage.

@@ -1250,6 +1250,28 @@ curl -s https://worldmonitor.app/mcp \
   }'
 ```
 
+### `open_country_brief`
+
+Open the embedded country view. It reuses the website country panel, topics, evidence presentation and output components. Choose this tool for an ordinary country-brief request. Use `get_country_brief` for an explicit text assessment.
+
+| Name | Type | Required | Description |
+|------|------|---------:|-------------|
+| `country_code` | string | **yes** | Country name or ISO2 code; resolved to a recognized country. |
+| `topic` | string | no | `overview`, `all`, `resilience`, `security`, `economy`, `resources`, `society` or `sources`. Defaults to overview. |
+
+The result identifies the country and topic and links `ui://worldmonitor/country-view-v1.html`. Data loads progressively through server tools. Availability and native observation dates remain visible. Dashboard-only signals and live military activity currently show unavailable. Follow/notification settings use a website handoff.
+
+### `get_country_brief_section`
+
+Read one fixed dataset for the country view. Requires a Pro connection. Each request maps to one reviewed downstream reader, uses existing authorization and quota enforcement, and accepts no arbitrary URL, header, method or RPC path.
+
+| Name | Type | Required | Description |
+|------|------|---------:|-------------|
+| `section` | string | **yes** | Fixed reader name from the published tool schema. |
+| `arguments` | object | no | Section-specific bounded arguments; see the schema branches. Country readers accept the corresponding ISO2 parameter. Housing and IMF readers accept only their fixed bootstrap keys. |
+
+Ready results carry `value` and `retrievedAt`; retrieval time does not replace observation time. Access failures return a locked state. Billing and backoff errors preserve the transport's existing error policy. The tool has weight 2 and a 512 KiB output ceiling. The host country adapter limits active reads to three.
+
 ### `get_country_brief`
 
 AI-generated per-country intelligence brief. Produces an LLM-analyzed geopolitical and economic assessment for the given country. Supports analytical frameworks for structured lenses.

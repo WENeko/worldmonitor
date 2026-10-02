@@ -8350,14 +8350,14 @@ async function seedPizzint() {
     });
     if (locations.length === 0) {
       // BestTime reported every venue as having no live data right now.
-      if (fallback?.answered) await recordPizzintQuietPoll();
+      if (!fallback || fallback.answered) await recordPizzintQuietPoll();
       return;
     }
     if (locations.every(l => l.noLiveSignal)) {
       console.warn('[PizzINT] No live signals; preserving last good observation');
-      // BestTime still answered every venue cleanly (e.g. a closing venue reading
-      // 0), so the source is healthy; the 24h lastLiveAt cap catches dead sensors.
-      if (fallback?.answered) await recordPizzintQuietPoll();
+      // The provider still answered every venue cleanly (e.g. a closing venue
+      // reading 0), so the source is healthy; the 24h lastLiveAt cap catches dead sensors.
+      if (!fallback || fallback.answered) await recordPizzintQuietPoll();
       return;
     }
     const openLocations = published.filter((l) => !l.isClosedNow && !l.noLiveSignal);
