@@ -77,6 +77,30 @@ else
   timeout_enabled=false
 fi
 
+# FORK PATCH (exclusion of heavy/monthly seeders from the 6h loop).
+# climate-zone-normals re-fetches 30 years of Open-Meteo daily archive (1991–
+# 2020) for ~176 zones and blows the 240s fetch-phase deadline every run
+# (upstream issue #4786); fatf-listing is a MONTHLY dataset (3x/year FATF
+# plenary) that loop runs waste a 53s slot on, and its source blocks GitHub
+# runner IPs with HTTP 403 anyway. Neither belongs in a 6-hourly sequential
+# cron on this fork.
+# comtrade-bilateral-hs4 is also MONTHLY (40d TTL, 24d gate) and its
+# ~394-call UN Comtrade sweep with per-call 3.5s pacing cannot complete inside
+# the 1800s standalone cap on this fork — it TIMEOUTs (killed) every 6h and
+# burns a 30-min slot without ever seeding. Excluded for the same reasons;
+# only a dedicated non-loop run (FORCE_RESEED=true, no 1800s cap) can seed it.
+# Skips are reported (not silent) so they don't look like crashes.
+# NOTE: this file is synced from upstream — an upstream sync can overwrite this
+# section. It is re-applied automatically by
+# scripts/fork-ensure-run-seeders-patches.mjs (wired into
+# .github/workflows/seed-upstash.yml) before every seed run.
+is_monthly_heavy() {
+  case "$1" in
+    *seed-climate-zone-normals.mjs|*seed-fatf-listing.mjs|*seed-comtrade-bilateral-hs4.mjs) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Bundle seeders self-bound per section — never wrap them in the outer cap.
 is_bundle() {
   case "$1" in
@@ -98,6 +122,16 @@ run_seed() {
     node_file="$(cygpath -w "$node_file")"
   fi
 
+  # seed-consumer-prices.mjs is a manual-fallback seeder that refuses to run
+  # without --force: its normal guard protects the authoritative consumer-
+  # prices-core publish.ts pipeline (26h TTLs) from being stomped by the seed's
+  # short TTLs. This fork has no publish.ts pipeline, so the seed workflow MUST
+  # pass --force or the consumer-price panels stay permanently empty.
+  extra_args=""
+  case "$1" in
+    *seed-consumer-prices.mjs) extra_args="--force" ;;
+  esac
+
   if caps_seed "$1"; then
     # -k: if it ignores SIGTERM, SIGKILL it 30s later so the run can move on.
     timeout -k 30 "$SEED_TIMEOUT" node "$node_file" 2>&1
@@ -110,6 +144,11 @@ ok=0 fail=0 skip=0 timedout=0
 
 for f in "$SCRIPT_DIR"/seed-*.mjs; do
   name="$(basename "$f")"
+  if is_monthly_heavy "$f"; then
+    echo "→ $name ... SKIP (heavy/monthly seed not run in the 6h loop — fork exclusion)"
+    skip=$((skip + 1))
+    continue
+  fi
   printf "→ %s ... " "$name"
   output=$(run_seed "$f")
   rc=$?
@@ -129,6 +168,11 @@ for f in "$SCRIPT_DIR"/seed-*.mjs; do
     ok=$((ok + 1))
   else
     printf "FAIL (%s)\n" "$last"
+    # Fork diagnostic: a standalone seeder's failure reason (e.g. "ACLED
+    # failed: HTTP 401") is printed by the seeder well before its final line,
+    # but the previous capture dropped everything but $last. Surface the tail
+    # so the workflow log shows the REAL cause instead of a bare FAIL.
+    echo "$output" | tail -6
     fail=$((fail + 1))
   fi
 done
