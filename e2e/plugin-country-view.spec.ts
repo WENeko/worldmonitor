@@ -7,7 +7,7 @@ const root = process.cwd();
 test.use({ serviceWorkers: 'block' });
 
 type HostCall = { name: string; arguments: Record<string, unknown> };
-async function installCountryHost(page: Page, fullExposure = false, initialOpenError?: string) {
+async function installCountryHost(page: Page, fullExposure = false, initialOpenError?: string, atlasFixture = false, atlasOutages: { energy?: boolean; timeline?: boolean } = {}) {
   const calls: HostCall[] = [];
   const requestNames = new Map<number, string>();
   const cancelled: string[] = [];
@@ -18,6 +18,16 @@ async function installCountryHost(page: Page, fullExposure = false, initialOpenE
   const links: string[] = [];
   let failFacts = false;
   let failActivity = false;
+  let atlasDenied = false;
+  let atlasUnavailable = false;
+  let disruptionsFailed = false;
+  let energyFailed = atlasOutages.energy ?? false;
+  let releaseDisruptions: () => void = () => {};
+  const delayedDisruptions = new Promise<void>(resolve => { releaseDisruptions = resolve; });
+  let atlasPartial = false;
+  let delayAtlasDetail = false;
+  let releaseAtlasDetail: () => void = () => {};
+  const delayedAtlasDetail = new Promise<void>(resolve => { releaseAtlasDetail = resolve; });
   let partialBootstrap = false;
   let quotaExceeded = false;
   let admissions = 0;
@@ -62,6 +72,15 @@ async function installCountryHost(page: Page, fullExposure = false, initialOpenE
     if (section === 'facts' && code === 'US' && delayUS) await delayed;
     if (section === 'facts' && failFacts) return { structuredContent: { section, state: 'unavailable', reason: 'Controlled source failure' } };
     if (failActivity && section === 'vessels') return { structuredContent: { section, state: 'unavailable', reason: 'Controlled AIS outage' } };
+    if (delayAtlasDetail && ['pipelineDetail', 'facilityDetail'].includes(section)) await delayedAtlasDetail;
+    if (atlasOutages.timeline && section === 'disruptions') await delayedDisruptions;
+    if (energyFailed && section === 'energy') return { structuredContent: { section, state: 'unavailable', reason: 'Controlled energy outage' } };
+    if (disruptionsFailed && section === 'disruptions') return { structuredContent: { section, state: 'unavailable', reason: 'Controlled timeline outage' } };
+    if (atlasUnavailable && section === 'facilities') return { structuredContent: { section, state: 'unavailable', reason: 'Controlled storage outage' } };
+    if (atlasDenied && ['facilityDetail', 'facilities'].includes(section)) return { structuredContent: { section, state: 'locked', reason: 'Controlled Atlas connection lacks access' } };
+    const pipeline = { id: 'us-pipeline', name: 'Controlled US Pipeline', operator: 'Fixture operator', commodityType: 'gas', fromCountry: 'US', toCountry: 'CA', transitCountries: [], capacityBcmYr: 12, capacityMbd: 0, lengthKm: 100, inService: 2025, publicBadge: 'flowing', startPoint: { lat: 38, lon: -77 }, endPoint: { lat: 43, lon: -79 }, waypoints: [], evidence: { physicalState: 'flowing', physicalStateSource: 'operator', commercialState: 'active', sanctionRefs: [], operatorStatement: { text: 'Controlled operator statement', url: 'https://example.com/pipeline-source', date: '2026-10-01' }, classifierVersion: 'fixture', classifierConfidence: 0.9 } };
+    const facility = { id: 'us-storage', name: 'Controlled US Storage', operator: 'Fixture storage operator', country: 'US', facilityType: 'spr', capacityMb: 12, capacityTwh: 0, capacityMtpa: 0, workingCapacityUnit: 'Mb', inService: 2025, location: { lat: 38, lon: -77 }, publicBadge: 'operational', evidence: { physicalState: 'operational', physicalStateSource: 'operator', commercialState: 'active', operatorStatement: { text: 'Controlled storage statement', url: 'https://example.com/storage-source', date: '2026-10-01' }, sanctionRefs: [] } };
+    const shortage = { id: 'us-shortage', country: 'US', product: 'diesel', severity: 'confirmed', firstSeen: '2026-09-29', lastConfirmed: '2026-10-01', resolvedAt: '', shortDescription: 'Controlled active shortage', impactTypes: ['transport'], causeChain: ['supply'], evidence: { evidenceSources: [{ authority: 'Fixture authority', title: 'Controlled shortage source', url: 'https://example.com/shortage-source', date: '2026-10-01', sourceType: 'official' }], classifierConfidence: 0.9 } };
     const values: Record<string, object> = {
       flights: { flights: [{ id: 'controlled-us-flight', operatorCountry: 'US', location: { latitude: 38, longitude: -77 } }], pagination: { nextCursor: '' } },
       vessels: { dataAvailable: true, snapshot: { snapshotAt: Date.now(), status: { connected: true }, candidateReports: [{ mmsi: '235123456', name: 'Controlled military activity', shipType: 35, lat: 38, lon: -77, timestamp: Date.now() }] } },
@@ -71,7 +90,14 @@ async function installCountryHost(page: Page, fullExposure = false, initialOpenE
       risk: { upstreamUnavailable: true },
       scenario: { countryCode: code, chokepointId: String((args.arguments as Record<string, unknown>).chokepoint_id), disruptionPct: Number((args.arguments as Record<string, unknown>).disruption_pct), dataAvailable: true, jodiOilCoverage: true, crudeLossKbd: 100, gulfCrudeShare: 0.3, products: [], limitations: [], coverageLevel: 'partial', gasSensitivity: { dataAvailable: true, lngImportsTj: 100000, totalDemandTj: 500000, lngDisruptionTj: Number((args.arguments as Record<string, unknown>).disruption_pct) * 300, deficitPct: Number((args.arguments as Record<string, unknown>).disruption_pct) * 0.06, dataMonth: '2026-05', dataSource: 'JODI', modelBasis: 'assumed_route_sensitivity', assessment: 'Controlled route sensitivity, not measured supplier exposure.' } },
       stock: { available: false },
-      energy: { countryCode: code, upstreamUnavailable: true },
+      energy: atlasFixture && !energyFailed ? { countryCode: code, importShareAvailable: true, importShare: 12, importShareYear: 2025, importShareSource: 'Fixture source' } : { countryCode: code, upstreamUnavailable: true },
+      pipelines: { pipelines: [pipeline, { ...pipeline, id: 'cn-pipeline', name: 'Other country pipeline', fromCountry: 'CN', toCountry: 'RU' }], fetchedAt: '2026-10-01', classifierVersion: 'fixture', upstreamUnavailable: false },
+      facilities: { facilities: [facility, { ...facility, id: 'cn-storage', country: 'CN' }], fetchedAt: '2026-10-01', classifierVersion: 'fixture', upstreamUnavailable: false },
+      shortages: { shortages: [shortage, { ...shortage, id: 'resolved', resolvedAt: '2026-10-01' }, { ...shortage, id: 'cn-shortage', country: 'CN' }], fetchedAt: '2026-10-01', classifierVersion: 'fixture', upstreamUnavailable: false },
+      pipelineDetail: { pipeline, revisions: [], unavailable: false, fetchedAt: '2026-10-01' },
+      facilityDetail: { facility, revisions: [], unavailable: false, fetchedAt: '2026-10-01' },
+      shortageDetail: { shortage, unavailable: false, fetchedAt: '2026-10-01' },
+      disruptions: { events: [{ id: 'controlled-disruption', assetId: 'us-pipeline', assetType: 'pipeline', countries: ['US', 'CA'], eventType: 'maintenance', shortDescription: 'Controlled pipeline maintenance', startAt: '2026-09-29', endAt: '2026-09-30', causeChain: ['maintenance'], capacityOfflineBcmYr: 2, capacityOfflineMbd: 0 }], fetchedAt: '2026-10-01', upstreamUnavailable: false },
       maritime: { countryCode: code, upstreamUnavailable: true },
       markets: { markets: [], dataAvailable: true },
       housing: { data: { bisPropertyResidential: { entries: [{ countryCode: code, indexValue: 156.4, yoyChange: -2.1, qoqChange: null, period: '2026-Q1' }] }, bisDsr: { entries: [{ countryCode: code, dsrPct: 8, change: 1.3, period: '2026-Q1' }] } } },
@@ -91,6 +117,7 @@ async function installCountryHost(page: Page, fullExposure = false, initialOpenE
       food: { unavailable: false, records: [{ countryCode: code, commodity: 'wheat', marketingYear: '2025/26', stocksToUse: 0.25, hasStocksToUse: true, source: 'usda', totalUseTmt: 500 }] },
       demographics: { available: false },
     };
+    if (atlasPartial && section === 'pipelines') (values.pipelines as { upstreamUnavailable: boolean }).upstreamUnavailable = true;
     if (partialBootstrap && section === 'imf') {
       const value = values.imf as { data: Record<string, unknown>; missing: string[] };
       delete value.data.imfGrowth;
@@ -106,7 +133,7 @@ async function installCountryHost(page: Page, fullExposure = false, initialOpenE
     const frame = document.querySelector('iframe')!;
     window.addEventListener('message', async event => {
       if (event.source !== frame.contentWindow || event.data?.jsonrpc !== '2.0') return;
-      if (!event.data.id && event.data.method !== 'notifications/cancelled') return;
+      if (!event.data.method || (!event.data.id && event.data.method !== 'notifications/cancelled')) return;
       try {
         const result = await (window as unknown as { countryHost: (method: string, params: object, id?: number) => Promise<object> }).countryHost(event.data.method, event.data.params, event.data.id);
         frame.contentWindow!.postMessage({ jsonrpc: '2.0', id: event.data.id, result }, '*');
@@ -122,7 +149,17 @@ async function installCountryHost(page: Page, fullExposure = false, initialOpenE
     });
     frame.srcdoc = html.replace('<head>', `<head><base href="${location.origin}/">`);
   }, html);
-  return { calls, contexts, links, unmanaged, cancelled, activityOutage: () => { failActivity = true; }, activityRecover: () => { failActivity = false; }, partial: () => { partialBootstrap = true; }, complete: () => { partialBootstrap = false; }, quota: () => { quotaExceeded = true; }, get admissions() { return admissions; }, delayAdmission: () => { delayAdmission = true; }, releaseAdmission, delayCoverage: () => { delayCoverage = true; }, releaseCoverage, fail: () => { failFacts = true; }, recover: () => { failFacts = false; }, delay: () => { delayUS = true; }, release: releaseUS };
+  const action = (name: string, args: object) => page.evaluate(({ name, args }) => new Promise<Record<string, unknown>>(resolve => {
+    const id = -Math.random();
+    const frame = document.querySelector('iframe')!;
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frame.contentWindow || event.data.id !== id || event.data.method) return;
+      window.removeEventListener('message', receive); resolve(event.data.result);
+    };
+    window.addEventListener('message', receive);
+    frame.contentWindow!.postMessage({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }, '*');
+  }), { name, args });
+  return { calls, contexts, links, unmanaged, cancelled, action, releaseDisruptions, failAtlas: () => { atlasUnavailable = true; }, recoverAtlas: () => { atlasUnavailable = false; }, delayAtlasDetail: () => { delayAtlasDetail = true; }, releaseAtlasDetail, failDisruptions: () => { disruptionsFailed = true; }, failEnergy: () => { energyFailed = true; }, partialAtlas: () => { atlasPartial = true; }, denyAtlas: () => { atlasDenied = true; }, activityOutage: () => { failActivity = true; }, activityRecover: () => { failActivity = false; }, partial: () => { partialBootstrap = true; }, complete: () => { partialBootstrap = false; }, quota: () => { quotaExceeded = true; }, get admissions() { return admissions; }, delayAdmission: () => { delayAdmission = true; }, releaseAdmission, delayCoverage: () => { delayCoverage = true; }, releaseCoverage, fail: () => { failFacts = true; }, recover: () => { failFacts = false; }, delay: () => { delayUS = true; }, release: releaseUS };
 }
 
 test('country military observations render under one allocation and survive an AIS outage', async ({ page }, info) => {
@@ -359,4 +396,144 @@ test('an initial host open denial displays its reason without section loads', as
   await expect(frame.locator('#countryStatus')).toContainText('UTC midnight');
   await expect(frame.locator('#countryUsage')).toBeHidden();
   expect(host.calls.map(call => call.name)).toEqual(['open_country_brief']);
+});
+
+
+test('Atlas counts open original asset details, evidence and timeline under one country allocation', async ({ page }, info) => {
+  const host = await installCountryHost(page, false, undefined, true);
+  const frame = page.frameLocator('iframe');
+  await frame.getByRole('button', { name: 'Resources & infrastructure', exact: true }).click();
+  const energy = frame.locator('[data-brief-section=energy]');
+  await expect(energy).toContainText('Pipelines touching US');
+  await expect(energy).toContainText('1 pipeline');
+  await expect(energy).toContainText('1 facility');
+  await expect(energy).toContainText('1 confirmed');
+  await expect(energy).not.toContainText('Other country pipeline');
+  await expect(energy.getByRole('button', { name: 'diesel — Controlled active shortage', exact: true })).toHaveCount(1);
+  await energy.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath('atlas-counts-desktop.png'), fullPage: true });
+  await energy.getByRole('button', { name: 'Controlled US Pipeline', exact: true }).click();
+  const output = frame.locator('[data-country-atlas-detail]');
+  await expect(output).toContainText('Controlled operator statement');
+  await expect(output).toContainText('Controlled pipeline maintenance');
+  await expect(output).toContainText('12.0 bcm/yr');
+  await expect.poll(() => output.locator('.pp-drawer').evaluate(el => el.clientHeight >= el.scrollHeight - 1 && el.clientHeight > 250)).toBe(true);
+  await output.locator('.pp-drawer').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath('atlas-pipeline-desktop.png'), fullPage: true });
+  await output.getByRole('link', { name: '2026-10-01', exact: true }).click();
+  await expect.poll(() => host.links).toContain('https://example.com/pipeline-source');
+  await expect.poll(() => host.contexts.at(-1)).toMatchObject({ selectedAtlasAsset: { type: 'pipeline', id: 'us-pipeline', renderedText: expect.stringContaining('Controlled operator statement') } });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => output.locator('.pp-drawer').evaluate(el => el.clientHeight >= el.scrollHeight - 1 && el.clientHeight > 250)).toBe(true);
+  await output.locator('.pp-drawer').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath('atlas-pipeline-mobile.png'), fullPage: true });
+  await expect.poll(() => frame.locator('body').evaluate(body => body.scrollWidth <= innerWidth + 1)).toBe(true);
+  await frame.getByRole('button', { name: 'Back to country', exact: true }).click();
+  await energy.getByRole('button', { name: 'Controlled US Storage', exact: true }).click();
+  await expect(output).toContainText('Controlled storage statement');
+  await expect(output).toContainText('12 Mb');
+  await expect.poll(() => output.locator('.sf-drawer').evaluate(el => el.clientHeight >= el.scrollHeight - 1)).toBe(true);
+  await page.screenshot({ path: info.outputPath('atlas-storage-mobile.png'), fullPage: true });
+  await frame.getByRole('button', { name: 'Back to country', exact: true }).click();
+  await energy.getByRole('button', { name: 'diesel — Controlled active shortage', exact: true }).click();
+  await expect(output).toContainText('Controlled shortage source');
+  await expect.poll(() => output.locator('.fs-drawer').evaluate(el => el.clientHeight >= el.scrollHeight - 1)).toBe(true);
+  await page.screenshot({ path: info.outputPath('atlas-shortage-mobile.png'), fullPage: true });
+  await frame.getByRole('button', { name: 'Back to country', exact: true }).click();
+  expect(host.admissions).toBe(1);
+  expect(host.unmanaged).toEqual([]);
+  expect(host.calls.filter(call => String(call.arguments.section).endsWith('Detail')).every(call => (call.arguments.arguments as Record<string, unknown>).country_code === 'US')).toBe(true);
+  host.denyAtlas();
+  await frame.getByRole('button', { name: 'Refresh country', exact: true }).click();
+  await expect(energy).toContainText('Storage Atlas data is not authorized by this connection');
+  await expect(energy).toContainText('Controlled US Pipeline');
+  await energy.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath('atlas-denial-mobile.png'), fullPage: true });
+});
+
+
+test('Atlas remains usable when energy metrics and disruption timelines fail and partial coverage is explicit', async ({ page }) => {
+  const host = await installCountryHost(page, false, undefined, true);
+  const frame = page.frameLocator('iframe');
+  await frame.getByRole('button', { name: 'Resources & infrastructure', exact: true }).click();
+  const energy = frame.locator('[data-brief-section=energy]');
+  await expect(energy).toContainText('Controlled US Pipeline');
+  host.failEnergy(); host.failDisruptions(); host.partialAtlas();
+  await frame.getByRole('button', { name: 'Refresh country', exact: true }).click();
+  await expect(energy).toContainText('This section could not be loaded');
+  await expect(energy).toContainText('Pipeline Atlas coverage is partial');
+  await energy.getByRole('button', { name: 'Controlled US Pipeline', exact: true }).click();
+  const output = frame.locator('[data-country-atlas-detail]');
+  await expect(output).toContainText('Controlled operator statement');
+  await expect(output).toContainText('Disruption timeline unavailable');
+  await expect(output).not.toContainText('No disruption events on file');
+  await frame.getByRole('button', { name: 'Back to country', exact: true }).click();
+  host.denyAtlas();
+  await energy.getByRole('button', { name: 'Controlled US Storage', exact: true }).click();
+  await expect(output).toContainText('Controlled Atlas connection lacks access');
+  expect(host.unmanaged).toEqual([]);
+  expect(host.admissions).toBe(2);
+});
+
+
+test('agent Atlas actions share country scope and country changes cancel pending details', async ({ page }) => {
+  const host = await installCountryHost(page, false, undefined, true);
+  const frame = page.frameLocator('iframe');
+  await frame.getByRole('button', { name: 'Resources & infrastructure', exact: true }).click();
+  await expect(frame.locator('[data-brief-section=energy]')).toContainText('Controlled US Pipeline');
+  expect(await host.action('open_country_atlas_asset', { type: 'pipeline', id: 'cn-pipeline' })).toMatchObject({ isError: true });
+  expect(await host.action('open_country_atlas_asset', { type: 'pipeline', id: 'us-pipeline', extra: true })).toMatchObject({ isError: true });
+  const opened = await host.action('open_country_atlas_asset', { type: 'pipeline', id: 'us-pipeline' });
+  expect(opened).toMatchObject({ structuredContent: { selectedAtlasAsset: { type: 'pipeline', id: 'us-pipeline', renderedText: expect.stringContaining('Controlled operator statement') } } });
+  await expect(frame.locator('[data-country-atlas-detail]')).toContainText('Controlled operator statement');
+  await frame.getByRole('button', { name: 'Back to country', exact: true }).click();
+  host.delayAtlasDetail();
+  await frame.getByRole('button', { name: 'Controlled US Storage', exact: true }).click();
+  await expect(frame.locator('[data-country-atlas-detail]')).toContainText('Loading');
+  await host.action('select_country_view', { country_code: 'CN', topic: 'resources' });
+  await expect.poll(() => host.cancelled).toContain('get_country_brief_section');
+  host.releaseAtlasDetail();
+  await expect(frame.locator('[data-country-atlas-detail]')).toHaveCount(0);
+  await expect.poll(() => host.contexts.at(-1)).toMatchObject({ countryCode: 'CN', selectedAtlasAsset: null });
+  expect(host.admissions).toBe(2);
+  expect(host.unmanaged).toEqual([]);
+});
+
+
+test('initial energy failure does not block Atlas and delayed timelines do not block asset evidence', async ({ page }) => {
+  const host = await installCountryHost(page, false, undefined, true, { energy: true, timeline: true });
+  const frame = page.frameLocator('iframe');
+  await frame.getByRole('button', { name: 'Resources & infrastructure', exact: true }).click();
+  const energy = frame.locator('[data-brief-section=energy]');
+  await expect(energy).toContainText('This section could not be loaded');
+  await energy.getByRole('button', { name: 'Controlled US Pipeline', exact: true }).click();
+  const output = frame.locator('[data-country-atlas-detail]');
+  await expect(output).toContainText('12.0 bcm/yr');
+  await expect(output).toContainText('Controlled operator statement');
+  await expect(output).toContainText('Loading disruption timeline');
+  host.releaseDisruptions();
+  await expect(output).toContainText('Controlled pipeline maintenance');
+  expect(host.admissions).toBe(1);
+});
+
+
+test('transient Atlas failure preserves same-country rows and detail actions while denial clears them', async ({ page }, info) => {
+  const host = await installCountryHost(page, false, undefined, true);
+  const frame = page.frameLocator('iframe');
+  await frame.getByRole('button', { name: 'Resources & infrastructure', exact: true }).click();
+  const energy = frame.locator('[data-brief-section=energy]');
+  await expect(energy).toContainText('Controlled US Storage');
+  host.failAtlas();
+  await frame.getByRole('button', { name: 'Refresh country', exact: true }).click();
+  await expect(energy).toContainText('Storage Atlas data unavailable. Previously loaded Atlas observations remain visible.');
+  await energy.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath('atlas-retained-desktop.png'), fullPage: true });
+  await energy.getByRole('button', { name: 'Controlled US Storage', exact: true }).click();
+  await expect(frame.locator('[data-country-atlas-detail]')).toContainText('12 Mb');
+  await frame.getByRole('button', { name: 'Back to country', exact: true }).click();
+  host.recoverAtlas(); host.denyAtlas();
+  await frame.getByRole('button', { name: 'Refresh country', exact: true }).click();
+  await expect(energy).toContainText('Storage Atlas data is not authorized');
+  await expect(energy.getByRole('button', { name: 'Controlled US Storage', exact: true })).toHaveCount(0);
+  expect(host.admissions).toBe(3);
 });

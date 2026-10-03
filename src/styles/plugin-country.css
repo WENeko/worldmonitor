@@ -15,3 +15,11 @@ body.country-plugin-body { overflow: auto; height: auto; min-height: 720px; }
 }
 
 .country-plugin-body .country-deep-dive-shell { flex: 1; width: 100%; min-width: 0; }
+
+.country-plugin-body .cdp-atlas-output { max-width: 980px; margin: 0 auto; }
+.country-plugin-body .cdp-atlas-output .panel { height: auto !important; min-height: 0; margin-top: 12px; }
+.country-plugin-body .cdp-atlas-output .panel-content { overflow: visible; content-visibility: visible; }
+.country-plugin-body .cdp-atlas-output .panel-resize-handle,
+.country-plugin-body .cdp-atlas-output .panel-col-resize-handle { display: none; }
+.country-plugin-body .cdp-atlas-output :is(.pp-drawer, .sf-drawer, .fs-drawer) { position: relative; inset: auto; overflow: visible; }
+.country-plugin-body .cdp-atlas-output :is(.pp-wrap, .sf-wrap, .fs-wrap):has(:is(.pp-drawer, .sf-drawer, .fs-drawer)) > :not(style, .pp-drawer, .sf-drawer, .fs-drawer) { display: none; }

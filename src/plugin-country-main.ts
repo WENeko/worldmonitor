@@ -81,6 +81,7 @@ async function mountCountryView(): Promise<void> {
     return {
       countryCode: panel.getCode(), countryName: panel.getName(), revision,
       usage: admission?.usage,
+      selectedAtlasAsset: panel.getAtlasSelection(),
       topic: document.querySelector<HTMLElement>('.cdp-shell')?.dataset.briefTopic,
       sections: Array.from(document.querySelectorAll<HTMLElement>('[data-brief-section]')).map(card => {
         const body = card.querySelector<HTMLElement>('.cdp-card-body')!;
@@ -285,8 +286,19 @@ async function mountCountryView(): Promise<void> {
         void open({ country_code: data.countryCode, topic: data.topic ?? 'overview', refresh: requested.success && requested.data.refresh }, false, data.panelRequest, true).catch(error => { status.textContent = error.message; });
       }
     }
-    if (message.method === 'tools/list') send({ id: message.id, result: { tools: [{ name: 'select_country_view', description: 'Change the country or topic in this rendered country brief. Returns the applied country, topic and section states.', inputSchema: { type: 'object', properties: { country_code: { type: 'string' }, topic: { type: 'string', enum: Object.keys(BRIEF_TOPICS) } }, required: ['country_code'] } }] } });
-    if (message.method === 'tools/call') void (message.params?.name === 'select_country_view' ? open(message.params.arguments) : Promise.reject(new Error('Unknown country action'))).then(result => send({ id: message.id, result: { structuredContent: result, content: [{ type: 'text', text: JSON.stringify(result) }] } })).catch(error => send({ id: message.id, result: { isError: true, content: [{ type: 'text', text: error.message }] } }));
+    if (message.method === 'tools/list') send({ id: message.id, result: { tools: [
+      { name: 'select_country_view', description: 'Change the country or topic in this rendered country brief. Returns the applied country, topic and section states.', inputSchema: { type: 'object', properties: { country_code: { type: 'string' }, topic: { type: 'string', enum: Object.keys(BRIEF_TOPICS) } }, required: ['country_code'] } },
+      { name: 'open_country_atlas_asset', description: 'Open a loaded pipeline, storage facility or active fuel shortage detail in the current country view. Returns the displayed details and sources.', inputSchema: { type: 'object', additionalProperties: false, properties: { type: { type: 'string', enum: ['pipeline', 'storage', 'shortage'] }, id: { type: 'string' } }, required: ['type', 'id'] } },
+    ] } });
+    if (message.method === 'tools/call') void (async () => {
+      if (message.params?.name === 'select_country_view') return open(message.params.arguments);
+      if (message.params?.name !== 'open_country_atlas_asset') throw new Error('Unknown country action');
+      const args = message.params.arguments;
+      if (!args || !['pipeline', 'storage', 'shortage'].includes(args.type) || typeof args.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(args.id) || Object.keys(args).some(key => !['type', 'id'].includes(key))) throw new Error('Invalid Atlas asset action');
+      await panel.openAtlasDetail(args.type, args.id);
+      scheduleContext();
+      return snapshot();
+    })().then(result => send({ id: message.id, result: { structuredContent: result, content: [{ type: 'text', text: JSON.stringify(result) }] } })).catch(error => send({ id: message.id, result: { isError: true, content: [{ type: 'text', text: error.message }] } }));
     if (message.method === 'ui/notifications/host-context-changed' && ['light', 'dark'].includes(message.params?.theme)) document.documentElement.dataset.theme = message.params.theme;
   });
 

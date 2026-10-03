@@ -98,6 +98,36 @@ describe('paid country workflow through the MCP handler', () => {
     }
     assert.equal(pipe.count, 1);
   });
+  it('includes Atlas detail reads in one allocation and refuses another country or asset identity', async () => {
+    const { deps, pipe } = makeProDeps();
+    const opened = await invoke(deps, 'open_country_brief', { country_code: 'US' });
+    const panel_request = opened.body.result.structuredContent.panelRequest.token;
+    let foreign = false;
+    let mismatched = false;
+    globalThis.fetch = async url => {
+      const parsed = new URL(url);
+      fetched.push(String(url));
+      assert.equal(parsed.searchParams.has('country_code'), false, 'host country binding is not sent to the RPC');
+      const id = parsed.searchParams.get('pipelineId') ?? parsed.searchParams.get('facilityId') ?? parsed.searchParams.get('shortageId');
+      const asset = { id: mismatched ? 'wrong' : id, country: foreign ? 'CN' : 'US', fromCountry: 'CA', toCountry: foreign ? 'CN' : 'US', transitCountries: [] };
+      return Response.json({ pipeline: asset, facility: asset, shortage: asset, unavailable: false });
+    };
+    for (const [section, key] of [['pipelineDetail', 'pipelineId'], ['facilityDetail', 'facilityId'], ['shortageDetail', 'shortageId']]) {
+      const args = { section, arguments: { country_code: 'US', [key]: 'controlled' }, panel_request };
+      assert.equal((await invoke(deps, 'get_country_brief_section', args)).body.result?.structuredContent?.state, 'ready');
+      const count = fetched.length;
+      assert.equal((await invoke(deps, 'get_country_brief_section', { ...args, arguments: { ...args.arguments, country_code: 'CN' } })).body.error?.code, -32602);
+      assert.equal(fetched.length, count);
+      foreign = true;
+      args.arguments[key] = 'foreign';
+      assert.equal((await invoke(deps, 'get_country_brief_section', args)).body.result?.structuredContent?.state, 'unavailable');
+      foreign = false; mismatched = true;
+      args.arguments[key] = 'mismatch';
+      assert.equal((await invoke(deps, 'get_country_brief_section', args)).body.result?.structuredContent?.state, 'unavailable');
+      mismatched = false;
+    }
+    assert.equal(pipe.count, 1);
+  });
   it('includes country flight, AIS and roster reads in one allocation and denies a different viewport', async () => {
     globalThis.fetch = async url => {
       fetched.push(String(url));

@@ -44,7 +44,7 @@ export const COUNTRY_VIEW_TOOLS: ToolDef[] = [{
   },
 }, {
   name: 'get_country_brief_section',
-  description: 'Read one fixed country-view dataset for the embedded country brief. The section chooses a reviewed reader and its bounded arguments, including geographic flight observations, the bounded global AIS candidate snapshot and the reported fleet roster. Flight coverage follows provider redistribution permissions. Returns a ready, locked or unavailable state. Native observation dates remain in value; retrievedAt only records retrieval. Does not accept URLs, headers or arbitrary RPC paths.',
+  description: 'Read one fixed country-view dataset for the embedded country brief. The section chooses a reviewed reader and its bounded arguments, including geographic flight observations, the bounded global AIS candidate snapshot, the reported fleet roster and country Atlas assets and details. Flight coverage follows provider redistribution permissions. Returns a ready, locked or unavailable state. Native observation dates remain in value; retrievedAt only records retrieval. Does not accept URLs, headers or arbitrary RPC paths.',
   _subscriptionOnly: true,
   _weight: 2,
   _outputBudgetBytes: COUNTRY_SECTION_BUDGET_BYTES,
@@ -83,6 +83,7 @@ export const COUNTRY_VIEW_TOOLS: ToolDef[] = [{
       ? bootstrapKeys.map(key => new URLSearchParams({ keys: key, public: '1' }))
       : [new URLSearchParams(Object.entries(args.data).map(([key, value]) => [key, String(value)]))];
     const results = await Promise.allSettled(queries.map(async query => {
+      if (['pipelineDetail', 'facilityDetail', 'shortageDetail'].includes(section)) query.delete('country_code');
       const url = `${base}${reader.path}${query.size ? `?${query}` : ''}`;
       const headers = bootstrapKeys ? {} : await buildAuthHeaders(context, 'GET', url, null);
       const response = await fetchMcpDownstream(url, { headers: { ...headers, 'User-Agent': 'WorldMonitor-MCP/1.0' }, signal: AbortSignal.timeout(15_000) }, execution);
@@ -91,7 +92,9 @@ export const COUNTRY_VIEW_TOOLS: ToolDef[] = [{
       await assertToolFetchOk(response, section, { preserveBackoff: true });
       return bootstrapKeys
         ? z.object({ data: z.record(z.string(), z.unknown()), missing: z.array(z.string()) }).parse(JSON.parse(new TextDecoder().decode(await readBoundedResponseBody(response, COUNTRY_SECTION_BUDGET_BYTES))))
-        : response.json();
+        : ['pipelines', 'facilities', 'shortages', 'pipelineDetail', 'facilityDetail', 'shortageDetail'].includes(section)
+          ? JSON.parse(new TextDecoder().decode(await readBoundedResponseBody(response, COUNTRY_SECTION_BUDGET_BYTES)))
+          : response.json();
     }));
     const denial = results.find(result => result.status === 'rejected' && result.reason instanceof BillingDenialError);
     if (denial?.status === 'rejected') throw denial.reason;
@@ -122,6 +125,13 @@ export const COUNTRY_VIEW_TOOLS: ToolDef[] = [{
         return { state: 'unavailable', section, reason: 'These country datasets are currently unavailable.' };
       }
       value = { data, missing };
+    }
+    if (['pipelineDetail', 'facilityDetail', 'shortageDetail'].includes(section)) {
+      const country = parsed.data.arguments?.country_code;
+      const asset = section === 'pipelineDetail' ? value?.pipeline : section === 'facilityDetail' ? value?.facility : value?.shortage;
+      const belongs = section === 'pipelineDetail' ? asset && (asset.fromCountry === country || asset.toCountry === country || asset.transitCountries?.includes(country)) : asset?.country === country;
+      const requestedId = parsed.data.arguments?.pipelineId ?? parsed.data.arguments?.facilityId ?? parsed.data.arguments?.shortageId;
+      if (!asset || asset.id !== requestedId || value?.unavailable || !belongs) return { state: 'unavailable', section, reason: 'This asset detail is unavailable for the selected country.' };
     }
     if (section === 'flights' && (!Array.isArray(value?.flights) || (!value.flights.length && !(parsed.data.arguments?.cursor && value.pagination?.totalCount > 0)))) return { state: 'unavailable', section, reason: 'Flight observations are unavailable or unconfirmed. An empty provider response is not evidence of zero activity.' };
     if (section === 'fleet' && !value?.report) return { state: 'unavailable', section, reason: 'The reported fleet roster is unavailable.' };

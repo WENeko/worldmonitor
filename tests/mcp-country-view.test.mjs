@@ -56,6 +56,19 @@ describe('country view MCP boundary', () => {
     assert.match(requests[0].init.headers['X-WM-MCP-Internal'], /^\d+\./);
     assert.equal(deps.pipe.count, 1);
   });
+  it('rejects oversized Atlas responses before JSON parsing and cancels their bodies', async () => {
+    for (const headers of [{ 'Content-Length': '524289' }, {}]) {
+      let cancelled = false;
+      globalThis.fetch = async () => new Response(new ReadableStream({
+        start(controller) { controller.enqueue(new Uint8Array(524289)); },
+        cancel() { cancelled = true; },
+      }), { headers });
+      const { body } = await invoke('get_country_brief_section', { section: 'pipelines', arguments: {} });
+      assert.equal(body.error.code, -32603);
+      assert.equal(body.result, undefined);
+      assert.equal(cancelled, true);
+    }
+  });
   it('rejects unknown readers and extra URL/header authority before downstream fetch', async () => {
     for (const args of [
       { section: 'arbitrary', arguments: {} },
