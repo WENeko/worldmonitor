@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { copyFileSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -24,20 +25,36 @@ const DAY_MS = 86_400_000;
 /**
  * Accepted-risk suppressions, per lockfile.
  *
- * Every entry MUST carry `reason` (why this is not exploitable here) and
- * `expiresAt` (when the reasoning must be re-checked). validateBaselineEntries()
- * enforces both, so a suppression cannot be added without a justification or an
- * end date — the two things the previous flat `['GHSA-…']` array let authors
- * skip, which is how three dead entries accumulated under pro-test.
+ * Every entry MUST carry `reason` (why this is not exploitable here),
+ * `expiresAt` (when the reasoning must be re-checked), and `lockfileSha256`
+ * (the reviewed lockfile). validateBaselineEntries() enforces all three.
+ * A later lockfile change — including a new path or parent for the same GHSA —
+ * fails the lease until caller reachability is reviewed again.
  *
- * An entry that outlives `expiresAt`, or whose advisory stops being reported at
- * all, FAILS the gate. Suppressions are leases, not grants.
+ * An entry that outlives `expiresAt`, whose advisory stops being reported, or
+ * whose lockfile no longer matches, FAILS the gate. Suppressions are leases,
+ * not grants.
  */
 export const BASELINE_ADVISORIES_BY_LOCKFILE = {
-  'package-lock.json': [],
+  'package-lock.json': [{
+    id: 'GHSA-vfj7-8cjw-p6xm',
+    reason: 'No patched braces release exists on npm (latest remains 3.0.3). Production inclusion is through Clerk/Solana React Native Metro peer tooling; the Vite browser bundle does not ship braces, micromatch, Metro, or Jest. Inspected API, server, CLI, and application sources do not pass untrusted brace patterns to those walkers. Markdown lint globs are repository-controlled. Caller evidence and removal conditions: docs/security/dependency-dispositions-2026-10-02.md.',
+    expiresAt: '2026-11-03T00:00:00Z',
+    lockfileSha256: 'c69d7459919ab51958835da8d11d1ed86d2205baa68b20394376da985ae755a1',
+  }],
   'consumer-prices-core/package-lock.json': [],
-  'blog-site/package-lock.json': [],
-  'pro-test/package-lock.json': [],
+  'blog-site/package-lock.json': [{
+    id: 'GHSA-ch52-4w7c-c8xp',
+    reason: 'No patched http-cache-semantics release exists on npm (latest remains 4.2.0). Astro builds a static blog with no server adapter. Build-time remote-image CachePolicy callers receive no incoming client max-stale directive or user cookie, and the deployed blog does not serve a shared user-response cache. Caller evidence and removal conditions: docs/security/dependency-dispositions-2026-10-02.md.',
+    expiresAt: '2026-11-03T00:00:00Z',
+    lockfileSha256: '9a23f7e02febd7708e7b61bee88343c6765e972db7863ae34d875dcf7ffbeee4',
+  }],
+  'pro-test/package-lock.json': [{
+    id: 'GHSA-vfj7-8cjw-p6xm',
+    reason: 'No patched braces release exists on npm (latest remains 3.0.3). The Pro lockfile pulls braces through Clerk/Solana React Native Metro peer tooling. The shipped Vite browser bundle does not include braces, micromatch, Metro, or Jest, and the Pro site has no Node pattern endpoint. Caller evidence and removal conditions: docs/security/dependency-dispositions-2026-10-02.md.',
+    expiresAt: '2026-11-03T00:00:00Z',
+    lockfileSha256: '5f6e1022d23980b394d12baaa47013b85f67f431015676df39ed3c460e91eb60',
+  }],
   'scripts/package-lock.json': [],
   'docker/runtime-package-lock.json': [],
 };
@@ -63,6 +80,9 @@ export function validateBaselineEntries(baseline = BASELINE_ADVISORIES_BY_LOCKFI
         throw new Error(
           `Baseline entry ${entry.id} (${lockfile}) needs an ISO \`expiresAt\` (got ${JSON.stringify(entry.expiresAt)}).`,
         );
+      }
+      if (!/^[a-f0-9]{64}$/.test(entry.lockfileSha256 ?? '')) {
+        throw new Error(`Baseline entry ${entry.id} (${lockfile}) needs a reviewed lockfileSha256.`);
       }
     }
   }
@@ -141,6 +161,7 @@ export function collectStaleBaselineEntries(report, lockfile) {
  * Sort every high+ finding into exactly one verdict.
  *
  *   baselined, unexpired          -> suppressed  (info)
+ *   baselined, lockfile mismatch  -> blocking    ("re-review caller reachability")
  *   baselined, past expiresAt     -> blocking    ("re-review the suppression")
  *   introduced by THIS change     -> blocking    (the author can fix it)
  *   inherited, inside grace       -> deferred    (warn + countdown)
@@ -167,6 +188,7 @@ export function classifyAudit({
   now = Date.now(),
   graceDays = DEFAULT_GRACE_DAYS,
   baseline = BASELINE_ADVISORIES_BY_LOCKFILE,
+  lockfileSha256,
 }) {
   const entries = baselineEntriesFor(lockfile, baseline);
   const entryById = new Map(entries.map((entry) => [entry.id, entry]));
@@ -179,7 +201,9 @@ export function classifyAudit({
     const entry = entryById.get(finding.id);
 
     if (entry) {
-      if (isBaselineExpired(entry, now)) {
+      if (entry.lockfileSha256 !== lockfileSha256) {
+        blocking.push({ ...finding, verdict: 'baseline-scope-changed' });
+      } else if (isBaselineExpired(entry, now)) {
         blocking.push({ ...finding, verdict: 'baseline-expired', expiresAt: entry.expiresAt });
       } else {
         suppressed.push({ ...finding, verdict: 'suppressed', expiresAt: entry.expiresAt, reason: entry.reason });
@@ -264,6 +288,8 @@ export function formatAuditReport(
         errors.push(`::error title=Advisory introduced by this change::${describeFinding(finding)} — this change adds it; it did not exist on the base branch.`);
       } else if (finding.verdict === 'baseline-expired') {
         errors.push(`::error title=Baseline suppression expired::${describeFinding(finding)} — the suppression lapsed on ${finding.expiresAt}. Re-review it in BASELINE_ADVISORIES_BY_LOCKFILE and set a new expiresAt, or fix the dependency.`);
+      } else if (finding.verdict === 'baseline-scope-changed') {
+        errors.push(`::error title=Baseline dependency scope changed::${describeFinding(finding)} — the audited dependency tree does not match the reviewed lockfile. Re-review caller reachability or remove the decision.`);
       } else {
         errors.push(`::error title=Grace period expired::${describeFinding(finding)} — published ${finding.publishedAt?.slice(0, 10)}, grace ended ${formatDate(finding.deadline)}.`);
       }
@@ -591,6 +617,7 @@ async function main() {
     introducedIds,
     publishedAt,
     graceDays: args.graceDays,
+    lockfileSha256: createHash('sha256').update(readFileSync(lockfile)).digest('hex'),
   });
 
   const { info, errors, failed } = formatAuditReport(classification, { failOnOutage: args.failOnOutage });

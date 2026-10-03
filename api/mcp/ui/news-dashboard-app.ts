@@ -1,8 +1,11 @@
 import { rpcError, rpcOk } from '../rpc';
 import { UI_RESOURCE_MIME_TYPE } from './shell';
+import { buildPluginShell } from './_plugin-loader';
 
-export const COUNTRY_VIEW_UI_URI = 'ui://worldmonitor/country-view-v1.html';
-export const NEWS_DASHBOARD_UI_URI = 'ui://worldmonitor/news-dashboard.html';
+export const COUNTRY_VIEW_UI_URI = 'ui://worldmonitor/country-view-v2.html';
+export const NEWS_DASHBOARD_UI_URI = 'ui://worldmonitor/news-dashboard-v2.html';
+export const LEGACY_COUNTRY_VIEW_UI_URI = 'ui://worldmonitor/country-view-v1.html';
+export const LEGACY_NEWS_DASHBOARD_UI_URI = 'ui://worldmonitor/news-dashboard.html';
 const previewHost = process.env.VERCEL_ENV === 'preview' ? process.env.VERCEL_URL : undefined;
 const ASSET_ORIGIN = previewHost && /^[a-z0-9-]+\.vercel\.app$/i.test(previewHost)
   ? `https://${previewHost}`
@@ -28,12 +31,12 @@ export const COUNTRY_VIEW_META = {
   ui: { csp: { connectDomains: [ASSET_ORIGIN], resourceDomains: [ASSET_ORIGIN, 'https://upload.wikimedia.org', 'data:'], frameDomains: [], baseUriDomains: [ASSET_ORIGIN] }, prefersBorder: true },
 };
 
-export async function readNewsDashboard(id: unknown, corsHeaders: Record<string, string>): Promise<Response> {
-  return readPluginDocument(id, corsHeaders, 'plugin.html', 'pluginRoot', NEWS_DASHBOARD_UI_URI);
+export async function readNewsDashboard(id: unknown, corsHeaders: Record<string, string>, uri = NEWS_DASHBOARD_UI_URI): Promise<Response> {
+  return readPluginDocument(id, corsHeaders, 'plugin.html', 'pluginRoot', uri);
 }
 
-export async function readCountryView(id: unknown, corsHeaders: Record<string, string>): Promise<Response> {
-  return readPluginDocument(id, corsHeaders, 'country.html', 'countryRoot', COUNTRY_VIEW_UI_URI);
+export async function readCountryView(id: unknown, corsHeaders: Record<string, string>, uri = COUNTRY_VIEW_UI_URI): Promise<Response> {
+  return readPluginDocument(id, corsHeaders, 'country.html', 'countryRoot', uri);
 }
 
 async function readPluginDocument(id: unknown, corsHeaders: Record<string, string>, entry: 'plugin.html' | 'country.html', root: 'pluginRoot' | 'countryRoot', uri: string): Promise<Response> {
@@ -60,8 +63,8 @@ async function readPluginDocument(id: unknown, corsHeaders: Record<string, strin
       html += decoder.decode();
     } finally { await reader.cancel(); }
     if (!html.includes(`id="${root}"`) || !html.includes('<head>')) throw new Error('Invalid plugin build');
-    const text = html.replace('<head>', `<head><base href="${ASSET_ORIGIN}/">`);
-    return rpcOk(id, { contents: [{ uri, mimeType: UI_RESOURCE_MIME_TYPE, text, _meta: uri === COUNTRY_VIEW_UI_URI ? COUNTRY_VIEW_META : NEWS_DASHBOARD_META }] }, corsHeaders);
+    const text = buildPluginShell({ origin: ASSET_ORIGIN, entry, root });
+    return rpcOk(id, { contents: [{ uri, mimeType: UI_RESOURCE_MIME_TYPE, text, _meta: root === 'countryRoot' ? COUNTRY_VIEW_META : NEWS_DASHBOARD_META }] }, corsHeaders);
   } catch {
     return rpcError(id, -32603, 'WorldMonitor dashboard assets are unavailable. Retry after the plugin build is deployed.', corsHeaders);
   }

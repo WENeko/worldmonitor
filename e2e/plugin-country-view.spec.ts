@@ -2,12 +2,13 @@ import { test, expect, type Page } from '@playwright/test';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import us from './fixtures/country-brief-us.json' with { type: 'json' };
+import { readCountryView } from '../api/mcp/ui/news-dashboard-app';
 
 const root = process.cwd();
 test.use({ serviceWorkers: 'block' });
 
 type HostCall = { name: string; arguments: Record<string, unknown> };
-async function installCountryHost(page: Page, fullExposure = false, initialOpenError?: string, atlasFixture = false, atlasOutages: { energy?: boolean; timeline?: boolean } = {}) {
+async function installCountryHost(page: Page, fullExposure = false, initialOpenError?: string, atlasFixture = false, atlasOutages: { energy?: boolean; timeline?: boolean } = {}, cachedShell?: string) {
   const calls: HostCall[] = [];
   const requestNames = new Map<number, string>();
   const cancelled: string[] = [];
@@ -41,8 +42,9 @@ async function installCountryHost(page: Page, fullExposure = false, initialOpenE
   const unmanaged: string[] = [];
   page.on('request', request => { if (request.url().includes('/api/')) unmanaged.push(request.url()); });
   await page.route('**/plugin/assets/**', async route => {
+    if (route.request().url().endsWith('/country-removed.js')) return route.fulfill({ status: 404, contentType: 'text/html', body: 'Removed build asset', headers: { 'Access-Control-Allow-Origin': '*' } });
     const file = join(root, 'dist/plugin/assets', new URL(route.request().url()).pathname.split('/').at(-1)!);
-    await route.fulfill({ path: file });
+    await route.fulfill({ path: file, headers: { 'Access-Control-Allow-Origin': '*' } });
   });
   await page.route('**/data/*.geojson', async route => route.fulfill({ path: join(root, 'public/data', new URL(route.request().url()).pathname.split('/').at(-1)!), headers: { 'Access-Control-Allow-Origin': '*' } }));
   await page.route('**/country-host-test', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><meta charset="utf-8"><title>Country plugin acceptance — controlled fixtures</title><h1>Country plugin acceptance — controlled fixtures</h1><p>Tests the built iframe and host transport. Does not test live OAuth or source freshness.</p><iframe title="WorldMonitor country view" sandbox="allow-scripts allow-downloads" style="width:100%;height:950px;border:0"></iframe>' }));
@@ -128,7 +130,7 @@ async function installCountryHost(page: Page, fullExposure = false, initialOpenE
     return { structuredContent: { section, state: 'ready', value: values[section] ?? {}, retrievedAt: '2026-10-01T15:00:00.000Z' } };
   });
   await page.goto('/country-host-test');
-  const html = await readFile(join(root, 'dist/plugin/country.html'), 'utf8');
+  const html = cachedShell ?? await readFile(join(root, 'dist/plugin/country.html'), 'utf8');
   await page.evaluate(html => {
     const frame = document.querySelector('iframe')!;
     window.addEventListener('message', async event => {
@@ -161,6 +163,36 @@ async function installCountryHost(page: Page, fullExposure = false, initialOpenE
   }), { name, args });
   return { calls, contexts, links, unmanaged, cancelled, action, releaseDisruptions, failAtlas: () => { atlasUnavailable = true; }, recoverAtlas: () => { atlasUnavailable = false; }, delayAtlasDetail: () => { delayAtlasDetail = true; }, releaseAtlasDetail, failDisruptions: () => { disruptionsFailed = true; }, failEnergy: () => { energyFailed = true; }, partialAtlas: () => { atlasPartial = true; }, denyAtlas: () => { atlasDenied = true; }, activityOutage: () => { failActivity = true; }, activityRecover: () => { failActivity = false; }, partial: () => { partialBootstrap = true; }, complete: () => { partialBootstrap = false; }, quota: () => { quotaExceeded = true; }, get admissions() { return admissions; }, delayAdmission: () => { delayAdmission = true; }, releaseAdmission, delayCoverage: () => { delayCoverage = true; }, releaseCoverage, fail: () => { failFacts = true; }, recover: () => { failFacts = false; }, delay: () => { delayUS = true; }, release: releaseUS };
 }
+
+test('cached country resource loads the current compiled panel after its old assets are removed', async ({ page }, info) => {
+  const fetchBefore = globalThis.fetch;
+  let shell: string;
+  try {
+    globalThis.fetch = async () => new Response('<!doctype html><html><head></head><body><main id="countryRoot">Old country panel</main><script type="module" src="/plugin/assets/country-removed.js"></script></body></html>', { headers: { 'Content-Type': 'text/html' } });
+    const response = await (await readCountryView(1, {})).json();
+    shell = response.result.contents[0].text;
+  } finally { globalThis.fetch = fetchBefore; }
+  const requests: string[] = [];
+  page.on('request', request => requests.push(request.url()));
+  await page.route('**/plugin/country.html*', route => route.fulfill({ path: join(root, 'dist/plugin/country.html'), headers: { 'Access-Control-Allow-Origin': '*' } }));
+  const host = await installCountryHost(page, false, undefined, true, {}, shell);
+  const frame = page.frameLocator('iframe');
+  await expect(frame.locator('.cdp-country-name')).toHaveText('United States', { timeout: 5000 });
+  expect(requests.some(url => url.endsWith('/country-removed.js'))).toBe(false);
+  await frame.getByRole('button', { name: 'Resources & infrastructure', exact: true }).click();
+  const energy = frame.locator('[data-brief-section=energy]');
+  await expect(energy).toContainText('1 pipeline');
+  await energy.getByRole('button', { name: 'Controlled US Pipeline', exact: true }).click();
+  await expect(frame.locator('[data-country-atlas-detail]')).toContainText('Controlled operator statement');
+  await expect(frame.locator('[data-country-atlas-detail]')).toContainText('Controlled pipeline maintenance');
+  await frame.getByRole('button', { name: 'Back to country', exact: true }).click();
+  await frame.getByRole('button', { name: 'Overview', exact: true }).click();
+  expect(host.admissions).toBe(1);
+  await page.screenshot({ path: info.outputPath('cached-country-current-build.png'), fullPage: true });
+  await page.setViewportSize({ width: 430, height: 1200 });
+  await expect(frame.locator('.cdp-country-name')).toHaveText('United States');
+  await page.screenshot({ path: info.outputPath('cached-country-current-build-mobile.png'), fullPage: true });
+});
 
 test('country military observations render under one allocation and survive an AIS outage', async ({ page }, info) => {
   const host = await installCountryHost(page);

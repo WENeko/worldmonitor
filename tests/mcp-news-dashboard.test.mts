@@ -31,14 +31,25 @@ test('dashboard entry opens the actual feed panels with empty arguments', () => 
   assert.ok(tool, 'news dashboard entry must exist separately from the intelligence summary');
   assert.deepEqual(tool.inputSchema.required, []);
   const publicTool = buildPublicTool(tool, { compressDescriptions: false });
-  assert.equal(publicTool._meta?.ui?.resourceUri, 'ui://worldmonitor/news-dashboard.html');
+  assert.equal(publicTool._meta?.ui?.resourceUri, 'ui://worldmonitor/news-dashboard-v2.html');
   assert.deepEqual(publicTool._meta?.['openai/ui']?.entrypoints, [{type: 'global'}, {type: 'thread'}]);
 });
 
 import { afterEach } from 'node:test';
 import { readNewsDashboard } from '../api/mcp/ui/news-dashboard-app.ts';
+import { buildUiResourceRead, isUiResourceUri } from '../api/mcp/ui/registry.ts';
 const realFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = realFetch; });
+
+test('legacy installed resource links remain public aliases that return the cache-safe shell', async () => {
+  globalThis.fetch = async input => new Response(`<html><head></head><body><main id="${String(input).endsWith('country.html') ? 'countryRoot' : 'pluginRoot'}"></main></body></html>`, { headers: { 'Content-Type': 'text/html' } });
+  for (const uri of ['ui://worldmonitor/country-view-v1.html', 'ui://worldmonitor/news-dashboard.html']) {
+    assert.equal(isUiResourceUri(uri), true);
+    const body = await (await buildUiResourceRead(1, uri, {})).json();
+    assert.equal(body.result.contents[0].uri, uri);
+    assert.match(body.result.contents[0].text, /Retry interface/);
+  }
+});
 
 test('dashboard resource serves only the fixed build origin and never forwards credentials', async () => {
   let redirect: RequestRedirect | undefined;

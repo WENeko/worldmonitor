@@ -4,6 +4,28 @@ Status: shared country view implemented; controlled local checks recorded below.
 
 Compare the same country, tier and source snapshot. The website renderer is `CountryDeepDivePanel`. Derive section IDs from `BRIEF_SECTIONS`; ordinary countries render 23 of its 24 keys. China adds `china`. CII and resilience are separate summaries. Exclude unavailable measurements from factual comparisons while requiring their unavailable UI to match.
 
+## Native Chrome check after the October 3 UTC reset
+
+The check used the signed-in acceptance Chrome profile. The US website brief was refreshed at 00:00:04 UTC. The country request used **WorldMonitor MCP Acceptance**, connector `asdk_app_6abe6a56ddd08191b65e684c81dfed90`, in the acceptance chat. The tool succeeded with country US and topic all. Its iframe remained on “Connecting to WorldMonitor…”. Chrome requested `country-C1t3d1eZ.js`, which returned 404. The public current build and canonical MCP resource both referenced `country-Dqvrjg_F.js`, which returned 200. The exact deployment asset origin required authentication.
+
+The browser used cached resource HTML from an earlier deployment. The cache-safe shell repair has controlled browser proof. Production acceptance remains blocked until this repair is merged, deployed and the acceptance connection discovers its v2 UI resources. Legacy resource reads remain aliases for existing descriptors; the obsolete raw cached HTML requires one connection refresh. New cached shells load the current panel document on each mount and show an interface retry on failure.
+
+| Requested view | Refreshed website observation | Native ChatGPT observation | Difference and next proof |
+|---|---|---|---|
+| Country panel | 23 sections ready | Tool succeeded; iframe did not initialize | Repair asset delivery before comparing section values |
+| CII | 43, Normal, falling, October 2 19:49 New York | No rendered value | Compare score and observation time after repair |
+| Resilience | 59, interval 58–59, 87% coverage | No rendered value | Compare domains, confidence and entitlement |
+| Five factors | Food 5, energy 4, demographics 4, technology 5, defense 5 | No rendered values | Compare underlying evidence |
+| Signals | 3 critical news and 1 aviation; high, moderate and low counts 0 | Projection remains missing in plugin code | Separate implementation gap after delivery repair |
+| Military | Own flights 0, foreign flights 0, naval 0; defense 3.4% in 2024; personnel 1,395,000 in 2020 | No rendered values | Compare same flight rights, dates and partial coverage |
+| IMF | Growth 2.3%, inflation 3.2%, unemployment 4.4% | No rendered values | Compare same country and dataset observations |
+| BIS | Residential 154.2 and commercial 187.3 in 2026 Q2; household DSR 8.0 in 2026 Q1 | No rendered values | Compare values, dates and missing-source notices |
+| Atlas | No asset rows in this website snapshot | No rendered rows; PR #8799 remains unmerged | Recheck populated source coverage and original detail actions after merge |
+| Usage | Website is a separate entitlement path | The opening tool succeeded; widget usage notice could not render | Controlled shell check uses one allocation; native accounting remains open |
+| Installed cloud plugin | WorldMonitor version 2.10.1 visible as installed | Its headline starter redirected to Open ChatGPT Desktop | This is a separate installation path from the MCP Acceptance connection |
+
+The website and acceptance connection's tiers have not been proved equal. These are captured observations, not a value-parity pass. News map markers, 2D and 3D interaction, host follow-up context and composer obstruction still need native production checks. Compact-panel parity remains open.
+
 ## Country data and sections
 
 | ID | Surface | Existing data/render owner | Required proof | Current verdict |

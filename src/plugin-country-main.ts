@@ -20,7 +20,7 @@ import { initI18n } from '@/services/i18n';
 import { combineAbortSignals } from '@/services/timeout-signal';
 import type { CountryIntelData } from '@/components/CountryBriefPanel';
 
-async function mountCountryView(): Promise<void> {
+async function mountPlugin(): Promise<void> {
   const usageNotice = document.getElementById('countryUsage')!;
   const admissions = new Map<string, PanelAdmission>();
   let admission: PanelAdmission | undefined;
@@ -364,4 +364,9 @@ async function mountCountryView(): Promise<void> {
   void start().catch(() => { status.textContent = 'The ChatGPT host connection is unavailable. Reload the country view.'; });
 
 }
-void mountCountryView().catch(() => { document.getElementById('countryStatus')!.textContent = 'The country interface could not be loaded. Refresh to retry.'; });
+const mount = () => { void mountPlugin().catch(() => { document.getElementById('countryStatus')!.textContent = 'The country interface could not be loaded. Refresh to retry.'; }); };
+if (document.documentElement.dataset.wmPluginManagedBoot === 'true') {
+  document.addEventListener('wm-plugin-mount', mount, { once: true });
+} else {
+  mount();
+}

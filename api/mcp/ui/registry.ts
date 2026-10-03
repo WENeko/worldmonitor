@@ -29,7 +29,7 @@ import { NEWS_INTELLIGENCE_APP_HTML } from './news-intelligence-app';
 import { CONFLICT_EVENTS_APP_HTML } from './conflict-events-app';
 import { NATURAL_DISASTERS_APP_HTML } from './natural-disasters-app';
 import { PREDICTION_MARKETS_APP_HTML } from './prediction-markets-app';
-import { COUNTRY_VIEW_UI_URI, COUNTRY_VIEW_META, readCountryView, NEWS_DASHBOARD_UI_URI, NEWS_DASHBOARD_META, readNewsDashboard } from './news-dashboard-app';
+import { COUNTRY_VIEW_UI_URI, COUNTRY_VIEW_META, readCountryView, NEWS_DASHBOARD_UI_URI, NEWS_DASHBOARD_META, readNewsDashboard, LEGACY_COUNTRY_VIEW_UI_URI, LEGACY_NEWS_DASHBOARD_UI_URI } from './news-dashboard-app';
 import { FORECASTS_APP_HTML } from './forecasts-app';
 
 // Re-exported from the shared shell so the mimeType has a single source of
@@ -169,7 +169,7 @@ export const UI_RESOURCE_REGISTRY: UiResourceDef[] = [
 const UI_RESOURCE_BY_URI = new Map(UI_RESOURCE_REGISTRY.map((r) => [r.uri, r]));
 
 export function isUiResourceUri(uri: string): boolean {
-  return uri === COUNTRY_VIEW_UI_URI || uri === NEWS_DASHBOARD_UI_URI || UI_RESOURCE_BY_URI.has(uri);
+  return uri === COUNTRY_VIEW_UI_URI || uri === NEWS_DASHBOARD_UI_URI || uri === LEGACY_COUNTRY_VIEW_UI_URI || uri === LEGACY_NEWS_DASHBOARD_UI_URI || UI_RESOURCE_BY_URI.has(uri);
 }
 
 // resources/list public shape — {uri, name, description, mimeType} plus the
@@ -200,8 +200,8 @@ export async function buildUiResourceRead(
   uri: string,
   corsHeaders: Record<string, string>,
 ): Promise<Response> {
-  if (uri === COUNTRY_VIEW_UI_URI) return readCountryView(id, corsHeaders);
-  if (uri === NEWS_DASHBOARD_UI_URI) return readNewsDashboard(id, corsHeaders);
+  if (uri === COUNTRY_VIEW_UI_URI || uri === LEGACY_COUNTRY_VIEW_UI_URI) return readCountryView(id, corsHeaders, uri);
+  if (uri === NEWS_DASHBOARD_UI_URI || uri === LEGACY_NEWS_DASHBOARD_UI_URI) return readNewsDashboard(id, corsHeaders, uri);
   const def = UI_RESOURCE_BY_URI.get(uri);
   if (!def) {
     // Unreachable in practice — the handler only routes here after
