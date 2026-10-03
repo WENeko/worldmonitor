@@ -82,7 +82,7 @@ Shared rendering does not prove complete data or action parity. A populated obse
 |---|---|---|---|
 | `get_country_risk` | Country CII/risk presentation | Compare all risk measures, times and outage states | Compact card; behavioral parity unaccepted |
 | `get_world_brief` | World assessment presentation | Compare assessment, source coverage and relevant actions | Compact card; behavioral parity unaccepted |
-| `get_market_data` | Market panels | Compare quote scope, timestamps, charts and filtering | Compact card; behavioral parity unaccepted |
+| `get_market_data` | Market panels | Compare quote scope, timestamps, charts and filtering | PR #8813 restores loaded names, rows, charts and projection samples in controlled tests; deployed native parity unaccepted |
 | `get_chokepoint_status` | Chokepoint/transit presentation | Compare routes, periods, risk and drill-down | Compact card; behavioral parity unaccepted |
 | `get_news_intelligence` | News intelligence presentation | Compare sources, classifications and evidence actions | Compact card; behavioral parity unaccepted |
 | `get_conflict_events` | Conflict map/presentation | Compare actual events, markers, dates and selection | Compact card; behavioral parity unaccepted |
@@ -136,3 +136,32 @@ For each UI PR, attach inspected desktop/mobile screenshots at the tested commit
 The full non-built-output unit suite passes 33,963 tests, with 19 skips and no failures. The compiled country-view suite passes all three tests. The existing website US evidence/report and limited-country/China tests pass. All 2,213 MCP tests pass, including the new transport checks. All 1,686 DOM tests pass, including country switching, entitlement revocation and existing-panel initialization. The website build passes the unchanged bundle budget and all 1,932 built-output tests. Lazy military-card refresh is now covered by a runtime barrier test. The original text-only country prompt retains its executable risk, assessment and macro steps; the interactive view has a separate prompt. Browser/API typechecks, architectural boundaries, product inventory and source-attribution checks pass. Biome reports no errors; its existing repository warnings are outside this change.
 
 These checks do not establish live source freshness, ordinary ChatGPT prompt routing or full parity. The open rows above remain delivery gates for that broader objective.
+
+## Country Signals partial repair, 2026-10-03
+
+| Website behavior | Embedded behavior in this unit | Verification and remaining difference |
+|---|---|---|
+| Military Signals count observations near the country, with separate counts inside its borders | Reuses the military panel's licensed observations and the same shared near/inside projector | Controlled country scope and precise negative geometry checks; no new host reader or data call. Live source and redistribution differences still require matching native observations. |
+| Loaded country Signals persist while CII updates | Score-only updates preserve loaded counts and agent context | A score refresh with no Signals cannot erase them; existing website severity totals and recent evidence survive count refreshes together. |
+| Signals sources and aggregate country-cluster details are independent inputs | Four military fields are observed or null. Other 24 fields and aggregate severity/recent details are explicitly unavailable | Nullable coverage prevents fabricated zero counts or severity totals. Full 28-field and 24-hour/1,000-observation aggregator parity remains open. |
+| Country navigation reuses loaded observations | Topic navigation reuses Signals and military observations | Compiled opaque-iframe regression covers observed, source-outage retention, recovery and authorization loss, one allocation per refresh, navigation reuse and desktop/mobile layout. This is controlled local evidence; deployment and native acceptance remain pending. |
+
+The website's existing severity and three-recent-item projection is now a shared pure function. Country selection, timestamps, pruning, global cap and targeted theater replacement remain with the existing aggregator. The embedded military subset does not claim to reconstruct that aggregator. No tool schema, allowance, host registry or provider changes are included.
+
+## October 3 market chart checkpoint
+
+[PR #8813](https://github.com/koala73/worldmonitor/pull/8813) restores chart inspection from the same loaded market series. This is controlled local proof and PR delivery; it does not establish deployed ChatGPT acceptance.
+
+| Website behavior | Plugin baseline | Repair proof | Remaining acceptance |
+|---|---|---|---|
+| MarketPanel shows asset names and loaded quotes | Each class capped again at eight rows; names omitted | Every loaded or sampled quote, including summary/JMESPath projections; name-only sectors retained | Compare matching live source observations after deployment |
+| Original intraday chart opens from loaded series | Series discarded | Shared miniSparkline and terminalChart; full chart created on first keyboard expansion and reused on reopen | Confirm live series availability and native host interaction |
+| Missing measurements remain unknown | No chart coverage explanation | Missing series, null prices/changes and supplied source limits/dates remain explicit | Curated seed cannot explain arbitrary-symbol absence |
+| Loaded inspection does not fetch again | Compact result only | Desktop/mobile opaque iframe sends no extra tool calls; remaining usage stays 47 | Verify native allocation, refresh accounting and notices |
+| Account watchlist and requested-symbol lookup | No matching account write or arbitrary query | Outside this chart unit; no fake persistence or provider failure inference | Separate authenticated source and metering work |
+
+Verification includes 198 focused market/chart/resource, anonymous conformance, usage and CI-inventory checks in Pacific/Auckland, browser/API types, plugin build, boundaries, safe HTML, docs/discovery and the actual pre-push gates. Two permanent desktop/mobile CI browser tests load the real Vite document, CSS and module through the resource bootstrap. Controlled screenshots show fourteen loaded rows versus ten before, with the chart available from eleven supplied series. Fourteen inspected UI images are attached to the PR, including six refreshed after review repairs. Remote CI, merge, deployment, source freshness and native acceptance remain separate verdicts.
+
+Review repairs preserve same-country loaded military Signal counts on an unavailable refresh and label them as previously loaded, not fresh. Authorization loss clears the affected counts, and a successful observed zero replaces a prior positive count. A new country does not inherit old counts. An empty flight RPC remains unknown because the producer returns the same empty shape for source failures and the host registry explicitly rejects unconfirmed initial empties. AIS supplies a separate connected-snapshot coverage contract. Unknown temporal observations also leave initial aggregate severity unknown.
+
+The initial DOM-test typecheck failed because a fixture used `Strike` instead of the typed `MILITARY` value. The repaired fixture and refresh regressions run through the actual DOM-test typecheck before delivery; the initial CI failure is not a passing validation result.

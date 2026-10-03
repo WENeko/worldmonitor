@@ -8066,6 +8066,57 @@ function startChokepointFlowsSeedLoop() {
 }
 
 // ─────────────────────────────────────────────────────────────
+const AU_YIELD_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const AU_YIELD_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const AU_YIELD_MAX_CONTENT_AGE_MS = 10 * AU_YIELD_REFRESH_INTERVAL_MS;
+const AU_YIELD_SEED_TIMEOUT_MS = 300_000;
+let auYieldSeedInFlight = false;
+
+async function seedAuYieldCurve() {
+  if (auYieldSeedInFlight) return;
+  auYieldSeedInFlight = true;
+  try {
+    const meta = await upstashGet('seed-meta:economic:yield-curve-au');
+    const now = Date.now();
+    const fetchedAt = Number(meta?.fetchedAt);
+    const newestItemAt = Number(meta?.newestItemAt);
+    if (fetchedAt > 0 && fetchedAt <= now && now - fetchedAt < AU_YIELD_REFRESH_INTERVAL_MS
+      && newestItemAt > 0 && newestItemAt <= now && now - newestItemAt < AU_YIELD_MAX_CONTENT_AGE_MS) {
+      const [canonical, completion] = await Promise.all([
+        upstashGet('economic:yield-curve:au:v1'),
+        upstashGet('seed-completion:economic:yield-curve-au'),
+      ]);
+      if (Number.isFinite(canonical?._seed?.fetchedAt)
+        && completion?.fetchedAt === canonical._seed.fetchedAt
+        && Number.isFinite(completion?.completedAt) && completion.completedAt >= fetchedAt) return;
+    }
+
+    await new Promise((resolve, reject) => {
+      execFile(process.execPath, [path.join(__dirname, 'seed-yield-curve-au.mjs')], {
+        env: {
+          ...process.env,
+          WM_BUNDLE_COMPLETION_META_KEY: 'seed-completion:economic:yield-curve-au',
+          BUNDLE_SECTION_TIMEOUT_MS: String(AU_YIELD_SEED_TIMEOUT_MS),
+        },
+        timeout: AU_YIELD_SEED_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+      }, (err, stdout, stderr) => {
+        relayLogScriptOutput('[AuYieldFallback]', stdout);
+        relayLogScriptOutput('[AuYieldFallback]', stderr);
+        if (err) return reject(err);
+        resolve();
+      });
+    });
+  } finally {
+    auYieldSeedInFlight = false;
+  }
+}
+
+function startAuYieldCurveSeedLoop() {
+  if (!UPSTASH_ENABLED) return;
+  startBootSeedLoop('AuYieldFallback', 'seed-meta:economic:yield-curve-au', AU_YIELD_CHECK_INTERVAL_MS, seedAuYieldCurve, (e) => console.warn('[AuYieldFallback] Seed error:', e?.message || e));
+}
+
 // PizzINT Seed — Pentagon Pizza Index + GDELT tensions → Redis
 // Fetches from pizzint.watch on Railway (datacenter IPs blocked
 // from Vercel Edge). Vercel handler reads from seed key only.
@@ -15089,6 +15140,7 @@ server.listen(PORT, () => {
   startWsbTickersSeedLoop();
   startClimateNewsSeedLoop();
   startChokepointFlowsSeedLoop();
+  startAuYieldCurveSeedLoop();
   startPizzintSeedLoop();
   startDodoPriceSeedLoop();
 });

@@ -1,4 +1,4 @@
-import { COUNTRY_ACTIVITY_BOUNDS, isCountryActivityCoordinate, projectCountryMilitaryActivity } from '@/services/country-military-activity';
+import { COUNTRY_ACTIVITY_BOUNDS, isCountryActivityCoordinate, projectCountryMilitaryActivity, projectCountryMilitarySignalCounts } from '@/services/country-military-activity';
 import { CountryBriefController, projectChinaCountrySummary } from '@/components/CountryBriefController';
 import { createWebsiteCountryBriefSource } from '@/services/country-brief-source';
 import { hasTemporalBaselineSnapshot } from '@/services/temporal-baseline';
@@ -18,6 +18,7 @@ import { yieldToMain } from '@/utils/after-paint';
 import { effectivePubDateMs } from '@/services/feed-date';
 import type { CountryCoverageEvent } from '@/services/country-coverage';
 import { reconcileCountryTimelineIncidents } from '../../shared/country-timeline-events';
+import { projectCountrySignalDetails } from '../../shared/country-signal-details';
 import {
   COUNTRY_ALIASES,
   countryTermIndex,
@@ -1125,24 +1126,7 @@ export class CountryIntelManager implements AppModule {
       ).length;
     }
 
-    let militaryFlights = 0;
-    let militaryVessels = 0;
-    let militaryFlightsInCountry = 0;
-    let militaryVesselsInCountry = 0;
-    if (this.ctx.intelligenceCache.military) {
-      militaryFlights = this.ctx.intelligenceCache.military.flights.filter((f) =>
-        hasGeoShape ? this.isNearCountry(f.lat, f.lon, code) : f.operatorCountry?.toUpperCase() === code
-      ).length;
-      militaryVessels = this.ctx.intelligenceCache.military.vessels.filter((v) =>
-        hasGeoShape ? this.isNearCountry(v.lat, v.lon, code) : v.operatorCountry?.toUpperCase() === code
-      ).length;
-      militaryFlightsInCountry = this.ctx.intelligenceCache.military.flights.filter((f) =>
-        hasGeoShape ? this.isInCountry(f.lat, f.lon, code) : f.operatorCountry?.toUpperCase() === code
-      ).length;
-      militaryVesselsInCountry = this.ctx.intelligenceCache.military.vessels.filter((v) =>
-        hasGeoShape ? this.isInCountry(v.lat, v.lon, code) : v.operatorCountry?.toUpperCase() === code
-      ).length;
-    }
+    const military = projectCountryMilitarySignalCounts(code, this.ctx.intelligenceCache.military?.flights ?? [], this.ctx.intelligenceCache.military?.vessels ?? []);
 
     let outages = 0;
     if (this.ctx.intelligenceCache.outages) {
@@ -1216,10 +1200,7 @@ export class CountryIntelManager implements AppModule {
     return {
       criticalNews,
       protests,
-      militaryFlights,
-      militaryVessels,
-      militaryFlightsInCountry,
-      militaryVesselsInCountry,
+      ...military,
       outages,
       aisDisruptions: signalTypeCounts.aisDisruptions,
       satelliteFires: signalTypeCounts.satelliteFires,
@@ -1257,40 +1238,7 @@ export class CountryIntelManager implements AppModule {
 
   private async buildSignalDetails(code: string): Promise<CountryDeepDiveSignalDetails> {
     const cluster = (await getSignalAggregator()).getCountryClusters().find((entry) => entry.country === code);
-    if (!cluster) {
-      return { critical: 0, high: 0, medium: 0, low: 0, recentHigh: [] };
-    }
-
-    const details: CountryDeepDiveSignalDetails = {
-      critical: 0,
-      high: 0,
-      medium: 0,
-      low: 0,
-      recentHigh: [],
-    };
-
-    const rankedSignals = [...cluster.signals]
-      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-
-    for (const signal of rankedSignals) {
-      const severity = this.normalizeSignalSeverity(signal.type, signal.severity);
-      if (severity === 'critical') details.critical += 1;
-      else if (severity === 'high') details.high += 1;
-      else if (severity === 'medium') details.medium += 1;
-      else details.low += 1;
-    }
-
-    details.recentHigh = rankedSignals
-      .map((signal) => ({
-        type: this.mapSignalType(signal.type),
-        severity: this.normalizeSignalSeverity(signal.type, signal.severity),
-        description: signal.title,
-        timestamp: signal.timestamp,
-      }))
-      .filter((signal) => signal.severity === 'critical' || signal.severity === 'high')
-      .slice(0, 3);
-
-    return details;
+    return projectCountrySignalDetails(cluster?.signals ?? []);
   }
 
   private buildMilitarySummary(code: string, country: string): CountryDeepDiveMilitarySummary {
@@ -1362,29 +1310,6 @@ export class CountryIntelManager implements AppModule {
     return indicators.slice(0, 6);
   }
 
-  private mapSignalType(type: string): CountryDeepDiveSignalDetails['recentHigh'][number]['type'] {
-    if (type === 'military_flight' || type === 'military_vessel') return 'MILITARY';
-    if (type === 'protest') return 'PROTEST';
-    if (type === 'internet_outage') return 'OUTAGE';
-    if (type === 'satellite_fire') return 'DISASTER';
-    if (type === 'radiation_anomaly') return 'DISASTER';
-    if (type === 'ais_disruption') return 'OUTAGE';
-    if (type === 'active_strike') return 'MILITARY';
-    if (type === 'temporal_anomaly') return 'CYBER';
-    return 'OTHER';
-  }
-
-  private normalizeSignalSeverity(
-    type: string,
-    severity: 'low' | 'medium' | 'high',
-  ): CountryDeepDiveSignalDetails['recentHigh'][number]['severity'] {
-    if (type === 'active_strike' && severity === 'high') return 'critical';
-    if (type === 'radiation_anomaly' && severity === 'high') return 'critical';
-    if (severity === 'high') return 'high';
-    if (severity === 'medium') return 'medium';
-    return 'low';
-  }
-
   async openCountryStory(code: string, name: string): Promise<void> {
     if (!dataFreshness.hasSufficientData() || this.ctx.latestClusters.length === 0) {
       this.showToast('Data still loading — try again in a moment');
@@ -1425,18 +1350,6 @@ export class CountryIntelManager implements AppModule {
 
   private isInCountry(lat: number, lon: number, code: string): boolean {
     return isCountryActivityCoordinate(lat, lon, code);
-  }
-
-  // Near = bounding-box padded by ~2° (~220 km). Captures vessels/aircraft in
-  // adjacent waters/airspace so the risk chip reflects proximity, not just
-  // strict territory. See issue #2972 bug 2.
-  private static readonly NEAR_BUFFER_DEG = 2;
-  private isNearCountry(lat: number, lon: number, code: string): boolean {
-    if (this.isInCountry(lat, lon, code)) return true;
-    const b = CountryIntelManager.COUNTRY_BOUNDS[code];
-    if (!b) return false;
-    const pad = CountryIntelManager.NEAR_BUFFER_DEG;
-    return lat >= b.s - pad && lat <= b.n + pad && lon >= b.w - pad && lon <= b.e + pad;
   }
 
   static COUNTRY_BOUNDS = COUNTRY_ACTIVITY_BOUNDS;

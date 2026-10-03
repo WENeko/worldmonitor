@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import { CountrySectionError } from '@/services/country-brief-error';
 import type { CountryBriefSource } from '@/services/country-brief-source';
 
 vi.mock('@/utils', () => import('@/utils/circuit-breaker'));
 vi.mock('@/services/maritime', () => ({ registerAisCallback: vi.fn(), unregisterAisCallback: vi.fn(), isAisConfigured: () => false, initAisStream: vi.fn() }));
 vi.mock('@/services/related-assets', () => ({ preloadInfrastructureTables: async () => {}, getNearbyInfrastructure: () => [{ id: 'base', name: 'Controlled base', distanceKm: 25 }] }));
-import { isCountryActivityCoordinate, loadHostCountryMilitaryActivity, projectCountryMilitaryActivity } from '@/services/country-military-activity';
+import { isCountryActivityCoordinate, loadHostCountryMilitaryActivity, projectCountryMilitaryActivity, projectCountryMilitarySignalCounts } from '@/services/country-military-activity';
 import * as geometry from '@/services/country-geometry';
 import { classifyMilitaryVessel } from '@/services/military-vessels';
 
@@ -20,6 +21,18 @@ function source(flights: ReturnType<typeof vi.fn>, aisAvailable = true) {
 }
 
 describe('shared country military observations', () => {
+  it('shares near and inside Signal counts without treating absent observations as zero', () => {
+    const near = { lat: 50, lon: -77, operatorCountry: 'GB' };
+    expect(projectCountryMilitarySignalCounts('US', [own, near, outside], [foreign, near])).toEqual({ militaryFlights: 2, militaryFlightsInCountry: 1, militaryVessels: 2, militaryVesselsInCountry: 1 });
+    expect(projectCountryMilitarySignalCounts('US', null, [])).toEqual({ militaryFlights: null, militaryFlightsInCountry: null, militaryVessels: 0, militaryVesselsInCountry: 0 });
+  });
+
+  it('keeps precise negative geometry for inside Signals while retaining near-country activity', () => {
+    vi.spyOn(geometry, 'isCoordinateInCountry').mockImplementation((_lat, lon) => lon === 2.3522);
+    const paris = { lat: 48.8566, lon: 2.3522, operatorCountry: 'FR' };
+    const zurich = { lat: 47.3769, lon: 8.5417, operatorCountry: 'CH' };
+    expect(projectCountryMilitarySignalCounts('FR', [paris, zurich], [])).toEqual({ militaryFlights: 2, militaryFlightsInCountry: 1, militaryVessels: 0, militaryVesselsInCountry: 0 });
+  });
   it('uses coarse bounds only when geometry is unavailable and retains precise inclusion outside them', () => {
     const coordinate = vi.spyOn(geometry, 'isCoordinateInCountry').mockReturnValue(null);
     expect(isCountryActivityCoordinate(48.8566, 2.3522, 'FR')).toBe(true);
@@ -61,6 +74,7 @@ describe('shared country military observations', () => {
   it('follows flight pages and retains vessels when flight pagination fails', async () => {
     const flights = vi.fn().mockImplementation(async (args: { cursor: string }) => args.cursor ? { flights: [flight('foreign', foreign)], pagination: { nextCursor: '' } } : { flights: [flight('own')], pagination: { nextCursor: 'next' } });
     const summary = await loadHostCountryMilitaryActivity(source(flights), 'US', 'United States', new AbortController().signal);
+    expect(summary.signalCounts).toEqual({ militaryFlights: 2, militaryFlightsInCountry: 2, militaryVessels: 1, militaryVesselsInCountry: 1 });
     expect(summary.ownFlights).toBe(1);
     expect(summary.foreignFlights).toBe(1);
     expect(summary.nearbyVessels).toBe(1);
@@ -69,6 +83,8 @@ describe('shared country military observations', () => {
     const partial = await loadHostCountryMilitaryActivity(source(flights), 'US', 'United States', new AbortController().signal);
     expect(partial.ownFlights).toBeNull();
     expect(partial.nearbyVessels).toBe(1);
+    expect(partial.signalCounts.militaryFlights).toBeNull();
+    expect(partial.signalCounts.militaryVessels).toBe(1);
     expect(partial.coverageNotes.join(' ')).toContain('not a zero');
   });
   it.each(['US', 'GB', 'RU'])('reads one valid global AIS candidate snapshot for %s', async code => {
@@ -95,6 +111,8 @@ describe('shared country military observations', () => {
     const summary = await loadHostCountryMilitaryActivity(source(flights, false), 'US', 'United States', new AbortController().signal);
     expect(summary.ownFlights).toBe(1);
     expect(summary.nearbyVessels).toBeNull();
+    expect(summary.signalCounts.militaryFlights).toBe(1);
+    expect(summary.signalCounts.militaryVessels).toBeNull();
     expect(summary.foreignPresence).toBeNull();
   });  it('retains independent observations when the fleet report is malformed', async () => {
     const flights = vi.fn().mockResolvedValue({ flights: [flight('own')], pagination: { nextCursor: '' } });
@@ -106,4 +124,15 @@ describe('shared country military observations', () => {
     expect(summary.coverageNotes).toContain('USNI fleet roster unavailable.');
   });
 
+});
+
+it('keeps ambiguous empty flights unknown and reports authorization loss for refresh retention', async () => {
+  const reader = source(vi.fn().mockResolvedValue({ flights: [], pagination: { nextCursor: '' } }));
+  const empty = await loadHostCountryMilitaryActivity(reader, 'US', 'United States', new AbortController().signal);
+  expect(empty.signalCounts.militaryFlights).toBeNull();
+  expect(empty.deniedSignalFields).toEqual([]);
+  reader.military.listMilitaryFlights = vi.fn().mockRejectedValue(new CountrySectionError('locked', 'Not authorized'));
+  reader.vessels.getVesselSnapshot = vi.fn().mockRejectedValue(new CountrySectionError('locked', 'Not authorized'));
+  const denied = await loadHostCountryMilitaryActivity(reader, 'US', 'United States', new AbortController().signal);
+  expect(denied.deniedSignalFields).toEqual(['militaryFlights', 'militaryFlightsInCountry', 'militaryVessels', 'militaryVesselsInCountry']);
 });
