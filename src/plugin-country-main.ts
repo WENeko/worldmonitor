@@ -380,7 +380,9 @@ async function mountPlugin(): Promise<void> {
 }
 const mount = () => { void mountPlugin().catch(() => { document.getElementById('countryStatus')!.textContent = 'The country interface could not be loaded. Refresh to retry.'; }); };
 if (document.documentElement.dataset.wmPluginManagedBoot === 'true') {
-  document.addEventListener('wm-plugin-mount', mount, { once: true });
+  const attempt = new URL(import.meta.url).pathname.match(/\/plugin\/assets\/boot-(\d+)\//)?.[1];
+  const mountEvent = attempt ? 'wm-plugin-boot-' + attempt : 'wm-plugin-mount';
+  document.addEventListener(mountEvent, mount, { once: true });
 } else {
   mount();
 }
