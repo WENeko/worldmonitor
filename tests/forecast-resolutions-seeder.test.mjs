@@ -29,15 +29,20 @@ import {
   pruneArchivedTerminalEntries,
   readDigestAccumulatorArchive,
   reportJudgedLaneObservability,
+  resolveJudgedEntry,
   resolvePendingJudgedEntries,
   summarizeJudgedAttemptClasses,
   judgedArchiveHorizonMs,
   judgedArchiveWindowForEntry,
   judgedRetryBackoffMs,
   selectJudgedArchiveItems,
+  ingestHistory,
+  samplePendingEntries,
 } from '../scripts/seed-forecast-resolutions.mjs';
 import { computeScorecard } from '../scripts/_forecast-scorecard.mjs';
-import { CONFLICT_COUNT_SOURCE_FEED, UNREST_COUNT_SOURCE_FEED } from '../scripts/_forecast-resolution.mjs';
+import { __setForecastLlmCallOverrideForTests, __setRedisStoreForTests, runExtractionGateShadow } from '../scripts/seed-forecasts.mjs';
+import { CONFLICT_COUNT_SOURCE_FEED, UNREST_COUNT_SOURCE_FEED, attachResolutionSpecs, evaluateExtractionShadow } from '../scripts/_forecast-resolution.mjs';
+import { shapeResolutionFeeds } from '../scripts/_forecast-resolution-eval.mjs';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const T0 = Date.parse('2026-07-07T00:00:00Z');
@@ -95,6 +100,43 @@ function snapshot(generatedAt, predictions) {
 }
 
 describe('processResolutionCycle', () => {
+  describe('open-window calibration follows the latest snapshot (#7071)', () => {
+    const FEEDS = { 'supply_chain:chokepoints:v4': { chokepoints: [{ route: 'Strait of Hormuz', riskScore: 40 }] } };
+    const KEY = `fc-hormuz@${T0 + DAY_MS}`;
+    const anchored = { marketTitle: 'Will Iran close the Strait of Hormuz by December 31?', marketPrice: 0.2, drift: 0.4, source: 'polymarket' };
+    const first = forecast({ probability: 0.6, calibration: anchored });
+
+    for (const [label, later] of [
+      ['null', { calibration: null }],
+      ['absent', { calibration: undefined }],
+    ]) {
+      it(`drops a stale anchor when the later snapshot's calibration is ${label}`, () => {
+        const second = forecast({ probability: 0.62, generatedAt: T0 + 6 * 60 * 60 * 1000, deadline: T0 + DAY_MS, ...later });
+        const { ledger } = processResolutionCycle({}, [snapshot(T0, [first]), snapshot(T0 + 6 * 60 * 60 * 1000, [second])], FEEDS, T0 + 12 * 60 * 60 * 1000);
+        assert.equal(ledger[KEY].probability, 0.62);
+        assert.equal('calibration' in ledger[KEY], false);
+        const scorecard = computeScorecard(ledger, T0 + 12 * 60 * 60 * 1000);
+        assert.equal(scorecard.vsMarketSkill, undefined);
+      });
+    }
+
+    it('replaces the anchor with the later snapshot calibration', () => {
+      const replacement = { ...anchored, marketPrice: 0.3, drift: 0.32 };
+      const second = forecast({ probability: 0.62, generatedAt: T0 + 6 * 60 * 60 * 1000, deadline: T0 + DAY_MS, calibration: replacement });
+      const { ledger } = processResolutionCycle({}, [snapshot(T0, [first]), snapshot(T0 + 6 * 60 * 60 * 1000, [second])], FEEDS, T0 + 12 * 60 * 60 * 1000);
+      assert.deepEqual(ledger[KEY].calibration, replacement);
+    });
+
+    it('leaves a resolved entry calibration untouched', () => {
+      const resolvedFeeds = { 'supply_chain:chokepoints:v4': { chokepoints: [{ route: 'Strait of Hormuz', riskScore: 61 }] } };
+      const { ledger: resolved } = processResolutionCycle({}, [snapshot(T0, [first])], resolvedFeeds, T0 + 2 * DAY_MS);
+      assert.equal(resolved[KEY].status, 'resolved');
+      const late = forecast({ probability: 0.1, generatedAt: T0 + 60 * 60 * 1000, deadline: T0 + DAY_MS, calibration: null });
+      const { ledger } = processResolutionCycle(resolved, [snapshot(T0 + 60 * 60 * 1000, [late])], resolvedFeeds, T0 + 2 * DAY_MS);
+      assert.deepEqual(ledger[KEY].calibration, anchored);
+    });
+  });
+
   it('pre-registers one open window, updates probability only before deadline, and rolls over after deadline', () => {
     const first = forecast({ probability: 0.6, generatedAt: T0, deadline: T0 + DAY_MS });
     const second = forecast({
@@ -613,7 +655,7 @@ describe('processResolutionCycleWithJudges', () => {
           model: 'deepseek/deepseek-v4-flash',
           text: JSON.stringify({ outcome: 'YES', citations: [{ id: 'N1', quote: 'The bill passed before the forecast deadline' }], rationale: 'The cited article confirms passage.' }),
         }),
-        async () => ({ provider: 'groq', model: 'openai/gpt-oss-20b', outcome: 'YES', citations: [{ id: 'N1', quote: 'The bill passed before the forecast deadline' }], rationale: 'The policy passed before the deadline.' }),
+        async () => ({ provider: 'openrouter', model: 'openai/gpt-6-luna', outcome: 'YES', citations: [{ id: 'N1', quote: 'The bill passed before the forecast deadline' }], rationale: 'The policy passed before the deadline.' }),
       ],
     });
 
@@ -630,7 +672,7 @@ describe('processResolutionCycleWithJudges', () => {
     const result = await processResolutionCycleWithJudges({}, [snapshot(T0, [judgedForecast()])], {}, archive, T0 + DAY_MS + 2, {
       judgeModels: [
         async () => ({ provider: 'openrouter', model: 'deepseek/deepseek-v4-flash', outcome: 'YES', citations: [{ id: 'N1', quote: 'The bill passed before the forecast deadline' }], rationale: 'The article says it passed.' }),
-        async () => ({ provider: 'groq', model: 'openai/gpt-oss-20b', outcome: 'NO', citations: [{ id: 'N1', quote: 'The bill passed before the forecast deadline' }], rationale: 'The article does not establish passage.' }),
+        async () => ({ provider: 'openrouter', model: 'openai/gpt-6-luna', outcome: 'NO', citations: [{ id: 'N1', quote: 'The bill passed before the forecast deadline' }], rationale: 'The article does not establish passage.' }),
       ],
     });
 
@@ -714,7 +756,7 @@ describe('processResolutionCycleWithJudges', () => {
     }, nowMs, {
       judgeModels: [
         async () => ({ provider: 'openrouter', outcome: 'YES', citations: [{ id: 'N1', quote: 'The coalition held its final vote before the forecast deadline' }] }),
-        async () => ({ provider: 'groq', outcome: 'NO', citations: [{ id: 'N1', quote: 'The coalition held its final vote before the forecast deadline' }] }),
+        async () => ({ provider: 'openrouter', outcome: 'NO', citations: [{ id: 'N1', quote: 'The coalition held its final vote before the forecast deadline' }] }),
       ],
     });
 
@@ -844,7 +886,7 @@ describe('processResolutionCycleWithJudges', () => {
           evidenceByEntry.set(entry.id, items.map((item) => item.id));
           return { provider: 'openrouter', outcome: 'YES', citations: [{ id: items[0].id, quote: items[0].description }] };
         },
-        async (_entry, items) => ({ provider: 'groq', outcome: 'YES', citations: [{ id: items[0].id, quote: items[0].description }] }),
+        async (_entry, items) => ({ provider: 'openrouter', outcome: 'YES', citations: [{ id: items[0].id, quote: items[0].description }] }),
       ],
     });
 
@@ -863,7 +905,7 @@ describe('processResolutionCycleWithJudges', () => {
     }, T0 + DAY_MS + 2, {
       judgeModels: [
         async () => ({ provider: 'openrouter', model: 'deepseek/deepseek-v4-flash', outcome: 'VOID', citations: [], rationale: 'Archive is insufficient.' }),
-        async () => ({ provider: 'groq', model: 'openai/gpt-oss-20b', outcome: 'VOID', citations: [], rationale: 'Not enough coverage.' }),
+        async () => ({ provider: 'openrouter', model: 'openai/gpt-6-luna', outcome: 'VOID', citations: [], rationale: 'Not enough coverage.' }),
       ],
     });
 
@@ -879,7 +921,7 @@ describe('processResolutionCycleWithJudges', () => {
     const result = await processResolutionCycleWithJudges({}, [snapshot(T0, [judgedForecast()])], {}, archive, T0 + DAY_MS + 2, {
       judgeModels: [
         async () => ({ provider: 'openrouter', model: 'deepseek/deepseek-v4-flash', outcome: 'YES', citations: [{ id: 'N1' }], rationale: 'The article says it passed.' }),
-        async () => ({ provider: 'groq', model: 'openai/gpt-oss-20b', outcome: 'YES', citations: [{ id: 'N1', quote: 'A fabricated sentence that is not in the archive' }], rationale: 'The policy passed before the deadline.' }),
+        async () => ({ provider: 'openrouter', model: 'openai/gpt-6-luna', outcome: 'YES', citations: [{ id: 'N1', quote: 'A fabricated sentence that is not in the archive' }], rationale: 'The policy passed before the deadline.' }),
       ],
     });
 
@@ -926,7 +968,7 @@ describe('processResolutionCycleWithJudges', () => {
     const result = await processResolutionCycleWithJudges({}, [snapshot(T0, [judgedForecast()])], {}, archive, T0 + DAY_MS + 2, {
       judgeModels: [
         async () => ({ provider: 'openrouter', model: 'deepseek/deepseek-v4-flash', outcome: 'YES', citations: [{ id: 'N1', quote: 'The bill passed before the forecast deadline' }], rationale: 'The article says it passed.' }),
-        async () => ({ provider: 'groq', model: 'openai/gpt-oss-20b', text: 'not-json' }),
+        async () => ({ provider: 'openrouter', model: 'openai/gpt-6-luna', text: 'not-json' }),
       ],
     });
 
@@ -1857,7 +1899,7 @@ describe('judged attempt lifecycle instrumentation (#7068)', () => {
   function agreeingJudges(outcome = 'YES', quote = 'The bill passed before the forecast deadline') {
     return [
       async () => ({ provider: 'openrouter', model: 'deepseek/deepseek-v4-flash', outcome, citations: [{ id: 'N1', quote }] }),
-      async () => ({ provider: 'groq', model: 'openai/gpt-oss-20b', outcome, citations: [{ id: 'N1', quote }] }),
+      async () => ({ provider: 'openrouter', model: 'openai/gpt-6-luna', outcome, citations: [{ id: 'N1', quote }] }),
     ];
   }
 
@@ -1915,21 +1957,21 @@ describe('judged attempt lifecycle instrumentation (#7068)', () => {
       stage: 'judge_b',
       detail: 'judge_call_rejected',
       archive: (nowMs) => coveredArchive(nowMs),
-      judges: () => [agreeingJudges()[0], async () => { throw new Error('groq 503 at https://api.groq.com'); }],
+      judges: () => [agreeingJudges()[0], async () => { throw new Error('openrouter 503 at https://openrouter.ai'); }],
     },
     {
       name: 'json_parse_fail',
       stage: 'judge_b',
       detail: 'unparsable_judgment',
       archive: (nowMs) => coveredArchive(nowMs),
-      judges: () => [agreeingJudges()[0], async () => ({ provider: 'groq', model: 'm', text: 'not-json' })],
+      judges: () => [agreeingJudges()[0], async () => ({ provider: 'openrouter', model: 'm', text: 'not-json' })],
     },
     {
       name: 'invalid_outcome',
       stage: 'normalize',
       detail: 'unrecognized_outcome',
       archive: (nowMs) => coveredArchive(nowMs),
-      judges: () => [agreeingJudges()[0], async () => ({ provider: 'groq', model: 'm', outcome: 'MAYBE' })],
+      judges: () => [agreeingJudges()[0], async () => ({ provider: 'openrouter', model: 'm', outcome: 'MAYBE' })],
     },
   ];
 
@@ -2073,7 +2115,7 @@ describe('judged attempt lifecycle instrumentation (#7068)', () => {
   it('aggregates attempt classes across the ledger and into the scorecard', async () => {
     const nowMs = T_DEADLINE + 2;
     const result = await runCycle(coveredArchive(nowMs), nowMs, {
-      judgeModels: [agreeingJudges()[0], async () => ({ provider: 'groq', model: 'm', text: 'not-json' })],
+      judgeModels: [agreeingJudges()[0], async () => ({ provider: 'openrouter', model: 'm', text: 'not-json' })],
     });
 
     const aggregate = summarizeJudgedAttemptClasses(result.ledger);
@@ -2203,7 +2245,7 @@ describe('judged archive horizon (#7068)', () => {
 
   const judges = [
     async () => ({ provider: 'openrouter', model: 'm1', outcome: 'YES', citations: [{ id: 'N1', quote: 'The bill passed before the forecast deadline' }] }),
-    async () => ({ provider: 'groq', model: 'm2', outcome: 'YES', citations: [{ id: 'N1', quote: 'The bill passed before the forecast deadline' }] }),
+    async () => ({ provider: 'openrouter', model: 'm2', outcome: 'YES', citations: [{ id: 'N1', quote: 'The bill passed before the forecast deadline' }] }),
   ];
 
   it('derives the horizon as deadline + maxLookback - evidenceLookback', () => {
@@ -2496,7 +2538,7 @@ describe('untrusted archive boundary (#7068)', () => {
     // Both judges obey the injected instruction and return an uncited YES.
     const compromised = [
       async () => ({ provider: 'openrouter', model: 'm1', outcome: 'YES', citations: [] }),
-      async () => ({ provider: 'groq', model: 'm2', outcome: 'YES', citations: [] }),
+      async () => ({ provider: 'openrouter', model: 'm2', outcome: 'YES', citations: [] }),
     ];
     const result = await processResolutionCycleWithJudges({}, [snapshot(T0, [judgedPrediction()])], {}, archiveWith(items, nowMs), nowMs, { judgeModels: compromised });
 
@@ -2516,7 +2558,7 @@ describe('untrusted archive boundary (#7068)', () => {
     }];
     const invented = [
       async () => ({ provider: 'openrouter', model: 'm1', outcome: 'YES', citations: [{ id: 'N42', quote: 'The bill passed before the forecast deadline' }] }),
-      async () => ({ provider: 'groq', model: 'm2', outcome: 'YES', citations: [{ id: 'N42', quote: 'The bill passed before the forecast deadline' }] }),
+      async () => ({ provider: 'openrouter', model: 'm2', outcome: 'YES', citations: [{ id: 'N42', quote: 'The bill passed before the forecast deadline' }] }),
     ];
     const result = await processResolutionCycleWithJudges({}, [snapshot(T0, [judgedPrediction()])], {}, archiveWith(items, nowMs), nowMs, { judgeModels: invented });
 
@@ -2535,7 +2577,7 @@ describe('untrusted archive boundary (#7068)', () => {
     }];
     const withQuote = (quote) => [
       async () => ({ provider: 'openrouter', model: 'm1', outcome: 'YES', citations: [{ id: 'N1', quote }] }),
-      async () => ({ provider: 'groq', model: 'm2', outcome: 'YES', citations: [{ id: 'N1', quote }] }),
+      async () => ({ provider: 'openrouter', model: 'm2', outcome: 'YES', citations: [{ id: 'N1', quote }] }),
     ];
 
     const drifted = await processResolutionCycleWithJudges({}, [snapshot(T0, [judgedPrediction()])], {}, archiveWith(items, nowMs), nowMs, {
@@ -2596,5 +2638,315 @@ describe('terminal receipt attempt history (#7068)', () => {
       row.evidence.attemptLog.map((record) => record.class),
       ['archive_unavailable', 'archive_unavailable', 'archive_unavailable'],
     );
+  });
+});
+
+describe('judged lane health (#8877)', () => {
+  const now = T0 + 20 * DAY_MS;
+  const pending = { status: 'pending-judge', deadline: now - 1000, probability: 0.7, spec: { kind: 'judged' } };
+  const marker = {
+    v: 1, coverageStartMs: now - 14 * DAY_MS, coverageEndMs: now,
+    cutoverVerifiedAtMs: now, sourceDigestAtMs: now, maxLookbackMs: 14 * DAY_MS,
+    retentionSeconds: 15 * 86400, sourceKey: 'digest:accumulator:v1:full:en',
+    legacyOldestHash: 'f'.repeat(64), legacyOldestScoreMs: now - 14 * DAY_MS,
+  };
+
+  async function assess(ledger, previous, coverage = marker, runState = undefined) {
+    const { buildJudgedLaneHealthPatch } = await import('../scripts/seed-forecast-resolutions.mjs');
+    process.env.UPSTASH_REDIS_REST_URL = 'https://redis.example';
+    process.env.UPSTASH_REDIS_REST_TOKEN = 'token';
+    const writes = [];
+    globalThis.fetch = async (url, init) => {
+      if (String(url).endsWith('/multi-exec')) {
+        writes.push(...JSON.parse(init.body));
+        return { ok: true, json: async () => [{ result: 'OK' }, { result: 'OK' }] };
+      }
+      const value = String(url).includes(encodeURIComponent('forecast:evidence:coverage:v1')) ? coverage : previous;
+      return { ok: true, json: async () => ({ result: value ? JSON.stringify(value) : null }) };
+    };
+    const health = await buildJudgedLaneHealthPatch(ledger, now, runState);
+    assert.equal(writes.length, 0, 'runSeed owns the metadata publication');
+    assert.equal(health.evaluatedAt, now);
+    return health;
+  }
+
+  it('alerts immediately on missing coverage with overdue work', async () => {
+    const health = await assess({ pending }, null, null);
+    assert.equal(health.status, 'error');
+    assert.ok(health.reasons.includes('coverage_unverified_with_overdue_entries'));
+  });
+
+  it('alerts on the first run when the archive read failed despite a valid marker', async () => {
+    const health = await assess({ pending }, null, marker, { archiveReadable: false });
+    assert.equal(health.coverageVerified, true);
+    assert.equal(health.status, 'error');
+    assert.ok(health.reasons.includes('archive_unreadable_with_overdue_entries'));
+  });
+
+  it('does not alarm on an unreadable archive when nothing is overdue', async () => {
+    const future = { ...pending, deadline: now + DAY_MS };
+    const health = await assess({ future }, null, marker, { archiveReadable: false });
+    assert.equal(health.status, 'ok');
+  });
+
+  it('alerts on the third eligible run without a scored-within-SLA outcome', async () => {
+    const health = await assess({ pending }, { evaluatedAt: now - DAY_MS, stalledRuns: 2 });
+    assert.equal(health.stalledRuns, 3);
+    assert.equal(health.status, 'error');
+    assert.ok(health.reasons.includes('no_scored_within_sla_for_3_runs'));
+  });
+
+  it('ignores old successes and does not count VOID as scoring', async () => {
+    const health = await assess({
+      pending,
+      old: { ...pending, status: 'resolved', outcome: 'YES', deadline: now - 10 * DAY_MS, resolvedAt: now - 10 * DAY_MS },
+      void: { ...pending, status: 'resolved', outcome: 'VOID', resolvedAt: now - 1 },
+    }, { evaluatedAt: now - DAY_MS, stalledRuns: 2 });
+    assert.equal(health.status, 'error');
+    assert.equal(health.scoredWithinSla, 0);
+  });
+
+  it('clears the streak and alarm after a scored-within-SLA outcome', async () => {
+    const health = await assess({ pending, scored: { ...pending, status: 'resolved', outcome: 'YES', resolvedAt: now - 1 } },
+      { evaluatedAt: now - DAY_MS, stalledRuns: 4 });
+    assert.equal(health.status, 'ok');
+    assert.equal(health.stalledRuns, 0);
+    assert.equal(health.scoredWithinSla, 1);
+  });
+
+  it('does not publish healthy state when a health-state read fails', async () => {
+    const { buildJudgedLaneHealthPatch } = await import('../scripts/seed-forecast-resolutions.mjs');
+    process.env.UPSTASH_REDIS_REST_URL = 'https://redis.example';
+    process.env.UPSTASH_REDIS_REST_TOKEN = 'token';
+    let writes = 0;
+    globalThis.fetch = async (url) => {
+      if (String(url).endsWith('/multi-exec')) writes += 1;
+      return { ok: true, json: async () => ({ error: 'ERR unavailable' }) };
+    };
+    await assert.rejects(buildJudgedLaneHealthPatch({ pending }, now), /Redis GET/);
+    assert.equal(writes, 0);
+  });
+
+  it('does not alert during an idle lane or before the third stalled run', async () => {
+    assert.equal((await assess({}, { evaluatedAt: now - DAY_MS, stalledRuns: 2 }, null)).status, 'ok');
+    assert.equal((await assess({ pending }, null)).status, 'ok');
+  });
+});
+
+describe('live judge panel', () => {
+  const savedKey = process.env.OPENROUTER_API_KEY;
+  afterEach(() => {
+    __setForecastLlmCallOverrideForTests(null);
+    if (savedKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = savedKey;
+  });
+
+  it('runs both judges on OpenRouter with two different model families', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-key';
+    const deadline = T0 + DAY_MS;
+    const entry = {
+      id: 'fc-live-panel',
+      key: `fc-live-panel@${deadline}`,
+      title: 'Escalation risk: Freedonia',
+      domain: 'conflict',
+      region: 'Freedonia',
+      deadline,
+      spec: { kind: 'judged', deadline, question: 'Did Freedonia escalate before the deadline?' },
+    };
+    const archive = {
+      available: true,
+      coverageStartMs: deadline - JUDGED_EVIDENCE_LOOKBACK_MS,
+      coverageEndMs: deadline + DAY_MS,
+      items: [{ id: 'N1', title: 'Freedonia border clash', description: 'Troops clashed at the Freedonia border.', source: 'wire.example', publishedAt: deadline - DAY_MS }],
+    };
+    const calls = [];
+    __setForecastLlmCallOverrideForTests(async (_system, _user, options = {}) => {
+      calls.push({ providerOrder: options.providerOrder, modelOverrides: options.modelOverrides });
+      return null;
+    });
+
+    await resolveJudgedEntry(entry, archive, deadline + DAY_MS, {});
+
+    assert.equal(calls.length, 2, 'two judges are called');
+    for (const call of calls) assert.deepEqual(call.providerOrder, ['openrouter']);
+    const models = calls.map((call) => call.modelOverrides?.openrouter);
+    assert.equal(new Set(models).size, 2, `judges must be different models: ${models.join(', ')}`);
+    const families = models.map((model) => String(model).split('/')[0]);
+    assert.equal(new Set(families).size, 2, `judges must be different model families: ${models.join(', ')}`);
+  });
+});
+
+describe('live judge panel independence', () => {
+  const ENV_KEYS = ['OPENROUTER_API_KEY', 'FORECAST_RESOLUTION_JUDGE_MODEL_OPENROUTER', 'FORECAST_LLM_MODEL_OPENROUTER', 'FORECAST_RESOLUTION_JUDGE_MODEL_OPENROUTER_B'];
+  const saved = {};
+  afterEach(() => {
+    __setForecastLlmCallOverrideForTests(null);
+    for (const key of ENV_KEYS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  });
+
+  function runWithEnv(env) {
+    for (const key of ENV_KEYS) {
+      saved[key] = process.env[key];
+      delete process.env[key];
+    }
+    Object.assign(process.env, { OPENROUTER_API_KEY: 'test-key' }, env);
+    for (const [key, value] of Object.entries(env)) if (value === undefined) delete process.env[key];
+    const deadline = T0 + DAY_MS;
+    const entry = {
+      id: 'fc-same-family',
+      key: `fc-same-family@${deadline}`,
+      title: 'Escalation risk: Freedonia',
+      domain: 'conflict',
+      region: 'Freedonia',
+      deadline,
+      spec: { kind: 'judged', deadline, question: 'Did Freedonia escalate before the deadline?' },
+    };
+    const archive = {
+      available: true,
+      coverageStartMs: deadline - JUDGED_EVIDENCE_LOOKBACK_MS,
+      coverageEndMs: deadline + DAY_MS,
+      items: [{ id: 'N1', title: 'Freedonia border clash', description: 'Troops clashed at the Freedonia border.', source: 'wire.example', publishedAt: deadline - DAY_MS }],
+    };
+    const calls = [];
+    __setForecastLlmCallOverrideForTests(async (_system, _user, options = {}) => {
+      calls.push(options.modelOverrides?.openrouter);
+      return null;
+    });
+    return resolveJudgedEntry(entry, archive, deadline + DAY_MS, {}).then((result) => ({ result, calls }));
+  }
+
+  it('refuses to judge when an override puts both judges in the same model family', async () => {
+    const { result, calls } = await runWithEnv({ FORECAST_LLM_MODEL_OPENROUTER: 'openai/gpt-6-sol' });
+    assert.equal(calls.length, 0, `no judge may be called, got ${calls.join(', ')}`);
+    assert.equal(result.status, 'pending');
+    assert.equal(result.detail, 'judges_not_independent');
+  });
+
+  it('refuses to judge when judge B is overridden to judge A\'s model', async () => {
+    const { result, calls } = await runWithEnv({ FORECAST_RESOLUTION_JUDGE_MODEL_OPENROUTER_B: 'deepseek/deepseek-v4-flash' });
+    assert.equal(calls.length, 0);
+    assert.equal(result.detail, 'judges_not_independent');
+  });
+
+  it('refuses to judge without an OpenRouter key, since both calls would reach the same generic LLM_MODEL', async () => {
+    const { result, calls } = await runWithEnv({ OPENROUTER_API_KEY: undefined });
+    assert.equal(calls.length, 0);
+    assert.equal(result.detail, 'judges_not_independent');
+  });
+
+  it('still judges when the overrides keep the families apart', async () => {
+    const { calls } = await runWithEnv({ FORECAST_RESOLUTION_JUDGE_MODEL_OPENROUTER_B: 'google/gemini-3.8-flash' });
+    assert.deepEqual(calls, ['deepseek/deepseek-v4-flash', 'google/gemini-3.8-flash']);
+  });
+});
+
+describe('extraction gate shadow shares the resolver feed view (#7067)', () => {
+  const GPS_FEED = 'intelligence:gpsjam:v2';
+  const COMMODITY_FEED = 'market:commodities-bootstrap:v1';
+  const RAW_FEEDS = {
+    [GPS_FEED]: { hexes: [{ region: 'Persian Gulf', hexCount: 14 }] },
+    [COMMODITY_FEED]: { _seed: { fetchedAt: T0 }, data: { quotes: [{ symbol: 'CL=F', price: 71.5 }] } },
+  };
+
+  function shadowForecasts() {
+    const forecast = (overrides) => ({
+      domain: 'supply_chain',
+      probability: 0.6,
+      confidence: 0.5,
+      timeHorizon: '7d',
+      generationOrigin: 'legacy_detector',
+      generatedAt: T0,
+      ...overrides,
+    });
+    return attachResolutionSpecs([
+      forecast({ id: 'fc-gps-gulf', region: 'Persian Gulf', title: 'GPS jamming: Persian Gulf', signals: [{ type: 'gps_jamming', value: '12 jamming hexes in Persian Gulf', weight: 0.5 }] }),
+      forecast({ id: 'fc-gps-baltic', region: 'Baltic Sea', title: 'GPS jamming: Baltic Sea', signals: [{ type: 'gps_jamming', value: '12 jamming hexes in Baltic Sea', weight: 0.5 }] }),
+      forecast({
+        id: 'fc-oil',
+        domain: 'market',
+        region: 'Middle East',
+        title: 'Oil price impact from Strait of Hormuz disruption',
+        signals: [
+          { type: 'chokepoint', value: 'Strait of Hormuz risk: critical', weight: 0.5 },
+          { type: 'commodity', value: 'Oil sensitivity: 0.8', weight: 0.3 },
+        ],
+      }),
+    ], { commodityQuotes: { quotes: [{ symbol: 'CL=F', name: 'WTI Crude', price: 68.92 }] } }, T0);
+  }
+
+  it('the resolver shapes feeds through the shared seam, not a local copy', () => {
+    assert.doesNotMatch(SEEDER_SOURCE, /function shapeResolutionFeed\(/);
+    assert.match(SEEDER_SOURCE, /shapeResolutionFeeds\(/);
+  });
+
+  it('emission extracts exactly what the resolver samples from the same raw feed', () => {
+    const forecasts = shadowForecasts();
+    const verdicts = evaluateExtractionShadow(forecasts, RAW_FEEDS);
+    const ledger = ingestHistory({}, [{ generatedAt: T0, predictions: forecasts }], T0);
+    samplePendingEntries(ledger, shapeResolutionFeeds(RAW_FEEDS), T0 + 1);
+    const sampledById = Object.fromEntries(Object.values(ledger).map((entry) => [entry.id, entry.samples.last]));
+    assert.equal(verdicts.length, 3);
+    for (const verdict of verdicts) {
+      const sample = sampledById[verdict.id];
+      if (verdict.outcome === 'pass') assert.equal(sample.value, verdict.value, verdict.id);
+      else assert.equal(sample.error, verdict.reason, verdict.id);
+    }
+    assert.deepEqual(verdicts.map((v) => v.outcome), ['pass', 'fail', 'pass']);
+  });
+
+  it('runExtractionGateShadow reads the resolver keys raw and logs counters plus the would-downgrade cohort', async () => {
+    const forecasts = shadowForecasts();
+    const before = JSON.stringify(forecasts);
+    const reads = [];
+    const store = {
+      get [GPS_FEED]() { reads.push(GPS_FEED); throw new Error('upstash 503'); },
+      get [COMMODITY_FEED]() {
+        reads.push(COMMODITY_FEED);
+        return { _seed: { fetchedAt: T0 }, data: { quotes: [{ symbol: 'BZ=F', price: 74.2 }] } };
+      },
+    };
+    const logs = [];
+    const originalLog = console.log;
+    console.log = (...args) => logs.push(args.join(' '));
+    __setRedisStoreForTests(store);
+    let result;
+    try {
+      result = await runExtractionGateShadow(forecasts);
+    } finally {
+      __setRedisStoreForTests(null);
+      console.log = originalLog;
+    }
+    assert.deepEqual(reads.sort(), [COMMODITY_FEED, GPS_FEED].sort());
+    assert.deepEqual(result.summary.byOutcome, { feed_unavailable: 2, fail: 1 });
+    assert.equal(JSON.stringify(forecasts), before);
+    const summaryLine = logs.find((line) => line.includes('[ExtractionGate] shadow'));
+    assert.match(summaryLine, /hard=3 pass=0 fail=1 feed_unavailable=2 skipped=0/);
+    assert.match(summaryLine, /byFamily=\{"gps":\{"feed_unavailable":2\},"market":\{"fail":1\}\}/);
+    assert.match(summaryLine, /byDomain=\{"supply_chain":\{"feed_unavailable":2\},"market":\{"fail":1\}\}/);
+    const cohort = logs.filter((line) => line.includes('[ExtractionGate] would_downgrade'));
+    assert.deepEqual(cohort.map((line) => line.trim()), [
+      '[ExtractionGate] would_downgrade id="fc-oil" family=market domain=market metricKey="market:commodities-bootstrap:v1|price(symbol==CL=F)" reason=metric_not_found',
+    ]);
+  });
+
+  it('runExtractionGateShadow keeps a newline in an externally sourced metricKey on one log line', async () => {
+    const title = 'Will X happen?\n[ExtractionGate] shadow hard=999';
+    const forecast = { id: 'fc-pm', domain: 'political', signals: [], resolution: { kind: 'hard', sourceFeed: 'prediction:markets-bootstrap:v1', metricKey: `prediction:markets-bootstrap:v1|yesPrice(market==${title})` } };
+    const logs = [];
+    const originalLog = console.log;
+    console.log = (...args) => logs.push(args.join(' '));
+    __setRedisStoreForTests({ 'prediction:markets-bootstrap:v1': { geopolitical: [] } });
+    try {
+      await runExtractionGateShadow([forecast]);
+    } finally {
+      __setRedisStoreForTests(null);
+      console.log = originalLog;
+    }
+    const cohort = logs.filter((line) => line.includes('would_downgrade'));
+    assert.equal(cohort.length, 1);
+    assert.ok(!cohort[0].includes('\n'), 'the logged line carries no raw newline');
   });
 });

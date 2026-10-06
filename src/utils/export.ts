@@ -300,6 +300,7 @@ export interface CountryEvidenceBundleInput {
   trend?: string;
   components?: CountryBriefExport['components'];
   signals?: Record<string, unknown>;
+  signalCoverageNotes?: readonly string[];
   brief?: string;
   headlines?: CountryEvidenceSourceInput[];
   generatedAt?: string;
@@ -561,6 +562,10 @@ function buildFreshnessNotes(input: CountryEvidenceBundleInput, exportedAt: stri
   if (!input.headlines || input.headlines.length === 0) {
     notes.push('No headline source list was available for this export.');
   }
+  for (const note of input.signalCoverageNotes?.slice(0, 12) ?? []) {
+    const clean = sanitizeEvidenceText(note).slice(0, 1600).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    if (clean) notes.push(clean);
+  }
   return notes;
 }
 
@@ -679,14 +684,15 @@ export function renderCountryEvidenceMarkdown(bundle: CountryEvidenceBundle): st
   return lines.join('\n');
 }
 
-export function exportCountryEvidenceMarkdown(data: CountryEvidenceBundleInput): void {
+export function countryEvidenceMarkdownArtifact(data: CountryEvidenceBundleInput): import('./country-text-download').CountryTextArtifact {
   const bundle = buildCountryEvidenceBundle(data);
   const timestamp = bundle.exportedAt.replace(/[:.]/g, '-');
-  downloadFile(
-    renderCountryEvidenceMarkdown(bundle),
-    `country-evidence-${bundle.code}-${timestamp}.md`,
-    'text/markdown;charset=utf-8',
-  );
+  return { content: renderCountryEvidenceMarkdown(bundle), filename: `country-evidence-${bundle.code}-${timestamp}.md`, mimeType: 'text/markdown;charset=utf-8' };
+}
+
+export function exportCountryEvidenceMarkdown(data: CountryEvidenceBundleInput): void {
+  const artifact = countryEvidenceMarkdownArtifact(data);
+  downloadFile(artifact.content, artifact.filename, artifact.mimeType);
 }
 
 export function exportCountryBriefJSON(data: CountryBriefExport): void {

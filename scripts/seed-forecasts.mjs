@@ -9,13 +9,11 @@ import { compactForecastDashboardPayload } from './_forecast-dashboard.mjs';
 import { unwrapEnvelope } from './_seed-envelope-source.mjs';
 import { allBootstrapMarkets } from './_prediction-classify.mjs';
 import { tagRegions } from './_prediction-scoring.mjs';
-import { attachResolutionSpecs } from './_forecast-resolution.mjs';
+import { attachResolutionSpecs, evaluateExtractionShadow, extractionShadowFeedKeys, HORIZON_MS, summarizeExtractionShadow } from './_forecast-resolution.mjs';
 import { assessFunnelDiversity, NON_REAL_FUNNEL_ORIGINS } from './_forecast-funnel.mjs';
 import { resolveR2StorageConfig, putR2JsonObject, getR2JsonObject } from './_r2-storage.mjs';
 import { extractFirstJsonObject, extractFirstJsonArray, cleanJsonText } from './_llm-json.mjs';
 import {
-  GROQ_DEFAULT_MODEL,
-  GROQ_REASONING_EXTRA_BODY,
   getLlmAttemptTimeoutMs,
   isDeepseekV4FlashModel,
   OPENROUTER_FREE_BACKUP_MODEL,
@@ -2182,6 +2180,8 @@ const MARKET_CALIBRATION_DOMAIN_CAPS = {
 const MARKET_DE_ESCALATION_OUTCOME_TERMS = [
   'ceasefire', 'truce', 'peace', 'peaceful', 'agreement', 'diplomatic solution',
   'withdrawal', 'reopen', 'reopened', 'restored', 'resolution', 'resolved',
+  'return to normal', 'returns to normal', 'back to normal',
+  'remain open', 'remains open', 'stay open', 'stays open',
 ];
 const MARKET_ADVERSE_OUTCOME_TERMS = [
   'attack', 'strike', 'war', 'conflict', 'offensive', 'unrest',
@@ -2215,6 +2215,78 @@ const MARKET_ADVERSE_CONDITION_END_PATTERNS = [
   new RegExp(String.raw`\b${MARKET_ADVERSE_CONDITION_PATTERN}\b.{0,40}\bend(?:s|ed|ing)?\b(?!\s+of\b)`),
   new RegExp(String.raw`\bend(?:s|ed|ing)?\b(?:\s+of)?.{0,40}\b${MARKET_ADVERSE_CONDITION_PATTERN}\b`),
 ];
+
+const marketEventTerms = (alternation) => new RegExp(String.raw`(?:^|[^a-z0-9])(?:${alternation})(?:[^a-z0-9]|$)`);
+const ARMED_WAR_PATTERN = String.raw`(?<!trade[ -]|tariff[ -]|price[ -]|culture[ -])wars?`;
+const ARMED_ESCALATION_EVENT_PATTERNS = [
+  marketEventTerms(String.raw`${ARMED_WAR_PATTERN}|(?:air ?)?strikes?|attack(?:s|ed)?|invade[sd]?|invasion|offensive|clash(?:es)?|bomb(?:s|ed|ing)?|military (?:action|operation|intervention|conflict)|ground (?:operation|incursion)|incursion`),
+  new RegExp(String.raw`\b(?:conflict|${ARMED_WAR_PATTERN}|fighting|hostilities)\b.{0,30}\bescalat`),
+  new RegExp(String.raw`\bescalat\w*\b.{0,30}\b(?:conflict|${ARMED_WAR_PATTERN}|fighting|hostilities)\b`),
+];
+const DE_ESCALATION_EVENT_PATTERNS = [
+  marketEventTerms(String.raw`ceasefire|cease-fire|truce|armistice|peace (?:deal|agreement|talks|treaty|accord)`),
+  ...MARKET_ADVERSE_CONDITION_END_PATTERNS,
+];
+const MARKET_PRICE_EVENT_PATTERNS = [
+  marketEventTerms(String.raw`oil|crude|brent|wti|natural gas|lng|gasoline|gold|silver|copper|wheat|prices?|inflation|cpi|recession|gdp|interest rates?|rate (?:cut|hike)s?|tariffs?|yields?|currency|(?:stock )?market (?:crash|correction|sell-?off)`),
+];
+
+// A market anchors a forecast only when it resolves on the same event class
+// (#7071). Region overlap alone let invasion, leadership, and territory markets
+// calibrate cyber and posture forecasts. A domain or title family with no entry
+// gets no anchor. Cyber has none: its forecasts resolve on a threat count, and
+// no market prices a count. `adverse` serves forecasts whose YES outcome is escalation,
+// `deescalatory` serves ceasefire-style forecasts; a missing slot means no anchor.
+const MARKET_ANCHOR_EVENT_CLASSES = {
+  conflict: { adverse: ARMED_ESCALATION_EVENT_PATTERNS, deescalatory: DE_ESCALATION_EVENT_PATTERNS },
+  military: { adverse: ARMED_ESCALATION_EVENT_PATTERNS, deescalatory: DE_ESCALATION_EVENT_PATTERNS },
+  // Leadership-identity questions ("next prime minister", "become president
+  // before 2045") are not instability outcomes, so bare office titles do not count.
+  political: {
+    adverse: [marketEventTerms(String.raw`resign(?:s|ed|ation)?|step(?:s)? down|oust(?:s|ed|er)?|removed from office|leave office|out as (?:president|prime minister|pm|leader)|impeach(?:ed|ment)?|no[- ]confidence|coup|(?:government|coalition) (?:collapse[sd]?|falls?)|snap election|early election|martial law|unrest|protests?|riots?|regime (?:change|collapse|fall)`)],
+  },
+  supply_chain: {
+    adverse: [marketEventTerms(String.raw`straits?|canal|blockade[sd]?|shipping|transits?|chokepoints?|freight|tankers?|ports? (?:closure|closed|shut(?:s|down)?)`)],
+    excludeTitles: [/^gps interference in /i],
+  },
+  infrastructure: {
+    adverse: [marketEventTerms(String.raw`outages?|blackouts?|power (?:cuts?|outages?|failures?)|grid|pipelines?|undersea cables?|cable cuts?|internet shutdowns?|sabotage[sd]?`)],
+  },
+  market: {
+    adverse: MARKET_PRICE_EVENT_PATTERNS,
+    deescalatory: MARKET_PRICE_EVENT_PATTERNS,
+    requireTitleOverlap: true,
+  },
+};
+
+// A market is the same question only if it settles near the forecast's own
+// deadline. A 7d forecast priced off a market that settles in 2027 borrows
+// risk the forecast never claims (#7071). The market may settle up to one
+// extra horizon (at least a week) past the deadline, never before emission.
+const MARKET_ANCHOR_MIN_SETTLEMENT_SLACK_MS = 7 * 24 * 60 * 60 * 1000;
+
+function resolveMarketAnchorSettlementWindow(pred) {
+  const horizonMs = HORIZON_MS[pred.timeHorizon];
+  const emittedAt = Number(pred.createdAt);
+  if (!Number.isFinite(horizonMs) || !Number.isFinite(emittedAt)) return null;
+  return {
+    earliest: emittedAt,
+    latest: emittedAt + horizonMs + Math.max(MARKET_ANCHOR_MIN_SETTLEMENT_SLACK_MS, horizonMs),
+  };
+}
+
+function marketSettlesWithinWindow(market, window) {
+  if (!window) return false;
+  const settlesAt = Date.parse(market?.endDate || '');
+  return Number.isFinite(settlesAt) && settlesAt >= window.earliest && settlesAt <= window.latest;
+}
+
+function resolveMarketAnchorEventPatterns(pred, predictionDeEscalatoryOutcome) {
+  const entry = MARKET_ANCHOR_EVENT_CLASSES[pred.domain];
+  if (!entry) return null;
+  if (entry.excludeTitles?.some((pattern) => pattern.test(pred.title || ''))) return null;
+  return (predictionDeEscalatoryOutcome ? entry.deescalatory : entry.adverse) || null;
+}
 
 const DOMAIN_ACTOR_BLUEPRINTS = {
   conflict: [
@@ -2655,15 +2727,26 @@ function calibrateWithMarkets(predictions, markets) {
     direction: 0,
     region: 0,
     semantic: 0,
+    eventClass: 0,
+    horizon: 0,
     capNoop: 0,
+    noClass: 0,
   };
   for (const pred of predictions) {
     const keywords = REGION_KEYWORDS[pred.region] || [];
     const regionTerms = [...new Set([...getSearchTermsForRegion(pred.region), pred.region])];
+    const subjectTerms = getSubjectTermsForRegion(pred.region);
     const expectedTags = buildExpectedRegionTags(regionTerms, pred.region);
     const titleTokens = extractMeaningfulTokens(pred.title, regionTerms);
     const predictionDeEscalatoryOutcome = predictionYesOutcomeLooksDeEscalatory(pred);
     if (keywords.length === 0 && regionTerms.length === 0) continue;
+    const eventPatterns = resolveMarketAnchorEventPatterns(pred, predictionDeEscalatoryOutcome);
+    if (!eventPatterns) {
+      stats.noClass++;
+      continue;
+    }
+    const requireTitleOverlap = MARKET_ANCHOR_EVENT_CLASSES[pred.domain].requireTitleOverlap === true;
+    const settlementWindow = resolveMarketAnchorSettlementWindow(pred);
     const candidates = marketUniverse
       .map(m => {
         const mRegions = tagRegions(m.title);
@@ -2688,16 +2771,23 @@ function calibrateWithMarkets(predictions, markets) {
           stats.region++;
           return false;
         }
-        const hasSpecificRegionSignal = item.regionHits > 0 || item.tagOverlap;
-        const hasSemanticOverlap = item.titleHits > 0 || item.domainHits > 0;
-        if (pred.domain === 'market') {
-          const keep = hasSpecificRegionSignal && item.titleHits > 0 && (item.domainHits > 0 || item.score >= 7);
-          if (!keep) stats.semantic++;
-          return keep;
+        // A shared macro tag or an entity-graph neighbour is not the same subject:
+        // "Escalation risk: Syria" must not anchor to a US-invades-Iran market.
+        const hasSpecificRegionSignal = countTermMatches(item.market.title, subjectTerms).hits > 0;
+        const hasTitleOverlap = item.titleHits > 0 && (item.domainHits > 0 || item.score >= 7);
+        if (!hasSpecificRegionSignal || (requireTitleOverlap && !hasTitleOverlap)) {
+          stats.semantic++;
+          return false;
         }
-        const keep = hasSpecificRegionSignal && (hasSemanticOverlap || item.score >= 6);
-        if (!keep) stats.semantic++;
-        return keep;
+        if (!textMatchesAnyPattern(item.market.title, eventPatterns)) {
+          stats.eventClass++;
+          return false;
+        }
+        if (!marketSettlesWithinWindow(item.market, settlementWindow)) {
+          stats.horizon++;
+          return false;
+        }
+        return true;
       })
       .sort((a, b) => {
         if (b.score !== a.score) return b.score - a.score;
@@ -2720,14 +2810,16 @@ function calibrateWithMarkets(predictions, markets) {
         marketPrice: +marketProb.toFixed(3),
         drift: +(originalProbability - marketProb).toFixed(3),
         source: match.source || 'polymarket',
+        internalProbability: originalProbability,
+        marketBlendedProbability: cappedProbability,
       };
       pred.probability = cappedProbability;
       stats.applied++;
     }
   }
-  const dropped = stats.noPrice + stats.lowVolume + stats.direction + stats.region + stats.semantic + stats.capNoop;
-  if (stats.applied > 0 || dropped > 0) {
-    console.log(`  [calibrateWithMarkets] applied=${stats.applied} dropped=${dropped} no_price=${stats.noPrice} low_volume=${stats.lowVolume} direction=${stats.direction} region=${stats.region} semantic=${stats.semantic} cap_noop=${stats.capNoop}`);
+  const dropped = stats.noPrice + stats.lowVolume + stats.direction + stats.region + stats.semantic + stats.eventClass + stats.horizon + stats.capNoop;
+  if (stats.applied > 0 || dropped > 0 || stats.noClass > 0) {
+    console.log(`  [calibrateWithMarkets] applied=${stats.applied} dropped=${dropped} no_price=${stats.noPrice} low_volume=${stats.lowVolume} direction=${stats.direction} region=${stats.region} semantic=${stats.semantic} event_class=${stats.eventClass} horizon=${stats.horizon} cap_noop=${stats.capNoop} no_class_forecasts=${stats.noClass}`);
   }
 }
 
@@ -2766,10 +2858,11 @@ function loadCountryCodes() {
 
 const NEWS_MATCHABLE_TYPES = new Set(['country', 'theater']);
 
-function getSearchTermsForRegion(region) {
+// The region's own names and country keywords, without the entity-graph
+// neighbours getSearchTermsForRegion adds (Syria -> Iran, Israel -> United States).
+function getSubjectTermsForRegion(region) {
   const terms = [region];
   const codes = loadCountryCodes();
-  const graph = loadEntityGraph();
 
   // 1. Country codes JSON: resolve ISO codes to names + keywords
   const countryEntry = codes[region];
@@ -2802,6 +2895,13 @@ function getSearchTermsForRegion(region) {
       terms.push(...matched.keywords);
     }
   }
+
+  return [...new Set(terms)].filter(t => t && t.length > 2);
+}
+
+function getSearchTermsForRegion(region) {
+  const terms = getSubjectTermsForRegion(region);
+  const graph = loadEntityGraph();
 
   // 3. Entity graph: add linked country/theater names (not commodities)
   const nodeId = graph.aliases?.[region];
@@ -4845,6 +4945,13 @@ function buildPriorForecastSnapshot(pred) {
   };
 }
 
+function buildCalibrationLineage(calibration) {
+  return {
+    ...(Number.isFinite(calibration.internalProbability) && { internalProbability: calibration.internalProbability }),
+    ...(Number.isFinite(calibration.marketBlendedProbability) && { marketBlendedProbability: calibration.marketBlendedProbability }),
+  };
+}
+
 function buildHistoryForecastEntry(pred) {
   return {
     id: pred.id,
@@ -4869,6 +4976,7 @@ function buildHistoryForecastEntry(pred) {
           marketPrice: pred.calibration.marketPrice,
           drift: pred.calibration.drift,
           source: pred.calibration.source,
+          ...buildCalibrationLineage(pred.calibration),
         }
       : null,
     cascades: (pred.cascades || []).slice(0, 3).map(cascade => ({
@@ -5472,6 +5580,7 @@ function buildPublishedForecastPayload(pred) {
       marketPrice: Number(pred.calibration.marketPrice || 0),
       drift: Number(pred.calibration.drift || 0),
       source: pred.calibration.source || '',
+      ...buildCalibrationLineage(pred.calibration),
     } : null,
     createdAt: Number(pred.createdAt || 0),
     updatedAt: Number(pred.updatedAt || 0),
@@ -14903,8 +15012,8 @@ function selectForecastsForEnrichment(predictions, options = {}) {
 }
 
 // ── Phase 2: LLM Scenario Enrichment ───────────────────────
-// Forecast narrative calls try the paid OpenRouter model, two fixed free
-// OpenRouter variants, then Groq. Separate entries let application validation
+// Forecast narrative calls try the paid OpenRouter model, then two fixed free
+// OpenRouter variants. Separate entries let application validation
 // advance after malformed/empty content; do not replace them with the random
 // `openrouter/free` router. Per-stage FORECAST_LLM_*_PROVIDER_ORDER still overrides.
 const FORECAST_LLM_PROVIDERS = [
@@ -14920,13 +15029,12 @@ const FORECAST_LLM_PROVIDERS = [
   { name: 'openrouter', envKey: 'OPENROUTER_API_KEY', apiUrl: 'https://openrouter.ai/api/v1/chat/completions', model: 'deepseek/deepseek-v4-flash', timeout: 25_000, extraBody: { reasoning: { enabled: false }, provider: OPENROUTER_PROVIDER_ROUTING } },
   { name: 'openrouter-free', envKey: 'OPENROUTER_API_KEY', apiUrl: 'https://openrouter.ai/api/v1/chat/completions', model: OPENROUTER_FREE_PRIMARY_MODEL, timeout: 25_000, maxRetries: 0, extraBody: { reasoning: { enabled: false }, provider: OPENROUTER_PROVIDER_ROUTING } },
   { name: 'openrouter-free-backup', envKey: 'OPENROUTER_API_KEY', apiUrl: 'https://openrouter.ai/api/v1/chat/completions', model: OPENROUTER_FREE_BACKUP_MODEL, timeout: 25_000, maxRetries: 0, extraBody: { reasoning: { enabled: false }, provider: OPENROUTER_PROVIDER_ROUTING } },
-  { name: 'groq', envKey: 'GROQ_API_KEY', apiUrl: 'https://api.groq.com/openai/v1/chat/completions', model: GROQ_DEFAULT_MODEL, timeout: 20_000, extraBody: GROQ_REASONING_EXTRA_BODY },
 ];
 
 // PER-79 (upstream PR 3/3): generic OpenAI-compatible provider for the
 // forecast seeder. Activated ONLY when LLM_API_URL, LLM_API_KEY, and
 // LLM_MODEL are all set AND none of the named providers above (openrouter,
-// openrouter-free, openrouter-free-backup, groq) have a key. Resolved-time
+// openrouter-free, openrouter-free-backup) have a key. Resolved-time
 // append keeps the existing FORECAST_LLM_PROVIDERS table (and its
 // array-shape tests) intact. LLM_API_URL is the FULL chat/completions
 // endpoint verbatim (see SELF_HOSTING.md) and LLM_MODEL is required — the
@@ -14973,12 +15081,11 @@ function buildForecastGenericLlmProvider() {
   };
 }
 
-// market_implications does NOT fall back to groq. Groq's free tier caps at 100k
-// tokens/day and this stage alone needs ~114k (4,749 tokens x 24 hourly runs), so
-// the fallback 429s for most of the day. Reserving 20s of run budget for a provider
-// that returns 429 in 86ms only raises the admission bar and starves the stage.
-// OpenRouter is the primary and, with throughput routing, succeeds 100% of measured
-// runs. Still overridable via FORECAST_LLM_MARKET_IMPLICATIONS_PROVIDER_ORDER.
+// market_implications runs on paid OpenRouter alone. Admission reserves the whole
+// runnable chain (getMarketImplicationsMinRunBudgetMs), so every fallback rung
+// raises the admission bar and starves the stage. OpenRouter, with throughput
+// routing, succeeds 100% of measured runs. Still overridable via
+// FORECAST_LLM_MARKET_IMPLICATIONS_PROVIDER_ORDER.
 const MARKET_IMPLICATIONS_DEFAULT_PROVIDER_ORDER = ['openrouter'];
 
 // Requested window for DeepSeek-Flash in forecast stages. Kept above the Flash
@@ -15034,27 +15141,20 @@ function parseForecastProviderOrder(raw) {
   return providers.length > 0 ? providers : null;
 }
 
-function migrateLegacyGlobalProviderOrder(providerOrder) {
-  if (providerOrder.length !== 2
-    || providerOrder[0] !== 'openrouter'
-    || providerOrder[1] !== 'groq') return providerOrder;
-  const paidIndex = providerOrder.indexOf('openrouter');
-  const groqIndex = providerOrder.indexOf('groq');
-  if (paidIndex < 0 || groqIndex < 0 || paidIndex > groqIndex) return providerOrder;
-  const freeProviders = ['openrouter-free', 'openrouter-free-backup'];
-  return providerOrder.flatMap(provider => provider === 'groq'
-    ? [...freeProviders.filter(freeProvider => !providerOrder.includes(freeProvider)), provider]
-    : [provider]);
+// Production still carries the historical global `openrouter,groq` value. Groq
+// is no longer a provider, so that exact legacy value maps to the full
+// OpenRouter chain; any other value stays exact.
+function parseGlobalForecastProviderOrder(raw) {
+  const normalized = typeof raw === 'string'
+    ? raw.split(',').map(item => item.trim().toLowerCase()).filter(Boolean).join(',')
+    : '';
+  if (normalized === 'openrouter,groq') return FORECAST_LLM_PROVIDERS.map(provider => provider.name);
+  return parseForecastProviderOrder(raw);
 }
 
 function getForecastLlmCallOptions(stage = 'default') {
   const defaultProviderOrder = FORECAST_LLM_PROVIDERS.map(provider => provider.name);
-  const globalProviderOrder = parseForecastProviderOrder(process.env.FORECAST_LLM_PROVIDER_ORDER);
-  // Production carries the historical global `openrouter,groq` value. Migrate
-  // only that exact legacy default; stage-scoped operator overrides stay exact.
-  const effectiveGlobalProviderOrder = globalProviderOrder
-    ? migrateLegacyGlobalProviderOrder(globalProviderOrder)
-    : null;
+  const effectiveGlobalProviderOrder = parseGlobalForecastProviderOrder(process.env.FORECAST_LLM_PROVIDER_ORDER);
   const combinedProviderOrder = parseForecastProviderOrder(process.env.FORECAST_LLM_COMBINED_PROVIDER_ORDER);
   const criticalProviderOrder = parseForecastProviderOrder(process.env.FORECAST_LLM_CRITICAL_PROVIDER_ORDER);
   const impactProviderOrder = parseForecastProviderOrder(process.env.FORECAST_LLM_IMPACT_PROVIDER_ORDER);
@@ -15065,10 +15165,9 @@ function getForecastLlmCallOptions(stage = 'default') {
       ? (criticalProviderOrder || effectiveGlobalProviderOrder || defaultProviderOrder)
       : stage === 'impact_expansion'
         ? (impactProviderOrder || effectiveGlobalProviderOrder || defaultProviderOrder)
-      // Deliberately does NOT fall through to globalProviderOrder: that env is set
-      // to `openrouter,groq` in production, which would re-add the groq fallback
-      // this stage must not depend on (see MARKET_IMPLICATIONS_DEFAULT_PROVIDER_ORDER).
-      // Its own stage env still overrides.
+      // Deliberately does NOT fall through to the global order, which would add
+      // fallback rungs this stage must not reserve budget for (see
+      // MARKET_IMPLICATIONS_DEFAULT_PROVIDER_ORDER). Its own stage env still overrides.
       : stage === 'market_implications'
         ? (marketImplicationsProviderOrder || MARKET_IMPLICATIONS_DEFAULT_PROVIDER_ORDER)
       : (effectiveGlobalProviderOrder || defaultProviderOrder);
@@ -15088,25 +15187,23 @@ function getForecastLlmCallOptions(stage = 'default') {
   // strength/confidence flow into state-derived (market/supply_chain)
   // forecast probabilities and publish selection (frames → world signals →
   // pressure/confirmation scores → buildStateDerivedForecast probability).
-  // Hold this stage on the same provider hosts and OpenRouter fallback. Groq's
-  // decommissioned 8B model moves to its official gpt-oss-20b replacement.
+  // Hold this stage on paid OpenRouter with a pinned model.
   // ONLY the stage-scoped FORECAST_LLM_CRITICAL_PROVIDER_ORDER
   // unpins it — a global FORECAST_LLM_PROVIDER_ORDER must not move a
   // probability-coupled stage as a side effect (review finding on #4965).
   if (stage === 'critical_signals' && !criticalProviderOrder) {
     return {
-      providerOrder: ['groq', 'openrouter'],
+      providerOrder: ['openrouter'],
       modelOverrides: {
-        groq: GROQ_DEFAULT_MODEL,
-        // ONLY the stage-scoped model env may change the pinned fallback —
+        // ONLY the stage-scoped model env may change the pinned model —
         // a global FORECAST_LLM_MODEL_OPENROUTER must not move the
         // probability-coupled stage either (review finding on #4965).
         openrouter: process.env.FORECAST_LLM_CRITICAL_MODEL_OPENROUTER || 'google/gemini-2.5-flash',
       },
       // Legacy request-body parity: the pinned models predate the
       // reasoning-off extraBody on the table's openrouter entry. Keep that
-      // omission, but never drop the mandatory provider-routing policy: a
-      // Groq fallback still sends this probability-bearing prompt to OpenRouter.
+      // omission, but never drop the mandatory provider-routing policy: this
+      // probability-bearing prompt still goes to OpenRouter.
       extraBodyOverrides: { openrouter: { provider: OPENROUTER_PROVIDER_ROUTING } },
     };
   }
@@ -15156,13 +15253,12 @@ function resolveForecastLlmProviders(options = {}) {
   }
   // PER-79 (upstream PR 3/3): append the generic OpenAI-compatible provider
   // ONLY when all three envs are set AND the chain above matched no named
-  // provider (envKey for both openrouter and groq unset). The env check uses
+  // provider (OPENROUTER_API_KEY unset). The env check uses
   // ONLY the names — never echo or log the values. Kept out of
   // FORECAST_LLM_PROVIDERS so existing table-shape tests and the per-stage
   // pinning in critical_signals / market_implications stay exact.
   if (isForecastGenericLlmReady()
     && !process.env.OPENROUTER_API_KEY
-    && !process.env.GROQ_API_KEY
     && !seen.has(FORECAST_GENERIC_LLM_PROVIDER_SPEC.name)) {
     const generic = buildForecastGenericLlmProvider();
     const genericModel = generic.model;
@@ -15182,7 +15278,7 @@ function resolveForecastLlmProviders(options = {}) {
 }
 
 // Hosted production must keep the pin-based critical_signals cache tag
-// (#4965): `providerOrder` then the openrouter/groq override slots. Replacing
+// (#4965): `providerOrder` then the openrouter override slot. Replacing
 // that whole tag with the resolved runnable chain would change the hosted
 // key shape and bust the 20-minute Redis cache for no reason. Append the
 // generic name + model ONLY when generic is actually in the resolved chain
@@ -15192,7 +15288,6 @@ function buildCriticalSignalRouteTag(options = {}) {
   const pinTag = [
     (options.providerOrder || []).join('-') || 'default',
     options.modelOverrides?.openrouter || 'table',
-    options.modelOverrides?.groq || 'table',
   ].join('_');
   const generic = resolveForecastLlmProviders(options).find((provider) => provider.name === 'generic');
   const genericSuffix = generic ? `_generic_${generic.model}` : '';
@@ -16551,6 +16646,8 @@ async function fetchForecasts() {
   const initiallyPublishedSituationClusters = publishArtifacts.filteredSituationClusters;
   const initiallyPublishedSituationFamilies = publishArtifacts.filteredSituationFamilies;
   const publishedPredictions = publishArtifacts.publishedPredictions;
+  // Only published forecasts reach the resolution ledger, so only they are measured.
+  await runExtractionGateShadow(publishedPredictions);
   const publishTelemetry = summarizePublishFiltering(predictions, finalSelectionPool, publishedPredictions);
   const publishedSituationClusters = publishArtifacts.publishedSituationClusters;
   const publishedSituationFamilies = publishArtifacts.publishedSituationFamilies;
@@ -16584,6 +16681,38 @@ async function fetchForecasts() {
     priorWorldState,
     priorWorldStates,
   };
+}
+
+// Extraction gate shadow (#7067): reads each hard spec's sourceFeed raw, as
+// seed-forecast-resolutions does (no envelope unwrap; the shared shaper needs
+// `_seed`), and logs per-family/per-domain counters plus the would-downgrade
+// cohort. Never changes a spec and never fails the run.
+async function runExtractionGateShadow(predictions) {
+  try {
+    const keys = extractionShadowFeedKeys(predictions);
+    const { url, token } = getRedisCredentials();
+    const reads = await Promise.allSettled(keys.map(async (key) => {
+      if (_testRedisStore) return _testRedisStore[key] ?? null;
+      const raw = await redisCommand(url, token, ['GET', key]);
+      return raw?.result == null ? null : JSON.parse(raw.result);
+    }));
+    const rawByKey = {};
+    reads.forEach((read, index) => {
+      if (read.status === 'fulfilled') rawByKey[keys[index]] = read.value;
+      else console.warn(`  [ExtractionGate] feed ${keys[index]} unavailable: ${read.reason?.message || read.reason}`);
+    });
+    const verdicts = evaluateExtractionShadow(predictions, rawByKey);
+    const summary = summarizeExtractionShadow(verdicts);
+    const count = (outcome) => summary.byOutcome[outcome] || 0;
+    console.log(`  [ExtractionGate] shadow hard=${summary.total} pass=${count('pass')} fail=${count('fail')} feed_unavailable=${count('feed_unavailable')} skipped=${count('skipped')} byFamily=${JSON.stringify(summary.byFamily)} byDomain=${JSON.stringify(summary.byDomain)}`);
+    for (const v of verdicts) {
+      if (v.outcome === 'fail') console.log(`  [ExtractionGate] would_downgrade id=${JSON.stringify(v.id)} family=${v.family} domain=${v.domain} metricKey=${JSON.stringify(v.metricKey)} reason=${v.reason}`);
+    }
+    return { verdicts, summary };
+  } catch (err) {
+    console.warn(`  [ExtractionGate] shadow skipped: ${err?.message || err}`);
+    return null;
+  }
 }
 
 async function readForecastRefreshRequest() {
@@ -17479,8 +17608,8 @@ const MARKET_IMPLICATIONS_STAGE_CACHE_PREFIX = 'forecast:llm-market-implications
 // overridden) order that actually has an API key, ONE attempt each (market_implications
 // forces maxRetries:0), summed with the 5s stage guard that getUsableForecastLlmBudgetMs
 // subtracts. Reserving only the PRIMARY timeout (the original 30_000) was a latent bug:
-// with the default openrouter→groq order a DeepSeek Flash timeout drained the
-// budget so the groq FALLBACK was stranded and a recoverable timeout was misreported as
+// with a two-provider order a DeepSeek Flash timeout drained the
+// budget so the FALLBACK was stranded and a recoverable timeout was misreported as
 // SEED_ERROR (health WARNING). Reserving the full chain means an admitted call can exhaust
 // the primary AND still run the fallback; below that we skip and preserve last-good (green,
 // age-based STALE_SEED still escalates past 2h) rather than attempt a chain we cannot finish.
@@ -19669,6 +19798,7 @@ export {
   callForecastLLM,
   __setForecastLlmRunDeadlineForTests,
   __setRedisStoreForTests,
+  runExtractionGateShadow,
   buildMarketImplicationsFingerprint,
   buildAndSeedMarketImplications,
 };

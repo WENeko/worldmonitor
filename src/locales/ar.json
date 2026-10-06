@@ -16,7 +16,7 @@
     "predictionMarkets": "أسواق التنبؤ",
     "loadingMarkets": "جارٍ تحميل أسواق التنبؤ...",
     "infrastructure": "التعرض البنيوي",
-    "briefUnavailable": "الموجز الذكي غير متاح — قم بتهيئة GROQ_API_KEY في الإعدادات.",
+    "briefUnavailable": "الموجز الذكي غير متاح — قم بتهيئة OPENROUTER_API_KEY في الإعدادات.",
     "cached": "مخزّن مؤقتاً",
     "fresh": "محدّث",
     "noMarkets": "لم يتم العثور على أسواق تنبؤ",
@@ -125,6 +125,7 @@
       "doNotTravel": "لا تسافر",
       "reconsiderTravel": "أعد النظر في السفر",
       "exerciseCaution": "توخَّ الحذر",
+      "normalPrecautions": "احتياطات عادية",
       "advisory": "تحذير",
       "activeSirens": "صفارات إنذار نشطة",
       "sirens24h": "صفارات / 24 ساعة",
@@ -810,7 +811,7 @@
       "fresh": "محدّث",
       "noMarkets": "لم يتم العثور على أسواق تنبؤ",
       "predictionMarkets": "أسواق التنبؤ",
-      "unavailable": "الموجز الذكي غير متاح — قم بتهيئة GROQ_API_KEY في الإعدادات."
+      "unavailable": "الموجز الذكي غير متاح — قم بتهيئة OPENROUTER_API_KEY في الإعدادات."
     },
     "countryBrief": {
       "identifying": "جارٍ تحديد الدولة...",
@@ -826,7 +827,7 @@
       "predictionMarkets": "أسواق التنبؤ",
       "loadingMarkets": "جارٍ تحميل أسواق التنبؤ...",
       "infrastructure": "التعرض البنيوي",
-      "briefUnavailable": "الموجز الذكي غير متاح — قم بتهيئة GROQ_API_KEY في الإعدادات.",
+      "briefUnavailable": "الموجز الذكي غير متاح — قم بتهيئة OPENROUTER_API_KEY في الإعدادات.",
       "cached": "مخزّن مؤقتاً",
       "fresh": "محدّث",
       "noMarkets": "لم يتم العثور على أسواق تنبؤ",
@@ -1387,7 +1388,7 @@
     },
     "insights": {
       "noStories": "لا توجد قصص عاجلة أو متعددة المصادر بعد",
-      "infoTooltip": "<strong>تحليل مدعوم بالذكاء الاصطناعي</strong><br>• <strong>موجز عالمي</strong>: ملخص AI (Groq/OpenRouter)<br>• <strong>المشاعر</strong>: تحليل نبرة الأخبار<br>• <strong>السرعة</strong>: قصص سريعة التطور<br>• <strong>النقاط المحورية</strong>: تربط كيانات الأخبار بإشارات الخريطة (عسكرية، احتجاجات، انقطاعات)<br><em>سطح المكتب فقط • مدعوم بـ Llama 3.3 + كشف النقاط المحورية</em>",
+      "infoTooltip": "<strong>تحليل مدعوم بالذكاء الاصطناعي</strong><br>• <strong>موجز عالمي</strong>: ملخص AI (OpenRouter)<br>• <strong>المشاعر</strong>: تحليل نبرة الأخبار<br>• <strong>السرعة</strong>: قصص سريعة التطور<br>• <strong>النقاط المحورية</strong>: تربط كيانات الأخبار بإشارات الخريطة (عسكرية، احتجاجات، انقطاعات)<br><em>سطح المكتب فقط • مدعوم بـ Llama 3.3 + كشف النقاط المحورية</em>",
       "step": "Step {{step}}/{{total}}",
       "waitingForData": "Waiting for news data...",
       "rankingStories": "Ranking important stories...",
@@ -1395,7 +1396,7 @@
       "generatingBrief": "Generating world brief...",
       "mapFlashLabel": "Live Event Pulse",
       "mapFlashDesc": "Flash locations on the map when breaking news arrives",
-      "aiFlowCloudLabel": "Cloud AI (Groq & OpenRouter)",
+      "aiFlowCloudLabel": "Cloud AI (OpenRouter)",
       "aiFlowCloudDesc": "إرسال العناوين إلى السحابة لتلخيص الذكاء الاصطناعي (موصى به)",
       "aiFlowBrowserLabel": "نموذج محلي في المتصفح",
       "aiFlowBrowserDesc": "تشغيل الذكاء الاصطناعي محلياً في متصفحك",
@@ -2370,7 +2371,7 @@
       }
     },
     "marketImplications": {
-      "infoTooltip": "<strong>آثار السوق بالذكاء الاصطناعي</strong> إشارات تداول يولدها النموذج اللغوي الكبير مشتقة من الحالة الجيوسياسية والسلع والاقتصادية الحية بعد كل دورة توقع.<ul><li><strong>الاتجاه</strong>: شراء / بيع / تحوط مع درجة ثقة</li><li><strong>الأفق الزمني</strong>: أسبوع أو أسبوعان أو شهر أو 3 أشهر</li><li><strong>المحرك</strong>: العامل الرئيسي وراء الإشارة</li><li><strong>المخاطرة</strong>: تحذير أو شرط إلغاء</li></ul><em>لأغراض إعلامية فقط. ليست نصيحة استثمارية.</em>",
+      "infoTooltip": "<strong>آثار السوق بالذكاء الاصطناعي</strong> إشارات تداول يولدها النموذج اللغوي الكبير مشتقة من الحالة الجيوسياسية والسلع والاقتصادية الحية بعد كل دورة توقع.<ul><li><strong>الاتجاه</strong>: شراء / بيع / تحوط</li><li><strong>الأفق الزمني</strong>: أسبوع أو أسبوعان أو شهر أو 3 أشهر</li><li><strong>المحرك</strong>: العامل الرئيسي وراء الإشارة</li><li><strong>المخاطرة</strong>: تحذير أو شرط إلغاء</li></ul><em>لأغراض إعلامية فقط. ليست نصيحة استثمارية.</em>",
       "title": "تداعيات سوق الذكاء الاصطناعي",
       "directions": {
         "long": "LONG",
@@ -2387,7 +2388,8 @@
       "signals_zero": "{{count}} إشارات",
       "signals_two": "{{count}} إشارتان",
       "signals_few": "{{count}} إشارات",
-      "signals_many": "{{count}} إشارة"
+      "signals_many": "{{count}} إشارة",
+      "unscored": "سيناريوهات سردية، غير مقيّمة من حيث الدقة."
     },
     "forecast": {
       "infoTooltip": "<strong>التنبؤات بالذكاء الاصطناعي</strong> تقديرات احتمالية تم إنشاؤها بواسطة الذكاء الاصطناعي للأحداث الجيوسياسية والاقتصادية:<ul><li>تغطية متعددة المجالات: النزاع والأسواق وسلسلة التوريد والأمن السيبراني والسياسة</li><li>يعرض كل تنبؤ الاحتمال المقدر ومستوى الثقة والأفق الزمني</li><li>مُعايرة مقابل خطوط أساس أسواق التنبؤ حيث تتوفر</li></ul>تتحدث التنبؤات مع وصول إشارات استخبارية جديدة. قم بالتصفية حسب المجال باستخدام علامات التبويب أعلاه."
@@ -3434,8 +3436,8 @@
   "signals": {
     "context": {
       "prediction_leads_news": {
-        "whyItMatters": "أسواق التنبؤ غالباً ما تسعّر المعلومات قبل أن تصبح أخباراً — قد يمتلك المتداولون وصولاً مبكراً للتطورات.",
-        "actionableInsight": "راقب الأخبار العاجلة خلال 1-6 ساعات القادمة التي قد تفسر حركة السوق.",
+        "whyItMatters": "تحرك سوق التنبؤات بينما ظلت التغطية الإخبارية للموضوع منخفضة—قد يكون السوق يتفاعل مع معلومات لم يتم الإبلاغ عنها بعد.",
+        "actionableInsight": "راقب الأخبار العاجلة التي قد تفسر حركة السوق.",
         "confidenceNote": "ثقة أعلى إذا تحركت عدة أسواق تنبؤ في نفس الاتجاه."
       },
       "news_leads_markets": {

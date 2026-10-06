@@ -16,7 +16,7 @@
     "predictionMarkets": "Prognosemärkte",
     "loadingMarkets": "Prognosemärkte werden geladen...",
     "infrastructure": "Infrastrukturexposition",
-    "briefUnavailable": "KI-Lagebericht nicht verfügbar – konfigurieren Sie GROQ_API_KEY in den Einstellungen.",
+    "briefUnavailable": "KI-Lagebericht nicht verfügbar – konfigurieren Sie OPENROUTER_API_KEY in den Einstellungen.",
     "cached": "Zwischengespeichert",
     "fresh": "Aktuell",
     "noMarkets": "Keine aktiven Märkte für dieses Land.",
@@ -125,6 +125,7 @@
       "doNotTravel": "Nicht reisen",
       "reconsiderTravel": "Reise überdenken",
       "exerciseCaution": "Vorsicht walten lassen",
+      "normalPrecautions": "Übliche Vorsichtsmaßnahmen",
       "advisory": "Reisehinweis",
       "activeSirens": "Aktive Sirenen",
       "sirens24h": "Sirenen / 24h",
@@ -757,7 +758,7 @@
       "fresh": "Aktuell",
       "noMarkets": "Keine Prognosemärkte gefunden",
       "predictionMarkets": "Prognosemärkte",
-      "unavailable": "KI-Lagebericht nicht verfügbar – konfigurieren Sie GROQ_API_KEY in den Einstellungen."
+      "unavailable": "KI-Lagebericht nicht verfügbar – konfigurieren Sie OPENROUTER_API_KEY in den Einstellungen."
     },
     "countryBrief": {
       "components": {
@@ -793,7 +794,7 @@
       "predictionMarkets": "Prognosemärkte",
       "loadingMarkets": "Prognosemärkte werden geladen...",
       "infrastructure": "Infrastrukturexposition",
-      "briefUnavailable": "KI-Lagebericht nicht verfügbar – konfigurieren Sie GROQ_API_KEY in den Einstellungen.",
+      "briefUnavailable": "KI-Lagebericht nicht verfügbar – konfigurieren Sie OPENROUTER_API_KEY in den Einstellungen.",
       "cached": "Zwischengespeichert",
       "fresh": "Aktuell",
       "noMarkets": "Keine Prognosemärkte gefunden",
@@ -1772,7 +1773,7 @@
     },
     "insights": {
       "noStories": "Noch keine aktuellen oder quellenübergreifenden Meldungen",
-      "infoTooltip": "<strong>KI-gestützte Analyse</strong><br>• <strong>World Brief</strong>: KI-Zusammenfassung (Groq/OpenRouter)<br>• <strong>Sentiment</strong>: Nachrichtentonanalyse<br>• <strong>Velocity</strong>: schnelllebige Meldungen<br>• <strong>Focal Points</strong>: korreliert Nachrichtenentitäten mit Kartensignalen (Militär, Proteste, Ausfälle)<br><em>Nur Desktop • Unterstützt von Llama 3.3 + Focal Point Detection</em>",
+      "infoTooltip": "<strong>KI-gestützte Analyse</strong><br>• <strong>World Brief</strong>: KI-Zusammenfassung (OpenRouter)<br>• <strong>Sentiment</strong>: Nachrichtentonanalyse<br>• <strong>Velocity</strong>: schnelllebige Meldungen<br>• <strong>Focal Points</strong>: korreliert Nachrichtenentitäten mit Kartensignalen (Militär, Proteste, Ausfälle)<br><em>Nur Desktop • Unterstützt von Llama 3.3 + Focal Point Detection</em>",
       "step": "Schritt {{step}}/{{total}}",
       "waitingForData": "Warten auf Nachrichtendaten...",
       "rankingStories": "Wichtige Meldungen werden priorisiert...",
@@ -1782,7 +1783,7 @@
       "streamQualityDesc": "Qualität für alle Live-Streams festlegen (niedriger spart Bandbreite)",
       "mapFlashLabel": "Live-Ereignispuls",
       "mapFlashDesc": "Orte auf der Karte aufblitzen lassen, wenn Eilmeldungen eintreffen",
-      "aiFlowCloudLabel": "Cloud-KI (Groq & OpenRouter)",
+      "aiFlowCloudLabel": "Cloud-KI (OpenRouter)",
       "aiFlowCloudDesc": "Schlagzeilen zur KI-Zusammenfassung an die Cloud senden (empfohlen)",
       "aiFlowBrowserLabel": "Lokales Browser-Modell",
       "aiFlowBrowserDesc": "KI lokal in Ihrem Browser ausführen",
@@ -2334,7 +2335,7 @@
       }
     },
     "marketImplications": {
-      "infoTooltip": "<strong>AI-Marktauswirkungen</strong> LLM-generierte Handelssignale aus Live-Geopolitik, Rohstoffen und Makrozustand nach jedem Prognosezyklus.<ul><li><strong>Richtung</strong>: LONG / SHORT / HEDGE mit Konfidenzwert</li><li><strong>Zeitrahmen</strong>: 1W, 2W, 1M oder 3M Horizont</li><li><strong>Katalysator</strong>: Wichtiger Auslöser hinter dem Signal</li><li><strong>Risiko</strong>: Warnung oder Ungültigkeitsbedingung</li></ul><em>Nur zu Informationszwecken. Keine Anlageberatung.</em>",
+      "infoTooltip": "<strong>AI-Marktauswirkungen</strong> LLM-generierte Handelssignale aus Live-Geopolitik, Rohstoffen und Makrozustand nach jedem Prognosezyklus.<ul><li><strong>Richtung</strong>: LONG / SHORT / HEDGE</li><li><strong>Zeitrahmen</strong>: 1W, 2W, 1M oder 3M Horizont</li><li><strong>Katalysator</strong>: Wichtiger Auslöser hinter dem Signal</li><li><strong>Risiko</strong>: Warnung oder Ungültigkeitsbedingung</li></ul><em>Nur zu Informationszwecken. Keine Anlageberatung.</em>",
       "title": "KI-Marktauswirkungen",
       "directions": {
         "long": "LONG",
@@ -2347,7 +2348,8 @@
       "signals_one": "{{count}} Signal",
       "signals_other": "{{count}} Signale",
       "disclaimer": "KI-generierte Handelssignale nur zu Informationszwecken. Keine Anlageberatung. Führen Sie immer eigene Recherchen durch.",
-      "unavailable": "AI-Marktimplikationen werden nach jedem Prognoselauf generiert. Bitte versuchen Sie es in Kürze erneut."
+      "unavailable": "AI-Marktimplikationen werden nach jedem Prognoselauf generiert. Bitte versuchen Sie es in Kürze erneut.",
+      "unscored": "Narrative Szenarien, nicht auf Genauigkeit bewertet."
     },
     "forecast": {
       "infoTooltip": "<strong>KI-Prognosen</strong> KI-generierte Wahrscheinlichkeitsschätzungen für geopolitische und wirtschaftliche Ereignisse:<ul><li>Bereichsübergreifende Abdeckung: Konflikte, Märkte, Lieferkette, Cyber, Politik</li><li>Jede Prognose zeigt geschätzte Wahrscheinlichkeit, Konfidenzgrad und Zeithorizont</li><li>Kalibriert an den Basiswerten von Prognosemärkten, wo verfügbar</li></ul>Prognosen werden aktualisiert, wenn neue Aufklärungssignale eintreffen. Filtern Sie nach Bereich mit den Registerkarten oben."
@@ -3354,8 +3356,8 @@
   "signals": {
     "context": {
       "prediction_leads_news": {
-        "whyItMatters": "Prognosemärkte preisen Informationen oft ein, bevor sie zur Nachricht werden — Händler haben möglicherweise frühzeitigen Zugang zu Entwicklungen.",
-        "actionableInsight": "In den nächsten 1-6 Stunden auf Breaking News achten, die die Marktbewegung erklären könnten.",
+        "whyItMatters": "Ein Vorhersagemarkt hat sich bewegt, während die Berichterstattung zum Thema gering blieb – der Markt könnte auf Informationen reagieren, über die noch nicht berichtet wurde.",
+        "actionableInsight": "Achten Sie auf aktuelle Meldungen, die die Marktbewegung erklären könnten.",
         "confidenceNote": "Höheres Vertrauen, wenn sich mehrere Prognosemärkte in die gleiche Richtung bewegen."
       },
       "news_leads_markets": {

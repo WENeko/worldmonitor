@@ -16,7 +16,7 @@
     "predictionMarkets": "Mercados de predicción",
     "loadingMarkets": "Cargando mercados de predicción...",
     "infrastructure": "Exposición de infraestructura",
-    "briefUnavailable": "Resumen de IA no disponible: configure GROQ_API_KEY en Configuración.",
+    "briefUnavailable": "Resumen de IA no disponible: configure OPENROUTER_API_KEY en Configuración.",
     "cached": "En caché",
     "fresh": "Actual",
     "noMarkets": "No se encontraron mercados de predicción",
@@ -125,6 +125,7 @@
       "doNotTravel": "No viajar",
       "reconsiderTravel": "Reconsiderar viaje",
       "exerciseCaution": "Actuar con cautela",
+      "normalPrecautions": "Precauciones normales",
       "advisory": "Aviso",
       "activeSirens": "Sirenas activas",
       "sirens24h": "Sirenas / 24h",
@@ -760,7 +761,7 @@
       "fresh": "Fresco",
       "noMarkets": "No se encontraron mercados de predicción",
       "predictionMarkets": "Mercados de predicción",
-      "unavailable": "Resumen de IA no disponible: configure GROQ_API_KEY en Configuración."
+      "unavailable": "Resumen de IA no disponible: configure OPENROUTER_API_KEY en Configuración."
     },
     "countryBrief": {
       "components": {
@@ -796,7 +797,7 @@
       "predictionMarkets": "Mercados de predicción",
       "loadingMarkets": "Cargando mercados de predicción...",
       "infrastructure": "Exposición de infraestructura",
-      "briefUnavailable": "Resumen de IA no disponible: configure GROQ_API_KEY en Configuración.",
+      "briefUnavailable": "Resumen de IA no disponible: configure OPENROUTER_API_KEY en Configuración.",
       "cached": "en cache",
       "fresh": "Fresco",
       "noMarkets": "No se encontraron mercados de predicción",
@@ -1775,7 +1776,7 @@
     },
     "insights": {
       "noStories": "Aún no hay noticias de última hora o de múltiples fuentes",
-      "infoTooltip": "<strong>Análisis impulsado por IA</strong><br>• <strong>Resumen mundial</strong>: Resumen de IA (Groq/OpenRouter)<br>• <strong>Sentimento</strong>: Análisis del tono de las noticias<br>• <strong>Velocity</strong>: Historias de rápido movimiento<br>• <strong>Focal Puntos</strong>: Correlaciona entidades de noticias con señales de mapas (militares, protestas, cortes)<br><em>Solo escritorio • Desarrollado por Llama 3.3 + Detección de puntos focales</em>",
+      "infoTooltip": "<strong>Análisis impulsado por IA</strong><br>• <strong>Resumen mundial</strong>: Resumen de IA (OpenRouter)<br>• <strong>Sentimento</strong>: Análisis del tono de las noticias<br>• <strong>Velocity</strong>: Historias de rápido movimiento<br>• <strong>Focal Puntos</strong>: Correlaciona entidades de noticias con señales de mapas (militares, protestas, cortes)<br><em>Solo escritorio • Desarrollado por Llama 3.3 + Detección de puntos focales</em>",
       "step": "Step {{step}}/{{total}}",
       "waitingForData": "Waiting for news data...",
       "rankingStories": "Ranking important stories...",
@@ -1785,7 +1786,7 @@
       "streamQualityDesc": "Establecer calidad para todas las transmisiones en vivo (menor ahorra ancho de banda)",
       "mapFlashLabel": "Live Event Pulse",
       "mapFlashDesc": "Flash locations on the map when breaking news arrives",
-      "aiFlowCloudLabel": "IA en la nube (Groq & OpenRouter)",
+      "aiFlowCloudLabel": "IA en la nube (OpenRouter)",
       "aiFlowCloudDesc": "Enviar titulares a la nube para resumen con IA (recomendado)",
       "aiFlowBrowserLabel": "Modelo local del navegador",
       "aiFlowBrowserDesc": "Ejecutar IA localmente en su navegador",
@@ -2343,7 +2344,7 @@
       }
     },
     "marketImplications": {
-      "infoTooltip": "<strong>Implicaciones de mercado de IA</strong> Señales comerciales generadas por LLM derivadas del estado geopolítico, de materias primas y macroeconómico en vivo después de cada ciclo de pronóstico.<ul><li><strong>Dirección</strong>: LARGO / CORTO / COBERTURA con calificación de confianza</li><li><strong>Plazo</strong>: Horizonte de 1S, 2S, 1M o 3M</li><li><strong>Catalizador</strong>: Catalizador clave detrás de la señal</li><li><strong>Riesgo</strong>: Advertencia o condición de invalidación</li></ul><em>Solo para fines informativos. No es asesoramiento de inversión.</em>",
+      "infoTooltip": "<strong>Implicaciones de mercado de IA</strong> Señales comerciales generadas por LLM derivadas del estado geopolítico, de materias primas y macroeconómico en vivo después de cada ciclo de pronóstico.<ul><li><strong>Dirección</strong>: LARGO / CORTO / COBERTURA</li><li><strong>Plazo</strong>: Horizonte de 1S, 2S, 1M o 3M</li><li><strong>Catalizador</strong>: Catalizador clave detrás de la señal</li><li><strong>Riesgo</strong>: Advertencia o condición de invalidación</li></ul><em>Solo para fines informativos. No es asesoramiento de inversión.</em>",
       "title": "Implicaciones de Mercado de IA",
       "directions": {
         "long": "LARGO",
@@ -2357,7 +2358,8 @@
       "signals_other": "{{count}} señales",
       "disclaimer": "Señales comerciales generadas por IA solo con fines informativos. No es asesoramiento de inversión. Siempre investiga por tu cuenta.",
       "unavailable": "Las implicaciones de mercado de IA se generan después de cada ejecución de pronóstico. Vuelve a consultar en breve.",
-      "signals_many": "{{count}} señales"
+      "signals_many": "{{count}} señales",
+      "unscored": "Escenarios narrativos, no calificados por precisión."
     },
     "forecast": {
       "infoTooltip": "<strong>Pronósticos de IA</strong> Estimaciones de probabilidad generadas por IA para eventos geopolíticos y económicos:<ul><li>Cobertura multidominios: conflicto, mercados, cadena de suministro, ciberseguridad, política</li><li>Cada pronóstico muestra probabilidad estimada, nivel de confianza e horizonte temporal</li><li>Calibrado contra líneas de base de mercados de predicción donde esté disponible</li></ul>Los pronósticos se actualizan a medida que llegan nuevas señales de inteligencia. Filtra por dominio usando las pestañas anteriores."
@@ -3374,8 +3376,8 @@
   "signals": {
     "context": {
       "prediction_leads_news": {
-        "whyItMatters": "Los mercados de predicción a menudo descuentan información antes de que se convierta en noticia: los operadores pueden tener acceso anticipado a los acontecimientos.",
-        "actionableInsight": "Monitorear noticias de última hora en las próximas 1-6 horas que puedan explicar el movimiento del mercado.",
+        "whyItMatters": "Un mercado de predicción se movió mientras que la cobertura de noticias sobre el tema se mantuvo baja—el mercado podría estar reaccionando a información que aún no ha sido reportada.",
+        "actionableInsight": "Monitorea noticias de última hora que podrían explicar el movimiento del mercado.",
         "confidenceNote": "Mayor confianza si múltiples mercados de predicción se mueven en la misma dirección."
       },
       "news_leads_markets": {

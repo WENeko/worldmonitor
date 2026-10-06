@@ -358,7 +358,7 @@
       "loadingIndex": "Index laden...",
       "loadingMarkets": "Voorspellingsmarkten laden...",
       "generatingBrief": "Inlichtingenoverzicht genereren...",
-      "unavailable": "AI-overzicht niet beschikbaar: configureer GROQ_API_KEY in Instellingen.",
+      "unavailable": "AI-overzicht niet beschikbaar: configureer OPENROUTER_API_KEY in Instellingen.",
       "cached": "in cache",
       "fresh": "Vers",
       "noMarkets": "Geen voorspellingsmarkten gevonden",
@@ -398,7 +398,7 @@
       "predictionMarkets": "Voorspellingsmarkten",
       "loadingMarkets": "Voorspellingsmarkten laden...",
       "infrastructure": "Blootstelling aan infrastructuur",
-      "briefUnavailable": "AI-overzicht niet beschikbaar: configureer GROQ_API_KEY in Instellingen.",
+      "briefUnavailable": "AI-overzicht niet beschikbaar: configureer OPENROUTER_API_KEY in Instellingen.",
       "cached": "in cache",
       "fresh": "Vers",
       "noMarkets": "Geen voorspellingsmarkten gevonden",
@@ -1248,7 +1248,7 @@
       "sourcesDetail": "{{active}}/{{total}} sources"
     },
     "insights": {
-      "infoTooltip": "<strong>AI-aangedreven analyse</strong><br>• <strong>World Brief</strong>: AI-samenvatting (Groq/OpenRouter)<br>• <strong>Sentiment</strong>: analyse van nieuwstoon<br>• <strong>Velocity</strong>: snel bewegende verhalen<br>• <strong>Focal Punten</strong>: correleert nieuwsentiteiten met kaartsignalen (militair, protesten, storingen)<br><em>Alleen desktop • Mogelijk gemaakt door Llama 3.3 + Focal Point-detectie</em>",
+      "infoTooltip": "<strong>AI-aangedreven analyse</strong><br>• <strong>World Brief</strong>: AI-samenvatting (OpenRouter)<br>• <strong>Sentiment</strong>: analyse van nieuwstoon<br>• <strong>Velocity</strong>: snel bewegende verhalen<br>• <strong>Focal Punten</strong>: correleert nieuwsentiteiten met kaartsignalen (militair, protesten, storingen)<br><em>Alleen desktop • Mogelijk gemaakt door Llama 3.3 + Focal Point-detectie</em>",
       "noStories": "Nog geen breaking of multi-source verhalen",
       "step": "Step {{step}}/{{total}}",
       "waitingForData": "Waiting for news data...",
@@ -1257,7 +1257,7 @@
       "generatingBrief": "Generating world brief...",
       "mapFlashLabel": "Live Event Pulse",
       "mapFlashDesc": "Flash locations on the map when breaking news arrives",
-      "aiFlowCloudLabel": "Cloud AI (Groq & OpenRouter)",
+      "aiFlowCloudLabel": "Cloud AI (OpenRouter)",
       "aiFlowCloudDesc": "Koppen naar de cloud sturen voor AI-samenvatting (aanbevolen)",
       "aiFlowBrowserLabel": "Lokaal browsermodel",
       "aiFlowBrowserDesc": "AI lokaal in uw browser uitvoeren",
@@ -1953,7 +1953,7 @@
       }
     },
     "marketImplications": {
-      "infoTooltip": "<strong>AI-marktimplicaties</strong> Door LLM gegenereerde handelssignalen afgeleid van live geopolitieke, grondstof- en macrothema's na elke voorspellingscyclus.<ul><li><strong>Richting</strong>: LONG / SHORT / HEDGE met betrouwbaarheidsrating</li><li><strong>Periode</strong>: 1W, 2W, 1M of 3M horizon</li><li><strong>Driver</strong>: Belangrijkste katalysator achter het signaal</li><li><strong>Risico</strong>: Voorbehoud of ongeldigheidsvoorwaarde</li></ul><em>Uitsluitend voor informatiedoeleinden. Geen beleggingsadvies.</em>",
+      "infoTooltip": "<strong>AI-marktimplicaties</strong> Door LLM gegenereerde handelssignalen afgeleid van live geopolitieke, grondstof- en macrothema's na elke voorspellingscyclus.<ul><li><strong>Richting</strong>: LONG / SHORT / HEDGE</li><li><strong>Periode</strong>: 1W, 2W, 1M of 3M horizon</li><li><strong>Driver</strong>: Belangrijkste katalysator achter het signaal</li><li><strong>Risico</strong>: Voorbehoud of ongeldigheidsvoorwaarde</li></ul><em>Uitsluitend voor informatiedoeleinden. Geen beleggingsadvies.</em>",
       "title": "AI-marktimplicaties",
       "directions": {
         "long": "LONG",
@@ -1966,7 +1966,8 @@
       "signals_one": "{{count}} signaal",
       "signals_other": "{{count}} signalen",
       "disclaimer": "Door AI gegenereerde handelssignalen alleen voor informatiedoeleinden. Geen beleggingsadvies. Voer altijd uw eigen onderzoek uit.",
-      "unavailable": "AI-marktimplicaties worden na elke forecastrun gegenereerd. Kom binnenkort terug."
+      "unavailable": "AI-marktimplicaties worden na elke forecastrun gegenereerd. Kom binnenkort terug.",
+      "unscored": "Narratieve scenario's, niet beoordeeld op nauwkeurigheid."
     },
     "forecast": {
       "infoTooltip": "<strong>AI-prognoses</strong> Door AI gegenereerde waarschijnlijkheidsschattingen voor geopolitieke en economische gebeurtenissen:<ul><li>Cross-domain dekking: conflict, markten, toeleveringsketen, cyber, politiek</li><li>Elke prognose toont geschatte waarschijnlijkheid, betrouwbaarheidsniveau en tijdshorizon</li><li>Gekalibreerd tegen voorspellingsmarkt basislijnen waar beschikbaar</li></ul>Prognoses worden bijgewerkt wanneer nieuwe inlichtingssignalen binnenkomen. Filter op domein met behulp van de tabbladen hierboven."
@@ -2973,8 +2974,8 @@
   "signals": {
     "context": {
       "prediction_leads_news": {
-        "whyItMatters": "Voorspellingsmarkten prijzen informatie vaak in voordat het nieuws wordt -- handelaren hebben mogelijk vroege toegang tot ontwikkelingen.",
-        "actionableInsight": "Monitor op breaking news in de komende 1-6 uur die de marktbeweging kan verklaren.",
+        "whyItMatters": "Een voorspellingsmarkt bewoog terwijl de nieuwsberichtgeving over het onderwerp laag bleef — de markt reageert mogelijk op informatie die nog niet is gerapporteerd.",
+        "actionableInsight": "Let op actueel nieuws dat de marktbeweging kan verklaren.",
         "confidenceNote": "Hogere betrouwbaarheid als meerdere voorspellingsmarkten in dezelfde richting bewegen."
       },
       "news_leads_markets": {
@@ -3244,7 +3245,7 @@
     "predictionMarkets": "Voorspellingsmarkten",
     "loadingMarkets": "Voorspellingsmarkten laden...",
     "infrastructure": "Blootstelling aan infrastructuur",
-    "briefUnavailable": "AI-overzicht niet beschikbaar — configureer GROQ_API_KEY in Instellingen.",
+    "briefUnavailable": "AI-overzicht niet beschikbaar — configureer OPENROUTER_API_KEY in Instellingen.",
     "cached": "In cache",
     "fresh": "Vers",
     "noMarkets": "Geen voorspellingsmarkten gevonden",
@@ -3353,6 +3354,7 @@
       "doNotTravel": "Niet reizen",
       "reconsiderTravel": "Reis heroverwegen",
       "exerciseCaution": "Wees voorzichtig",
+      "normalPrecautions": "Gebruikelijke voorzorgsmaatregelen",
       "advisory": "Reisadvies",
       "activeSirens": "Actieve sirenes",
       "sirens24h": "Sirenes / 24u",

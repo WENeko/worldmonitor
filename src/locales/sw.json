@@ -87,7 +87,7 @@
     "predictionMarkets": "Masoko ya Utabiri",
     "loadingMarkets": "Inapakia masoko ya ubashiri...",
     "infrastructure": "Ufichuzi wa Miundombinu",
-    "briefUnavailable": "Muhtasari wa AI haupatikani - sanidi GROQ_API_KEY katika Mipangilio.",
+    "briefUnavailable": "Muhtasari wa AI haupatikani - sanidi OPENROUTER_API_KEY katika Mipangilio.",
     "cached": "Imehifadhiwa",
     "fresh": "Safi",
     "noMarkets": "Hakuna masoko amilifu kwa nchi hii.",
@@ -220,6 +220,7 @@
       "doNotTravel": "Usisafiri",
       "reconsiderTravel": "Fikiria upya Usafiri",
       "exerciseCaution": "Tumia Tahadhari",
+      "normalPrecautions": "Tahadhari za kawaida",
       "advisory": "Ushauri",
       "activeSirens": "Ving'ora vinavyotumika",
       "sirens24h": "Ving'ora / 24h",
@@ -867,7 +868,7 @@
       "fresh": "Safi",
       "noMarkets": "Hakuna masoko ya utabiri yaliyopatikana",
       "predictionMarkets": "Masoko ya Utabiri",
-      "unavailable": "Muhtasari wa AI haupatikani - sanidi GROQ_API_KEY katika Mipangilio."
+      "unavailable": "Muhtasari wa AI haupatikani - sanidi OPENROUTER_API_KEY katika Mipangilio."
     },
     "countryBrief": {
       "identifying": "Inatambulisha nchi...",
@@ -883,7 +884,7 @@
       "predictionMarkets": "Masoko ya Utabiri",
       "loadingMarkets": "Inapakia masoko ya ubashiri...",
       "infrastructure": "Ufichuzi wa Miundombinu",
-      "briefUnavailable": "Muhtasari wa AI haupatikani - sanidi GROQ_API_KEY katika Mipangilio.",
+      "briefUnavailable": "Muhtasari wa AI haupatikani - sanidi OPENROUTER_API_KEY katika Mipangilio.",
       "cached": "Imehifadhiwa",
       "fresh": "Safi",
       "noMarkets": "Hakuna masoko ya utabiri yaliyopatikana",
@@ -1193,7 +1194,7 @@
       "infoTooltip": "<strong>Stablecoins</strong> Afya ya kigingi, kiwango cha juu cha soko, na ujazo wa saa 24 kwa tokeni kuu za USD-pegged (USDT, USDC, DAI, BUSD). Kigingi kilichovunjika kinaashiria hatari ya kimfumo."
     },
     "marketImplications": {
-      "infoTooltip": "<strong>Athari za Soko la AI</strong> Ishara za biashara zinazozalishwa na LLM zinazotokana na hali ya jiografia, bidhaa, na hali ya jumla baada ya kila mzunguko wa utabiri.<ul><li><strong>Mwelekeo</strong>: NDEFU / MFUPI / HEDGE kwa ukadiriaji wa kutegemewa</li><li><strong>Muda wa Muda</strong>: 1W, 2M, 2W, au 3M, upeo wa macho</li><li><strong>Dereva</strong>: Kichocheo kikuu nyuma ya mawimbi</li><li><strong>Hatari</strong>: Pango au hali ya kubatilisha</li></ul><em>Kwa madhumuni ya habari pekee. Si ushauri wa uwekezaji.</em>",
+      "infoTooltip": "<strong>Athari za Soko la AI</strong> Ishara za biashara zinazozalishwa na LLM zinazotokana na hali ya jiografia, bidhaa, na hali ya jumla baada ya kila mzunguko wa utabiri.<ul><li><strong>Mwelekeo</strong>: NDEFU / MFUPI / HEDGE</li><li><strong>Muda wa Muda</strong>: 1W, 2M, 2W, au 3M, upeo wa macho</li><li><strong>Dereva</strong>: Kichocheo kikuu nyuma ya mawimbi</li><li><strong>Hatari</strong>: Pango au hali ya kubatilisha</li></ul><em>Kwa madhumuni ya habari pekee. Si ushauri wa uwekezaji.</em>",
       "title": "Athari za Soko la AI",
       "directions": {
         "long": "NDEFU",
@@ -1206,7 +1207,8 @@
       "signals_one": "{{count}} mawimbi",
       "signals_other": "Ishara {{count}}",
       "disclaimer": "Ishara za biashara zinazozalishwa na AI kwa madhumuni ya habari pekee. Sio ushauri wa uwekezaji. Daima fanya utafiti wako mwenyewe.",
-      "unavailable": "Athari za soko la AI hutolewa baada ya kila kukimbia kwa utabiri. Angalia tena hivi punde."
+      "unavailable": "Athari za soko la AI hutolewa baada ya kila kukimbia kwa utabiri. Angalia tena hivi punde.",
+      "unscored": "Matukio ya masimulizi, hayajapimwa kwa usahihi."
     },
     "status": {
       "updatedAt": "Ilisasishwa {{time}}"
@@ -1570,7 +1572,7 @@
       "rankingStories": "Kuorodhesha hadithi muhimu...",
       "analyzingSentiment": "Inachanganua hisia...",
       "generatingBrief": "Inazalisha muhtasari wa dunia...",
-      "infoTooltip": "<strong>Uchambuzi Unaoendeshwa na AI</strong><br>• <strong>Muhtasari wa Ulimwengu</strong>: Muhtasari wa AI (Groq/OpenRouter)<br>• <strong>Maoni</strong>: Uchanganuzi wa sauti ya habari<br>• <strong>Kasi</strong>: Hadithi zinazosonga haraka<br>• <strong>Viini muhimu</strong>: Wanajeshi na maandamano ya ramani kukatika)<br><em>Desktop pekee • Inaendeshwa na Llama 3.3 + Focal Point Detection</em>",
+      "infoTooltip": "<strong>Uchambuzi Unaoendeshwa na AI</strong><br>• <strong>Muhtasari wa Ulimwengu</strong>: Muhtasari wa AI (OpenRouter)<br>• <strong>Maoni</strong>: Uchanganuzi wa sauti ya habari<br>• <strong>Kasi</strong>: Hadithi zinazosonga haraka<br>• <strong>Viini muhimu</strong>: Wanajeshi na maandamano ya ramani kukatika)<br><em>Desktop pekee • Inaendeshwa na Llama 3.3 + Focal Point Detection</em>",
       "streamQualityLabel": "Ubora wa Video",
       "streamQualityDesc": "Weka ubora wa mitiririko yote ya moja kwa moja (hifadhi data ya chini)",
       "globeRenderScaleOptions": {
@@ -1582,7 +1584,7 @@
       },
       "mapFlashLabel": "Mapigo ya Tukio la Moja kwa Moja",
       "mapFlashDesc": "Mwangaza maeneo kwenye ramani wakati habari muhimu zinapofika",
-      "aiFlowCloudLabel": "Cloud AI (Groq & OpenRouter)",
+      "aiFlowCloudLabel": "Cloud AI (OpenRouter)",
       "aiFlowCloudDesc": "Tuma vichwa vya habari kwa wingu kwa muhtasari wa AI (inapendekezwa)",
       "aiFlowBrowserLabel": "Muundo wa Karibu wa Kivinjari",
       "aiFlowBrowserDesc": "Endesha AI ndani ya kivinjari chako",
@@ -3423,8 +3425,8 @@
   "signals": {
     "context": {
       "prediction_leads_news": {
-        "whyItMatters": "Masoko ya utabiri mara nyingi huweka bei ya habari kabla ya kuwa habari-wafanyabiashara wanaweza kupata maendeleo mapema.",
-        "actionableInsight": "Fuatilia habari muhimu zinazochipuka katika saa 1-6 zijazo ambazo zinaweza kuelezea harakati za soko.",
+        "whyItMatters": "Soko la utabiri limebadilika huku habari kuhusu mada hiyo zikibaki chache—huenda soko linaitikia taarifa ambazo bado hazijaripotiwa.",
+        "actionableInsight": "Fuatilia habari za haraka zinazoweza kueleza mabadiliko ya soko.",
         "confidenceNote": "Kujiamini zaidi ikiwa masoko mengi ya utabiri yanaenda katika mwelekeo mmoja."
       },
       "news_leads_markets": {
