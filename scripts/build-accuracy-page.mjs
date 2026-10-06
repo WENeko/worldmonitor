@@ -6,6 +6,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+import { wilsonInterval } from './_forecast-scorecard.mjs';
+
 /** Bump when the page copy changes so its lastmod advances without touching every sibling. */
 export const ACCURACY_CONTENT_VERSION = '2026-10-06';
 
@@ -275,6 +277,49 @@ function rateOf(rate, denominator, noun) {
   return `${(Number(rate) * 100).toFixed(1)}% of ${formatCount(denominator)} ${noun}`;
 }
 
+function formatPercent(value) {
+  return `${(Number(value) * 100).toFixed(1)}%`;
+}
+
+// Every binomial proportion the page shows is a count over a count it already
+// publishes, so its Wilson interval needs nothing the capture does not carry.
+// Mean scores are different: their interval needs the per-entry scores, which
+// the public response does not carry, so the page never estimates one.
+function proportionEstimate(successes, count) {
+  if (!Number.isInteger(successes) || !Number.isInteger(count) || successes < 0 || successes > count) return null;
+  const ci95 = wilsonInterval(successes, count);
+  return ci95 ? { successes, count, ci95 } : null;
+}
+
+function keyedEstimates(rows, key, successesOf, countOf) {
+  const out = {};
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const estimate = proportionEstimate(successesOf(row), countOf(row));
+    if (estimate && typeof row[key] === 'string') out[row[key]] = estimate;
+  }
+  return out;
+}
+
+export function proportionIntervals(scorecard) {
+  if (!isPlainObject(scorecard)) return null;
+  const voidOf = (row) => row.void;
+  const resolvedOf = (row) => row.resolved;
+  return {
+    method: 'wilson-95',
+    void: isPlainObject(scorecard.totals) ? proportionEstimate(scorecard.totals.void, scorecard.totals.resolved) : null,
+    byDomain: keyedEstimates(scorecard.byDomain, 'domain', voidOf, resolvedOf),
+    byGenerationOrigin: keyedEstimates(scorecard.byGenerationOrigin, 'generationOrigin', voidOf, resolvedOf),
+    calibration: keyedEstimates(scorecard.calibration, 'bucket', bucketYesCount, (bucket) => Number(bucket.count)),
+  };
+}
+
+// Bounds are marked so the page's population rule can tell them apart from a
+// rate: an interval belongs to the counted rate printed beside it.
+function intervalHtml(estimate, escapeHtml) {
+  const text = estimate ? `${formatPercent(estimate.ci95[0])} to ${formatPercent(estimate.ci95[1])}` : 'No interval';
+  return `<span data-rate-interval>${escapeHtml(text)}</span>`;
+}
+
 function probabilityBand(bucket) {
   return `${(Number(bucket.minProbability) * 100).toFixed(0)}% to ${(Number(bucket.maxProbability) * 100).toFixed(0)}%`;
 }
@@ -306,6 +351,40 @@ const FAILURE_SENTENCES = Object.freeze({
   unknown: 'The capture failed for a reason this page does not classify.',
 });
 
+// One answer for the caption, the cohort paragraph, the origin row and the
+// download (#5240). excludedOrigins names only origins that had scored entries,
+// so it can say "excluded" or "counted" only when unknown entries were scored.
+// Captures from before #5240 counted them.
+function unknownOriginStatus(scorecard) {
+  const rows = Array.isArray(scorecard?.byGenerationOrigin) ? scorecard.byGenerationOrigin : [];
+  if (!rows.some((row) => row?.generationOrigin === 'unknown' && row.scored > 0)) return 'none-scored';
+  const excluded = scorecard?.skill?.excludedOrigins;
+  return Array.isArray(excluded) && excluded.includes('unknown') ? 'excluded' : 'counted';
+}
+
+const UNKNOWN_ORIGIN_SENTENCES = Object.freeze({
+  counted: 'An entry that carries no origin at all is filed as unknown and is counted.',
+  excluded: 'An entry that carries no origin at all is filed as unknown and is left out: those entries predate origin tagging and cannot be attributed to a generator.',
+  'none-scored': 'An entry that carries no origin at all is filed as unknown; none was scored in this window.',
+});
+
+const UNKNOWN_ORIGIN_DEFINITIONS = Object.freeze({
+  counted: ' and is included',
+  excluded: ' and is excluded',
+  'none-scored': '; none was scored in this window',
+});
+
+function unknownOriginSentence(scorecard) {
+  return UNKNOWN_ORIGIN_SENTENCES[unknownOriginStatus(scorecard)];
+}
+
+function originCohortCell(row, excluded, status) {
+  if (row.generationOrigin === 'unknown') {
+    return { counted: 'Yes', excluded: 'No, excluded', 'none-scored': 'No scored entries' }[status];
+  }
+  return excluded.has(row.generationOrigin) ? 'No, excluded' : 'Yes';
+}
+
 function excludedCohortPhrase(skill) {
   const origins = Array.isArray(skill?.excludedOrigins) ? skill.excludedOrigins : [];
   return origins.length > 0 ? origins.join(', ') : 'none';
@@ -321,7 +400,7 @@ function headlineResultSentence(scorecard) {
   return `${windowPhrase}, World Monitor's headline cohort scores a Brier of ${formatScore(skill.brier)} across ${formatCount(skill.count)} scored forecasts, against 0.25 for answering 0.5 to everything.`;
 }
 
-const ACCURACY_NEGATIVE_SCOPE = 'This page does not publish confidence intervals; each figure is published with the number of forecasts behind it instead. It does not score the 24-hour, 7-day and 30-day projections shown in the product. It publishes aggregates only — no individual forecasts, resolution evidence, judge inputs or archive locations.';
+const ACCURACY_NEGATIVE_SCOPE = 'This page does not publish confidence intervals for the Brier and log scores yet; each score is published with the number of forecasts behind it instead. Void rates and calibration-bucket rates carry a 95% Wilson interval; the scored share of the ledger and the base rates do not yet. It does not score the 24-hour, 7-day and 30-day projections shown in the product. It publishes aggregates only — no individual forecasts, resolution evidence, judge inputs or archive locations.';
 
 export function renderAccuracyLlmsSection(section) {
   const state = classifyAccuracyState(section);
@@ -450,58 +529,59 @@ function coverageSentence(state) {
   return `The headline cohort has ${formatCount(skill.count)} scored forecasts, enough to publish a score.`;
 }
 
-function totalsTable(totals, escapeHtml) {
+function totalsTable(totals, intervals, escapeHtml) {
   const rows = [
-    ['Entries in the rolling window', formatCount(totals.entries)],
-    ['Resolved', formatCount(totals.resolved)],
-    ['Scored', formatCount(totals.scored)],
-    ['Voided', `${rateOf(totals.voidRate, totals.resolved, 'resolved entries')} (${formatCount(totals.void)} entries)`],
-    ['Awaiting a judge', formatCount(totals.pendingJudge)],
-    ['Still open, not yet resolvable', formatCount(totals.pending)],
+    ['Entries in the rolling window', escapeHtml(formatCount(totals.entries))],
+    ['Resolved', escapeHtml(formatCount(totals.resolved))],
+    ['Scored', escapeHtml(formatCount(totals.scored))],
+    ['Voided', `${escapeHtml(`${rateOf(totals.voidRate, totals.resolved, 'resolved entries')} (${formatCount(totals.void)} entries), 95% interval`)} ${intervalHtml(intervals.void, escapeHtml)}`],
+    ['Awaiting a judge', escapeHtml(formatCount(totals.pendingJudge))],
+    ['Still open, not yet resolvable', escapeHtml(formatCount(totals.pending))],
     // The API calls this field publicationCoverage. It is scored over ALL
     // entries, which is not a publication property, so the page states the
     // definition instead of repeating a label the number does not earn.
-    ['Scored share of the ledger', rateOf(totals.publicationCoverage, totals.entries, 'entries')],
+    ['Scored share of the ledger', escapeHtml(rateOf(totals.publicationCoverage, totals.entries, 'entries'))],
   ];
   return `      <div class="table-scroll"><table data-ledger-totals>
-        <caption>Resolution ledger totals for the rolling window. Voided entries are counted for coverage and excluded from every score below. A judging backlog is an ordinary state of the ledger, not a fault.</caption>
+        <caption>Resolution ledger totals for the rolling window. Voided entries are counted for coverage and excluded from every score below. A judging backlog is an ordinary state of the ledger, not a fault. The void rate's 95% interval is a Wilson interval on the counts shown.</caption>
         <thead><tr><th scope="col">Ledger stage</th><th scope="col">Entries</th></tr></thead>
         <tbody>
-${rows.map(([label, value]) => `          <tr><th scope="row">${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`).join('\n')}
+${rows.map(([label, valueHtml]) => `          <tr><th scope="row">${escapeHtml(label)}</th><td>${valueHtml}</td></tr>`).join('\n')}
         </tbody>
       </table></div>`;
 }
 
-function calibrationTable(scorecard, escapeHtml) {
+function calibrationTable(scorecard, intervals, escapeHtml) {
   const buckets = scorecard.calibration;
   const populated = buckets.filter((bucket) => Number(bucket.count) > 0);
   const scored = scorecard.overall?.count ?? scorecard.totals?.scored ?? 0;
   return `      <div class="table-scroll"><table data-calibration>
-        <caption>Calibration by predicted probability, computed over all ${escapeHtml(formatCount(scored))} scored entries rather than the narrower headline cohort. Average predicted and Brier are probabilities, not rates. Buckets that scored nothing are omitted rather than shown as zero.</caption>
-        <thead><tr><th scope="col">Predicted probability</th><th scope="col">Forecasts</th><th scope="col">Average predicted</th><th scope="col">Actually happened</th><th scope="col">Brier</th></tr></thead>
+        <caption>Calibration by predicted probability, computed over all ${escapeHtml(formatCount(scored))} scored entries rather than the narrower headline cohort. Average predicted and Brier are probabilities, not rates. The 95% interval is a Wilson interval on how often the bucket's forecasts happened; a narrow bucket has a wide one. Buckets that scored nothing are omitted rather than shown as zero.</caption>
+        <thead><tr><th scope="col">Predicted probability</th><th scope="col">Forecasts</th><th scope="col">Average predicted</th><th scope="col">Actually happened</th><th scope="col">95% interval</th><th scope="col">Brier</th></tr></thead>
         <tbody>
-${populated.map((bucket) => `          <tr data-calibration-bucket="${escapeHtml(bucket.bucket)}"><th scope="row" data-probability-band>${escapeHtml(probabilityBand(bucket))}</th><td>${escapeHtml(formatCount(bucket.count))}</td><td>${scoreCell(bucket.predictedMean, escapeHtml)}</td><td>${escapeHtml(isFiniteNumber(bucket.realizedRate) ? rateOf(bucket.realizedRate, bucket.count, 'forecasts') : INSUFFICIENT_SAMPLE)}</td><td>${scoreCell(bucket.brier, escapeHtml)}</td></tr>`).join('\n')}
+${populated.map((bucket) => `          <tr data-calibration-bucket="${escapeHtml(bucket.bucket)}"><th scope="row" data-probability-band>${escapeHtml(probabilityBand(bucket))}</th><td>${escapeHtml(formatCount(bucket.count))}</td><td>${scoreCell(bucket.predictedMean, escapeHtml)}</td><td>${escapeHtml(isFiniteNumber(bucket.realizedRate) ? rateOf(bucket.realizedRate, bucket.count, 'forecasts') : INSUFFICIENT_SAMPLE)}</td><td>${intervalHtml(intervals.calibration[bucket.bucket], escapeHtml)}</td><td>${scoreCell(bucket.brier, escapeHtml)}</td></tr>`).join('\n')}
         </tbody>
       </table></div>`;
 }
 
-function domainTable(rows, escapeHtml) {
+function domainTable(rows, intervals, escapeHtml) {
   return `      <div class="table-scroll"><table data-by-domain>
         <caption>Accuracy by forecast domain, over every scored entry in that domain. A domain that resolved entries but scored none is marked as an insufficient sample, never left blank.</caption>
-        <thead><tr><th scope="col">Domain</th><th scope="col">Resolved</th><th scope="col">Scored</th><th scope="col">Voided</th><th scope="col">Brier</th><th scope="col">Log score</th></tr></thead>
+        <thead><tr><th scope="col">Domain</th><th scope="col">Resolved</th><th scope="col">Scored</th><th scope="col">Voided</th><th scope="col">Voided, 95% interval</th><th scope="col">Brier</th><th scope="col">Log score</th></tr></thead>
         <tbody>
-${rows.map((row) => `          <tr data-domain="${escapeHtml(row.domain)}"><th scope="row">${escapeHtml(row.domain)}</th><td>${escapeHtml(formatCount(row.resolved))}</td><td>${escapeHtml(formatCount(row.scored))}</td><td>${escapeHtml(rateOf(row.voidRate, row.resolved, 'resolved'))}</td><td>${scoreCell(row.brier, escapeHtml)}</td><td>${scoreCell(row.logScore, escapeHtml)}</td></tr>`).join('\n')}
+${rows.map((row) => `          <tr data-domain="${escapeHtml(row.domain)}"><th scope="row">${escapeHtml(row.domain)}</th><td>${escapeHtml(formatCount(row.resolved))}</td><td>${escapeHtml(formatCount(row.scored))}</td><td>${escapeHtml(rateOf(row.voidRate, row.resolved, 'resolved'))}</td><td>${intervalHtml(intervals.byDomain[row.domain], escapeHtml)}</td><td>${scoreCell(row.brier, escapeHtml)}</td><td>${scoreCell(row.logScore, escapeHtml)}</td></tr>`).join('\n')}
         </tbody>
       </table></div>`;
 }
 
-function originTable(rows, skill, escapeHtml) {
+function originTable(rows, skill, unknownStatus, intervals, escapeHtml) {
   const excluded = new Set(Array.isArray(skill?.excludedOrigins) ? skill.excludedOrigins : []);
+  const unknownSentence = UNKNOWN_ORIGIN_SENTENCES[unknownStatus];
   return `      <div class="table-scroll"><table data-by-origin>
-        <caption>Accuracy by generation origin, and whether each origin counts toward the headline cohort. An entry with no recorded origin is filed as unknown and does count.</caption>
-        <thead><tr><th scope="col">Generation origin</th><th scope="col">In the headline cohort</th><th scope="col">Resolved</th><th scope="col">Scored</th><th scope="col">Voided</th><th scope="col">Brier</th><th scope="col">Log score</th></tr></thead>
+        <caption>Accuracy by generation origin, and whether each origin counts toward the headline cohort. ${escapeHtml(unknownSentence)}</caption>
+        <thead><tr><th scope="col">Generation origin</th><th scope="col">In the headline cohort</th><th scope="col">Resolved</th><th scope="col">Scored</th><th scope="col">Voided</th><th scope="col">Voided, 95% interval</th><th scope="col">Brier</th><th scope="col">Log score</th></tr></thead>
         <tbody>
-${rows.map((row) => `          <tr data-origin="${escapeHtml(row.generationOrigin)}"><th scope="row">${escapeHtml(row.generationOrigin)}</th><td>${escapeHtml(excluded.has(row.generationOrigin) ? 'No, excluded' : 'Yes')}</td><td>${escapeHtml(formatCount(row.resolved))}</td><td>${escapeHtml(formatCount(row.scored))}</td><td>${escapeHtml(rateOf(row.voidRate, row.resolved, 'resolved'))}</td><td>${scoreCell(row.brier, escapeHtml)}</td><td>${scoreCell(row.logScore, escapeHtml)}</td></tr>`).join('\n')}
+${rows.map((row) => `          <tr data-origin="${escapeHtml(row.generationOrigin)}"><th scope="row">${escapeHtml(row.generationOrigin)}</th><td>${escapeHtml(originCohortCell(row, excluded, unknownStatus))}</td><td>${escapeHtml(formatCount(row.resolved))}</td><td>${escapeHtml(formatCount(row.scored))}</td><td>${escapeHtml(rateOf(row.voidRate, row.resolved, 'resolved'))}</td><td>${intervalHtml(intervals.byGenerationOrigin[row.generationOrigin], escapeHtml)}</td><td>${scoreCell(row.brier, escapeHtml)}</td><td>${scoreCell(row.logScore, escapeHtml)}</td></tr>`).join('\n')}
         </tbody>
       </table></div>`;
 }
@@ -521,11 +601,11 @@ function marketSection(vsMarketSkill, escapeHtml) {
       <p>Measured over all scored entries that overlapped a liquid market, not over the narrower headline cohort. On ${escapeHtml(formatCount(vsMarketSkill.count))} such resolved questions the forecast Brier was ${escapeHtml(formatScore(vsMarketSkill.forecastBrier))} and the market Brier was ${escapeHtml(formatScore(vsMarketSkill.marketBrier))}. ${escapeHtml(BRIER_DELTA_CONVENTION)} Here the delta is ${escapeHtml(formatScore(delta))}, so on this sample ${escapeHtml(verdict)}.</p>`;
 }
 
-function cohortSection(skill, escapeHtml) {
+function cohortSection(skill, unknownSentence, escapeHtml) {
   const count = isFiniteNumber(skill?.count) ? skill.count : 0;
   const excludedScored = isFiniteNumber(skill?.excludedScored) ? skill.excludedScored : 0;
   return `      <h2>What the headline number counts</h2>
-      <p>The headline Brier and log score cover ${escapeHtml(formatCount(count))} scored forecasts: every scored entry except those from the origins the scorecard excludes, currently ${escapeHtml(excludedCohortPhrase(skill))}. That exclusion costs ${escapeHtml(formatCount(excludedScored))} scored entries. An entry that carries no origin at all is filed as unknown and is counted, so this cohort is defined by what it leaves out and not by any property of the entries it keeps. The all-scored figure beside it is the same window with every origin put back, which is why the two numbers differ.</p>`;
+      <p>The headline Brier and log score cover ${escapeHtml(formatCount(count))} scored forecasts: every scored entry except those from the origins the scorecard excludes, currently ${escapeHtml(excludedCohortPhrase(skill))}. That exclusion costs ${escapeHtml(formatCount(excludedScored))} scored entries. ${escapeHtml(unknownSentence)} This cohort is defined by what it leaves out and not by any property of the entries it keeps. The all-scored figure beside it is the same window with every origin put back, which is why the two numbers differ.</p>`;
 }
 
 // The verdict block (#8873) reads a cohort as three counts and one score:
@@ -656,7 +736,7 @@ function limitsSection(omittedBuckets, escapeHtml) {
   return `      <h2>What this page does not publish</h2>
       <ul>
         <li>${escapeHtml(bucketSentence)}</li>
-        <li>No confidence intervals. Each figure is published with the number of forecasts behind it instead, because stating a sample size without an interval is honest and inventing an interval is not. Tracking: <a href="${escapeHtml(CONFIDENCE_INTERVAL_ISSUE)}">issue #7072</a>.</li>
+        <li>No confidence intervals on the Brier and log scores. An interval on a mean score needs every forecast's own score, which the public scorecard does not carry yet, and this page will not invent one from the averages. Each score is published with the number of forecasts behind it instead. Void rates and calibration-bucket rates do carry a 95% Wilson interval, because a rate's interval needs only the two counts printed beside it; the scored share of the ledger and the base rates in the summary do not carry one yet. Tracking: <a href="${escapeHtml(CONFIDENCE_INTERVAL_ISSUE)}">issue #7072</a>.</li>
         <li>No accuracy for the 24-hour, 7-day and 30-day projections shown in the product. Those horizons are not scored yet, so nothing here describes them. Tracking: <a href="${escapeHtml(HORIZON_SCORING_ISSUE)}">issue #7075</a>.</li>
         <li>No individual forecasts, resolution evidence, judge inputs or archive locations. This page publishes aggregates only.</li>
       </ul>`;
@@ -700,22 +780,23 @@ ${provenanceLine(state, dataset, snapshotPath, escapeHtml)}`;
   const omittedBuckets = scorecard.calibration
     .filter((bucket) => Number(bucket.count) === 0)
     .map((bucket) => bucket.bucket);
+  const intervals = proportionIntervals(scorecard);
 
   return `${heading}
       <p class="lede">World Monitor scores every forecast it publishes once the outcome is knowable, over a rolling ${escapeHtml(formatCount(scorecard.rollingWindowDays))}-day window. This is the standing record: the scores, the calibration, the sample sizes, and the parts that are not measurable yet.</p>
 ${verdictSection(scorecard, escapeHtml)}
 ${recordStatus(state, escapeHtml)}
 ${state.coverage === 'insufficient' ? '' : `${headlineTiles(scorecard, escapeHtml)}\n${headlineResultParagraph(scorecard, escapeHtml)}`}      <p><strong>Lower Brier is better.</strong> A Brier score is the mean squared error of a probability forecast, so 0 is perfect and answering 0.5 to everything scores 0.25. Log score is harsher on confident mistakes, and lower is better there too.</p>
-${cohortSection(scorecard.skill, escapeHtml)}
+${cohortSection(scorecard.skill, unknownOriginSentence(scorecard), escapeHtml)}
       <h2>Resolution ledger</h2>
-${totalsTable(scorecard.totals, escapeHtml)}
+${totalsTable(scorecard.totals, intervals, escapeHtml)}
       <p>${escapeHtml(scorecard.methodology)}</p>
       <h2>Calibration</h2>
-${calibrationTable(scorecard, escapeHtml)}
+${calibrationTable(scorecard, intervals, escapeHtml)}
       <h2>Accuracy by domain</h2>
-${domainTable(scorecard.byDomain, escapeHtml)}
+${domainTable(scorecard.byDomain, intervals, escapeHtml)}
       <h2>Accuracy by generation origin</h2>
-${originTable(scorecard.byGenerationOrigin, scorecard.skill, escapeHtml)}
+${originTable(scorecard.byGenerationOrigin, scorecard.skill, unknownOriginStatus(scorecard), intervals, escapeHtml)}
 ${marketSection(scorecard.vsMarketSkill, escapeHtml)}
 ${limitsSection(omittedBuckets, escapeHtml)}
 ${relatedSection(baseUrl, tpl)}
@@ -823,7 +904,7 @@ export function accuracyDatasetDownload({ state, snapshotPath }) {
         scored: isFiniteNumber(skill.count) ? skill.count : 0,
         excludedScored: isFiniteNumber(skill.excludedScored) ? skill.excludedScored : 0,
         excludedOrigins: Array.isArray(skill.excludedOrigins) ? [...skill.excludedOrigins] : [],
-        definition: 'every scored entry except those whose generationOrigin is listed in excludedOrigins; an absent origin is filed as unknown and is included',
+        definition: `every scored entry except those whose generationOrigin is listed in excludedOrigins; an absent origin is filed as unknown${UNKNOWN_ORIGIN_DEFINITIONS[unknownOriginStatus(state.scorecard)]}`,
       }
       : null,
     // calibrationBuckets, summarizeMarketSkill and summarizeScored all run over
@@ -833,7 +914,11 @@ export function accuracyDatasetDownload({ state, snapshotPath }) {
       vsMarketSkill: POOLED_POPULATION,
       overall: POOLED_POPULATION,
     },
-    confidenceIntervals: { published: false, trackedIn: CONFIDENCE_INTERVAL_ISSUE },
+    confidenceIntervals: {
+      proportions: { published: true, method: 'wilson-95' },
+      meanScores: { published: false, trackedIn: CONFIDENCE_INTERVAL_ISSUE },
+    },
+    intervals: proportionIntervals(state.scorecard),
     horizonProjections: { scored: false, trackedIn: HORIZON_SCORING_ISSUE },
     scorecard: state.scorecard,
   };

@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 
-import { computeScorecard } from '../scripts/_forecast-scorecard.mjs';
+import { INTERVAL_MIN_SAMPLE, computeScorecard, wilsonInterval } from '../scripts/_forecast-scorecard.mjs';
 
 const NOW = Date.parse('2026-07-20T00:00:00Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -117,6 +117,27 @@ describe('computeScorecard', () => {
     assert.equal(scorecard.skill.yesCount, 1);
   });
 
+  it('holds entries with no recorded origin out of the headline but keeps them in overall and byGenerationOrigin', () => {
+    // Rows written before origin tagging carry no origin, or the resolver's
+    // literal 'unknown'. They cannot be attributed to a generator (#5240).
+    const absent = resolved({ probability: 0.9, outcome: 'NO' });
+    delete absent.generationOrigin;
+    const scorecard = computeScorecard({
+      a: resolved({ probability: 0.8, outcome: 'YES', generationOrigin: 'legacy_detector' }),
+      b: absent,
+      c: resolved({ probability: 0.1, outcome: 'YES', generationOrigin: 'unknown' }),
+    }, NOW);
+
+    assert.equal(scorecard.overall.count, 3);
+    assert.equal(scorecard.skill.count, 1);
+    assert.equal(scorecard.skill.yesCount, 1);
+    assert.equal(scorecard.skill.excludedScored, 2);
+    assert.deepEqual(scorecard.skill.excludedOrigins, ['unknown']);
+    assert.equal(scorecard.skill.brier, 0.04);
+    const unknownRow = scorecard.byGenerationOrigin.find((row) => row.generationOrigin === 'unknown');
+    assert.equal(unknownRow.scored, 2);
+  });
+
   it('reports skill.yesCount as 0, not absent, when nothing real in the cohort came true', () => {
     const scorecard = computeScorecard({
       a: resolved({ probability: 0.4, outcome: 'NO', generationOrigin: 'detector' }),
@@ -175,6 +196,88 @@ describe('computeScorecard', () => {
     assert.deepEqual(a, b);
     assert.equal(a.totals.scored, 1);
     assert.equal(a.overall.brier, 0.01);
+  });
+});
+
+describe('scorecard uncertainty and maturity denominators (#7072)', () => {
+  const deadline = (offsetDays) => NOW + offsetDays * DAY_MS;
+
+  it('matches golden Wilson values, including n=0 and n=1', () => {
+    assert.equal(wilsonInterval(0, 0), null, 'n=0 emits no estimate');
+    assert.deepEqual(wilsonInterval(0, 1), [0, 0.793451]);
+    assert.deepEqual(wilsonInterval(1, 1), [0.206549, 1]);
+    assert.deepEqual(wilsonInterval(3, 10), [0.107791, 0.603222]);
+  });
+
+  it('reconciles every state against the matured denominator', () => {
+    const ledger = {
+      yes: resolved({ id: 'yes', outcome: 'YES', deadline: deadline(-3) }),
+      no: resolved({ id: 'no', outcome: 'NO', probability: 0.2, deadline: deadline(-3) }),
+      // Resolved before its deadline: decided, so matured, never a numerator above its denominator.
+      early: resolved({ id: 'early', outcome: 'YES', deadline: deadline(5) }),
+      voidJudged: resolved({ id: 'void-j', outcome: 'VOID', deadline: deadline(-4), evidence: { kind: 'judged', reason: 'archive_incomplete' } }),
+      voidHard: resolved({ id: 'void-h', outcome: 'VOID', deadline: deadline(-4) }),
+      hardPendingMatured: { id: 'hp', status: 'pending', deadline: deadline(-1) },
+      hardPendingImmature: { id: 'hi', status: 'pending', deadline: deadline(10) },
+      judgePendingMatured: { id: 'jp', status: 'pending-judge', spec: { deadline: deadline(-2) } },
+      judgePendingImmature: { id: 'ji', status: 'pending-judge', spec: { deadline: deadline(3) } },
+      undated: { id: 'u', status: 'pending' },
+      nullDeadline: { id: 'nd', status: 'pending', deadline: null, spec: { deadline: null } },
+    };
+
+    const { funnel, totals } = computeScorecard(ledger, NOW);
+
+    assert.equal(totals.entries, 11);
+    assert.equal(funnel.matured, 7);
+    assert.equal(funnel.immature, 2);
+    assert.equal(funnel.maturityUnknown, 2, 'a null deadline is unknown, not epoch 0');
+    assert.equal(funnel.matured + funnel.immature + funnel.maturityUnknown, totals.entries, 'no entry leaves the denominator');
+    assert.equal(funnel.resolved, 5);
+    assert.equal(funnel.scored, 3);
+    assert.equal(funnel.pendingHardMatured, 1);
+    assert.equal(funnel.pendingJudgeMatured, 1);
+    assert.equal(funnel.resolved + funnel.pendingHardMatured + funnel.pendingJudgeMatured, funnel.matured);
+    assert.deepEqual(funnel.resolvedOfMatured, { count: 7, successes: 5, rate: 0.714286, ci95: wilsonInterval(5, 7) });
+    assert.deepEqual(funnel.scoredOfMatured, { count: 7, successes: 3, rate: 0.428571, ci95: wilsonInterval(3, 7) });
+  });
+
+  it('emits no maturity rate when nothing has matured', () => {
+    const { funnel } = computeScorecard({ a: { id: 'a', status: 'pending', deadline: deadline(2) } }, NOW);
+    assert.equal(funnel.matured, 0);
+    assert.equal(funnel.resolvedOfMatured, null);
+    assert.equal(funnel.scoredOfMatured, null);
+  });
+
+  it('bootstraps mean Brier at the entry level, deterministically', () => {
+    const ledger = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [
+      `e${i}`,
+      resolved({ id: `e${i}`, probability: (i % 10) / 10 + 0.05, outcome: i % 3 === 0 ? 'YES' : 'NO', generationOrigin: i < 30 ? 'detector' : 'state_derived' }),
+    ]));
+
+    const a = computeScorecard(ledger, NOW);
+    const b = computeScorecard(ledger, NOW);
+
+    assert.deepEqual(a.uncertainty, b.uncertainty, 'seeded: a rerun reproduces every interval');
+    const { overallBrier, skillBrier } = a.uncertainty;
+    assert.equal(overallBrier.count, 40);
+    assert.equal(overallBrier.mean, a.overall.brier);
+    assert.ok(overallBrier.ci95[0] < overallBrier.mean && overallBrier.mean < overallBrier.ci95[1], 'the interval brackets the estimate');
+    assert.ok(overallBrier.ci95[1] - overallBrier.ci95[0] > 0.01, 'a 40-entry sample is not a point');
+    assert.equal(overallBrier.insufficientSample, 40 < INTERVAL_MIN_SAMPLE);
+    assert.equal(skillBrier.count, 30, 'the headline interval covers the headline cohort, not every scored entry');
+    assert.equal(skillBrier.mean, a.skill.brier);
+    assert.equal(skillBrier.insufficientSample, 30 < INTERVAL_MIN_SAMPLE);
+  });
+
+  it('flags a small sample and emits no estimate for an empty one', () => {
+    const small = computeScorecard({ a: resolved({ probability: 0.8, outcome: 'YES', generationOrigin: 'state_derived' }) }, NOW);
+    assert.equal(small.uncertainty.overallBrier.count, 1);
+    assert.equal(small.uncertainty.overallBrier.insufficientSample, true);
+    assert.equal(small.uncertainty.skillBrier, null, 'an empty headline cohort has no estimate');
+
+    const empty = computeScorecard({ a: resolved({ outcome: 'VOID' }) }, NOW);
+    assert.deepEqual(empty.uncertainty, { method: empty.uncertainty.method, overallBrier: null, skillBrier: null });
+    assert.ok(!JSON.stringify(empty).includes('NaN'));
   });
 });
 

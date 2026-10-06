@@ -37,6 +37,7 @@ import { haversineDistanceKm } from '@/services/related-assets';
 import { enqueueSentryCall } from '@/bootstrap/sentry-defer';
 import type {
   CountryBriefPanel,
+  CountryTariffTrendsData,
   CountryIntelData,
   StockIndexData,
   CountryDeepDiveSignalDetails,
@@ -212,6 +213,8 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
   private costShockCalcTotalLabel: HTMLElement | null = null;
   private costShockCalcPrimaryChokepoint: string | null = null;
   private costShockCalcClosureDays = 30;
+  private costShockCalcResultDays: number | null = null;
+  private costShockCalcStatus: HTMLElement | null = null;
   private costShockCalcAbort: AbortController | null = null;
   private costShockCalcDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   // Holds the teardown returned by the FollowButton's `attach()` mounted
@@ -1006,21 +1009,49 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     this.comtradeBody.append(scope);
   }
 
-  public updateTariffTrends(data: { currentRate: number; trend: string; datapoints: Array<{ year: number; tariffRate: number }> } | null): void {
+  public updateTariffTrends(data: CountryTariffTrendsData | null): void {
     if (!this.tariffBody) return;
     this.tariffBody.replaceChildren();
-    if (!data) {
+    if (!data || !Number.isFinite(data.currentRate) || data.currentRate < 0) {
       this.tariffBody.append(this.makeEmpty('No tariff data available'));
       return;
     }
     const layout = this.el('div', 'cdp-tariff-layout');
     const rate = this.el('div');
-    rate.append(this.el('div', 'cdp-measure-note', 'Effective tariff rate'), this.el('div', 'cdp-metric-hero', `${data.currentRate.toFixed(2)}%`));
+    rate.append(this.el('div', 'cdp-measure-note', data.effectiveTariffRate ? 'Effective tariff rate' : 'Reported annual tariff rate'), this.el('div', 'cdp-metric-hero', `${data.currentRate.toFixed(2)}%`));
     const direction = data.trend === 'rising' ? '↑ Rising' : data.trend === 'falling' ? '↓ Falling' : data.trend === 'stable' ? '→ Unchanged' : 'Trend not available';
     const trend = this.el('div', 'cdp-tariff-trend');
     trend.append(this.el('h4', '', direction), this.el('p', 'cdp-measure-note', 'Direction compares the two latest reported annual observations.'));
     layout.append(rate, trend);
     this.tariffBody.append(layout);
+    const provenance = this.el('div', 'cdp-measure-note');
+    provenance.style.overflowWrap = 'anywhere';
+    const effective = data.effectiveTariffRate;
+    if (effective) {
+      provenance.append(this.el('div', '', `Source: ${effective.sourceName || 'Not supplied'}`));
+      if (effective.sourceUrl) {
+        try {
+          const url = new URL(effective.sourceUrl);
+          if (url.protocol === 'https:' || url.protocol === 'http:') {
+            const link = this.el('a', '', 'Original source');
+            link.style.color = 'var(--accent)';
+            link.href = effective.sourceUrl;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            provenance.append(link);
+          }
+        } catch {}
+      }
+      provenance.append(
+        this.el('div', '', `Observation period: ${effective.observationPeriod || 'Not supplied'}`),
+        this.el('div', '', `Source page updated: ${effective.updatedAt || 'Not supplied'}`),
+      );
+    } else {
+      const latest = data.datapoints[data.datapoints.length - 1];
+      if (latest) provenance.append(this.el('div', '', `Annual observation: ${latest.year}`));
+      provenance.append(this.el('div', '', 'Effective rate source metadata: Not supplied'));
+    }
+    this.tariffBody.append(provenance);
     if (data.datapoints.length > 0) {
       const history = this.el('details', 'cdp-tariff-history');
       history.append(this.el('summary', '', `View ${data.datapoints.length} annual observations`));
@@ -1042,14 +1073,21 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
   public updateMultiSectorCostShock(data: MultiSectorShockResponse | null): void {
     if (!this.costShockCalcBody) return;
     this.costShockCalcBody.replaceChildren();
+    this.costShockCalcTable = null;
+    this.costShockCalcTotalLabel = null;
+    this.costShockCalcDurationLabel = null;
+    this.costShockCalcStatus = null;
+    this.costShockCalcResultDays = null;
+    this.costShockCalcPrimaryChokepoint = null;
 
-    if (!data || (!data.sectors.length && !data.unavailableReason)) {
-      this.costShockCalcBody.append(this.makeEmpty('No cost shock scenario available for this country.'));
+    if (!data || data.unavailableReason || !data.sectors.length) {
+      this.costShockCalcBody.append(this.makeEmpty(data?.unavailableReason || 'No cost shock scenario available for this country.'));
       return;
     }
 
     this.costShockCalcPrimaryChokepoint = data.chokepointId;
     this.costShockCalcClosureDays = Number.isFinite(data.closureDays) && data.closureDays > 0 ? data.closureDays : 30;
+    this.costShockCalcResultDays = this.costShockCalcClosureDays;
 
     // ── Header line: chokepoint + war risk tier badge ────────────────────
     const header = this.el('div', 'cdp-cost-shock-calc-header');
@@ -1084,6 +1122,10 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     }
     sliderWrap.append(ticks);
     this.costShockCalcBody.append(sliderWrap);
+    this.costShockCalcStatus = this.el('div', 'cdp-card-footer', `Results for ${this.costShockCalcResultDays}-day calculation.`);
+    this.costShockCalcStatus.setAttribute('role', 'status');
+    this.costShockCalcStatus.setAttribute('aria-live', 'polite');
+    this.costShockCalcBody.append(this.costShockCalcStatus);
 
     // ── Table ───────────────────────────────────────────────────────────
     const table = this.el('table', 'cdp-cost-shock-calc-table');
@@ -1105,15 +1147,14 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     totalRow.append(this.costShockCalcTotalLabel);
     this.costShockCalcBody.append(totalRow);
 
-    if (data.unavailableReason) {
-      this.costShockCalcBody.append(this.el('div', 'cdp-card-footer', data.unavailableReason));
-    } else {
-      this.costShockCalcBody.append(
-        this.el('div', 'cdp-card-footer', 'Added cost = annual imports × (bypass freight uplift + war risk bps) × closure days / 365'),
-      );
-    }
+    this.costShockCalcBody.append(
+      this.el('div', 'cdp-card-footer', 'Added cost = annual imports × (bypass freight uplift + war risk bps) × closure days / 365'),
+    );
 
     this.renderMultiSectorShockRows(data.sectors);
+    if (Number.isFinite(data.totalAddedCost) && data.totalAddedCost >= 0) {
+      this.costShockCalcTotalLabel.textContent = this.formatMoney(data.totalAddedCost);
+    }
   }
 
   /** Render (or re-render) just the cost-shock table rows + total. */
@@ -1144,8 +1185,21 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     if (this.costShockCalcDurationLabel) {
       this.costShockCalcDurationLabel.textContent = `${days} day${days === 1 ? '' : 's'}`;
     }
+    this.setCostShockCalculationStatus('loading');
     this.scheduleCostShockRefetch(days);
   };
+
+  private setCostShockCalculationStatus(state: 'loading' | 'unavailable', reason?: string): void {
+    const status = this.costShockCalcStatus;
+    if (!status) return;
+    status.className = state === 'loading' ? 'cdp-loading-inline' : 'cdp-card-footer';
+    if (state === 'unavailable') status.dataset.briefState = 'unavailable';
+    else delete status.dataset.briefState;
+    const request = state === 'loading'
+      ? `Calculating ${this.costShockCalcClosureDays}-day scenario.`
+      : `${this.costShockCalcClosureDays}-day calculation unavailable.${reason ? ` ${reason}` : ''}`;
+    status.textContent = `${request} Retained ${this.costShockCalcResultDays}-day results are shown below.`;
+  }
 
   /** Debounce re-fetch by 300ms so rapid slider drags don't spam the API. */
   private scheduleCostShockRefetch(days: number): void {
@@ -1178,13 +1232,20 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     // Abort any in-flight fetch before starting a new one.
     this.costShockCalcAbort?.abort();
     const request = this.costShockCalcAbort = new AbortController();
+    const current = () => !request.signal.aborted && this.currentCode === iso2 && this.canRequestPremium()
+      && this.costShockCalcClosureDays === days && this.costShockCalcPrimaryChokepoint === cp;
     try {
       const resp = await (this.source ? this.source.cost(iso2, cp, days, request.signal) : fetchMultiSectorCostShock(iso2, cp, days, { signal: request.signal }));
-      if (request.signal.aborted || this.currentCode !== iso2 || !this.canRequestPremium()) return;
-      if (this.costShockCalcClosureDays !== days) return; // a newer slider move superseded this
-      this.renderMultiSectorShockRows(resp.sectors);
+      if (!current()) return;
+      if (resp.unavailableReason || !resp.sectors.length || resp.closureDays !== days) {
+        this.setCostShockCalculationStatus('unavailable', resp.unavailableReason || 'No matching cost scenario returned.');
+        return;
+      }
+      const sliderOwnedFocus = this.costShockCalcBody?.querySelector('.cdp-cost-shock-calc-slider') === document.activeElement;
+      this.updateMultiSectorCostShock(resp);
+      if (sliderOwnedFocus) this.costShockCalcBody?.querySelector<HTMLInputElement>('.cdp-cost-shock-calc-slider')?.focus();
     } catch {
-      // Ignore — either aborted or transient network; leave prior values visible.
+      if (current()) this.setCostShockCalculationStatus('unavailable');
     }
   }
 
@@ -1345,16 +1406,17 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
       table.append(thead);
 
       const tbody = this.el('tbody', '');
-      const rows: Array<{ label: string; demand: number; imports: number }> = [
-        { label: 'Gasoline', demand: data.gasolineDemandKbd, imports: data.gasolineImportsKbd },
-        { label: 'Diesel', demand: data.dieselDemandKbd, imports: data.dieselImportsKbd },
-        { label: 'Jet fuel', demand: data.jetDemandKbd, imports: data.jetImportsKbd },
-        { label: 'LPG', demand: data.lpgDemandKbd, imports: data.lpgImportsKbd },
+      const observed = new Set(data.jodiOilObservedMeasurements ?? []);
+      const fmtKbd = (value: number, path: string) => value > 0 || (value === 0 && observed.has(path)) ? `${value} kbd` : '\u2014';
+      const rows: Array<{ label: string; key: string; demand: number; imports: number }> = [
+        { label: 'Gasoline', key: 'gasoline', demand: data.gasolineDemandKbd, imports: data.gasolineImportsKbd },
+        { label: 'Diesel', key: 'diesel', demand: data.dieselDemandKbd, imports: data.dieselImportsKbd },
+        { label: 'Jet fuel', key: 'jet', demand: data.jetDemandKbd, imports: data.jetImportsKbd },
+        { label: 'LPG', key: 'lpg', demand: data.lpgDemandKbd, imports: data.lpgImportsKbd },
       ];
       for (const r of rows) {
         const tr = this.el('tr', '');
-        const fmtKbd = (v: number) => v > 0 ? `${v} kbd` : '\u2014';
-        for (const val of [r.label, fmtKbd(r.demand), fmtKbd(r.imports)]) {
+        for (const val of [r.label, fmtKbd(r.demand, `${r.key}.demandKbd`), fmtKbd(r.imports, `${r.key}.importsKbd`)]) {
           const td = this.el('td', '');
           td.textContent = val;
           td.style.cssText = 'padding:2px 4px';
@@ -1362,7 +1424,7 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
         }
         tbody.append(tr);
       }
-      if (data.crudeImportsKbd > 0) {
+      if (data.crudeImportsKbd > 0 || (data.crudeImportsKbd === 0 && observed.has('crude.importsKbd'))) {
         const tr = this.el('tr', '');
         for (const val of ['Crude', '\u2014', `${data.crudeImportsKbd} kbd`]) {
           const td = this.el('td', '');
@@ -1438,6 +1500,9 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
         marker.style.cssText = 'position:absolute;top:-2px;left:50%;width:2px;height:12px;background:#f59e0b;transform:translateX(-50%)';
         barOuter.append(fill, marker);
         section.append(barOuter);
+      }
+      if (data.ieaStocksDataMonth) {
+        section.append(this.el('div', 'cdp-economic-source', `Source: IEA · ${data.ieaStocksDataMonth}`));
       }
       this.energyBody.append(section);
     }
@@ -2873,7 +2938,17 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
       ? delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat'
       : 'flat';
 
-    const base = this.economicIndicators.filter((item) => item.label !== 'Stock Index');
+    const base = this.economicIndicators.filter((item) => item.label !== 'Stock Index' && item.label !== 'Weekly Momentum');
+    const weeklyValue = data.weekChangePercent.trim();
+    if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(weeklyValue) && Number.isFinite(delta)) {
+      const magnitude = weeklyValue.replace(/^[+-]/, '');
+      const negative = weeklyValue.startsWith('-') && /[1-9]/.test(magnitude.split(/[eE]/)[0] ?? '');
+      base.unshift({
+        label: 'Weekly Momentum',
+        value: `${negative ? '-' : '+'}${magnitude}%`,
+        trend,
+      });
+    }
     base.unshift({
       label: 'Stock Index',
       value: `${data.indexName}: ${data.price} ${data.currency}`,
@@ -3703,6 +3778,8 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     this.costShockCalcTotalLabel = null;
     this.costShockCalcPrimaryChokepoint = null;
     this.costShockCalcClosureDays = 30;
+    this.costShockCalcResultDays = null;
+    this.costShockCalcStatus = null;
     this.content.replaceChildren();
   }
 

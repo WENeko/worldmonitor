@@ -15,13 +15,18 @@ export const DEFAULT_JUDGED_SLA_MS = 2 * DAY_MS;
 
 // Origins whose scored entries are held OUT of the headline skill Brier:
 // `state_derived` = synthetic count-padding backfill (not a real prediction);
-// `bet_engine`    = shadow bets scored for evidence but not yet promoted.
+// `bet_engine`    = shadow bets scored for evidence but not yet promoted;
+// `unknown`       = rows written before origin tagging (#5240). They mix
+//                   detector-shaped and state_derived-shaped titles, so they
+//                   cannot be attributed to a generator.
 // The all-origins `overall` block still counts them for continuity.
 export const SYNTHETIC_GENERATION_ORIGINS = ['state_derived'];
 export const SHADOW_GENERATION_ORIGINS = ['bet_engine'];
+export const UNATTRIBUTED_GENERATION_ORIGINS = ['unknown'];
 export const DEFAULT_SKILL_EXCLUDED_ORIGINS = Object.freeze([
   ...SYNTHETIC_GENERATION_ORIGINS,
   ...SHADOW_GENERATION_ORIGINS,
+  ...UNATTRIBUTED_GENERATION_ORIGINS,
 ]);
 
 export function generationOriginOf(entry) {
@@ -70,6 +75,7 @@ export function computeScorecard(ledger, nowMs, options = {}) {
     byDomain: summarizeGroups(scored, resolved, 'domain', 'domain'),
     byGenerationOrigin: summarizeGroups(scored, resolved, 'generationOrigin', 'generationOrigin'),
     calibration: calibrationBuckets(scored),
+    funnel: summarizeFunnel(entries, nowMs),
   };
 
   const overall = summarizeScored(scored);
@@ -86,6 +92,11 @@ export function computeScorecard(ledger, nowMs, options = {}) {
   const excludeOrigins = new Set(options.skillExcludeOrigins ?? defaultExcluded);
   const skill = summarizeSkill(scored, excludeOrigins);
   if (skill) scorecard.skill = skill;
+  scorecard.uncertainty = {
+    method: `entry-level percentile bootstrap, ${CALIBRATION_BOOTSTRAP_RESAMPLES} resamples, seed ${SCORECARD_BOOTSTRAP_SEED}`,
+    overallBrier: brierInterval(scored, 'overall'),
+    skillBrier: brierInterval(scored.filter((entry) => !excludeOrigins.has(generationOriginOf(entry))), 'skill'),
+  };
   const marketSkill = summarizeMarketSkill(scored);
   if (marketSkill) scorecard.vsMarketSkill = marketSkill;
 
@@ -217,15 +228,6 @@ function summarizeScored(entries) {
 // which is the honest signal that the headline is unmeasurable.
 function summarizeSkill(scored, excludeSet) {
   if (!scored.length) return null;
-  // KNOWN-GAP (#5233 follow-up, tracked in #5240): entries whose generationOrigin
-  // is absent fall back to 'unknown', which is NOT in the exclude set, so they
-  // count toward real skill. Deliberately conservative — untagged is not the same
-  // as synthetic, and dropping genuinely-real entries would understate skill.
-  // The live history payload already tags entries (buildHistoryForecastEntry
-  // defaults to 'legacy_detector'), so the ~52% 'unknown' in the ledger are
-  // LEGACY entries created before that default and age out over the 180d
-  // retention (0 are yet scored). Residual risk only if a legacy 'unknown' entry
-  // scores before aging out; #5240 tracks a one-time backfill/monitor.
   const real = scored.filter((entry) => !excludeSet.has(generationOriginOf(entry)));
   const excludedEntries = scored.filter((entry) => excludeSet.has(generationOriginOf(entry)));
   const excludedOrigins = [...new Set(excludedEntries.map(generationOriginOf))].sort();
@@ -292,7 +294,7 @@ function summarizeJudgedLane(entries, resolved, pendingJudge, nowMs, options = {
   // and `voidWithinSla` sits beside it so the compensating failure-state
   // increase the acceptance criteria warn about is visible rather than hidden.
   const withinSla = (entry) => {
-    const deadline = Number(entry?.deadline ?? entry?.spec?.deadline);
+    const deadline = entryDeadline(entry);
     const resolvedAt = Number(entry?.resolvedAt);
     if (!Number.isFinite(deadline) || !Number.isFinite(resolvedAt)) return false;
     return resolvedAt - deadline <= slaMs;
@@ -310,7 +312,7 @@ function summarizeJudgedLane(entries, resolved, pendingJudge, nowMs, options = {
   const totalAttempts = instrumented.reduce((sum, entry) => sum + attemptCount(entry), 0);
 
   const pendingPastDeadline = pendingJudge.filter((entry) => {
-    const deadline = Number(entry?.deadline ?? entry?.spec?.deadline);
+    const deadline = entryDeadline(entry);
     return Number.isFinite(deadline) && nowMs >= deadline;
   }).length;
 
@@ -347,6 +349,73 @@ function attemptCount(entry) {
   // Only reached for an instrumented entry, which always logged the attempt
   // that sealed it.
   return entry.judgeAttemptLog.length;
+}
+
+// `totals.publicationCoverage` divides scored by every ledger entry, immature
+// ones included. These denominators count only windows that are due: past
+// their deadline, or already resolved (an early resolution is decided, so it
+// cannot sit in a numerator above its own denominator). An unresolved entry
+// with no deadline is counted apart rather than guessed into either side.
+// A null deadline is unknown, not epoch 0: Number(null) would read as long past.
+function entryDeadline(entry) {
+  const raw = entry?.deadline ?? entry?.spec?.deadline;
+  return raw == null ? NaN : Number(raw);
+}
+
+function summarizeFunnel(entries, nowMs) {
+  let matured = 0;
+  let immature = 0;
+  let maturityUnknown = 0;
+  let pendingHardMatured = 0;
+  let pendingJudgeMatured = 0;
+  let resolved = 0;
+  let scored = 0;
+  for (const entry of entries) {
+    if (entry?.status === 'resolved') {
+      matured += 1;
+      resolved += 1;
+      if (isScoredEntry(entry)) scored += 1;
+      continue;
+    }
+    const deadline = entryDeadline(entry);
+    if (!Number.isFinite(deadline)) {
+      maturityUnknown += 1;
+    } else if (deadline > nowMs) {
+      immature += 1;
+    } else {
+      matured += 1;
+      if (entry?.status === 'pending') pendingHardMatured += 1;
+      if (entry?.status === 'pending-judge') pendingJudgeMatured += 1;
+    }
+  }
+  return {
+    matured,
+    immature,
+    maturityUnknown,
+    resolved,
+    scored,
+    pendingHardMatured,
+    pendingJudgeMatured,
+    resolvedOfMatured: proportion(resolved, matured),
+    scoredOfMatured: proportion(scored, matured),
+  };
+}
+
+function proportion(successes, count) {
+  if (!count) return null;
+  return { count, successes, rate: round(successes / count), ci95: wilsonInterval(successes, count) };
+}
+
+function brierInterval(entries, scope) {
+  if (!entries.length) return null;
+  const scores = entries.map((entry) => brier(entry));
+  const { mean: ci95 } = pairedBootstrap(scores, { mean }, { scope, seed: SCORECARD_BOOTSTRAP_SEED });
+  return {
+    count: scores.length,
+    mean: round(mean(scores)),
+    ci95,
+    insufficientSample: scores.length < INTERVAL_MIN_SAMPLE,
+  };
 }
 
 function summarizeGroups(scored, resolved, key, label) {
@@ -443,6 +512,12 @@ export const ACTIVATION_MIN_FORWARD_DOMAIN = 30;
 // at or below this margin. Preregistered here so the gate cannot be tuned
 // after the forward cohort is seen.
 export const ACTIVATION_NON_INFERIORITY_MARGIN = 0.005;
+// Scorecard intervals (#7072) use their own seed so a change to the #7070
+// shadow gate's draws cannot move a published interval, and vice versa.
+export const SCORECARD_BOOTSTRAP_SEED = 7072;
+// Below this many entries an interval is still published, flagged as resting
+// on too small a sample to read as a stable estimate.
+export const INTERVAL_MIN_SAMPLE = 30;
 const RELIABILITY_BINS = 10;
 const WILSON_Z95 = 1.959963984540054;
 
