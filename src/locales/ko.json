@@ -2364,6 +2364,41 @@
         "measuredHint": "지난 {{days}}일간 {{n}}개의 평가된 예측에서 공개된 {{domain}} 예측들의 점수. 기준율은 항상 도메인의 관찰된 예 비율로 답변했을 때의 점수입니다. 낮을수록 좋습니다. 이것은 도메인의 기록이지, 이 예측의 기록이 아닙니다.",
         "unmeasured": "아직 측정되지 않음",
         "unmeasuredHint": "{{domain}} 예측은 지난 {{days}}일 동안 {{n}}개의 등급이 매겨진 결과가 있습니다. 도메인의 정확도를 표시하려면 {{min}}개가 필요합니다."
+      },
+      "resolution": {
+        "last": "마지막: {{outcome}}",
+        "lastSr": "이 예측의 이전 윈도우는 {{outcome}}(으)로 판정되었습니다.",
+        "history": "최근 윈도우, 최신순: {{list}}",
+        "outcome": {
+          "yes": "예",
+          "no": "아니오",
+          "void": "무효"
+        },
+        "void": {
+          "no_establishable_metric": "피드에 이 질문에 대한 데이터가 없습니다",
+          "value_source_never_settled": "피드가 확정된 값을 게시하지 않았습니다",
+          "count_source_window_not_retained": "피드가 더 이상 질문 윈도우를 보유하지 않습니다",
+          "unsupported_window": "질문을 피드와 대조할 수 없습니다",
+          "unsupported_metric_key": "질문을 피드와 대조할 수 없습니다",
+          "not_hard_spec": "질문을 피드와 대조할 수 없습니다",
+          "missing_threshold": "질문에 임계값이 누락되었습니다",
+          "missing_deadline": "질문에 마감일이 누락되었습니다",
+          "missing_generated_at": "예측에 시작 날짜가 누락되었습니다",
+          "beyond_archive_horizon": "뉴스 아카이브가 더 이상 질문 윈도우를 다루지 않습니다",
+          "no_archive_evidence": "뉴스 아카이브에 관련 정보가 없습니다",
+          "all_judges_void": "두 심사자 모두 증거가 부족하다고 판단했습니다",
+          "judge_disagreement": "심사자 간 의견이 일치하지 않습니다",
+          "judge_retry_exhausted": "심사자가 판정을 내리지 못했습니다",
+          "withheld_unpublished": "이 유형의 예측은 더 이상 게시되지 않습니다",
+          "resolver_envelope_bug": "올바르게 읽지 못한 데이터 피드로 채점됨",
+          "market_price_not_outcome": "피드에는 시장 가격만 있었고 시장의 결과는 없었습니다",
+          "judged_evidence_unreliable": "심사 근거 자료를 바로잡는 동안 채점에서 제외됨",
+          "other": "판정할 수 없었습니다"
+        }
+      },
+      "horizons": {
+        "label": "다음 시점에서도 평가됨: {{list}}",
+        "hint": "헤드라인 확률은 예측의 자체 기한에 맞춰 평가됩니다. 각 기한의 예측값도 소스 피드에 대해 평가되며, 이 예측을 위해 처음 발행된 값을 기준으로 합니다. 현재 값이 평가된 값과 다를 수 있으므로 예측값은 표시되지 않습니다."
       }
     },
     "escalationCorrelation": {

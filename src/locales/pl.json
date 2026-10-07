@@ -2394,6 +2394,41 @@
         "measuredHint": "Jak opublikowane prognozy {{domain}} osiągnęły wynik na {{n}} ocenianych prognozach w ciągu ostatnich {{days}} dni. Stopa bazowa to wynik, jaki uzyskałoby zawsze odpowiadanie obserwowaną stopą „tak\" dla domeny. Niżej jest lepiej. To rekord domeny, a nie tej prognozy.",
         "unmeasured": "Jeszcze nie zmierzone",
         "unmeasuredHint": "Prognozy {{domain}} mają {{n}} ocenionych wyników w ciągu ostatnich {{days}} dni. Domena musi mieć {{min}} zanim wyświetli się jej dokładność."
+      },
+      "resolution": {
+        "last": "Ostatnio: {{outcome}}",
+        "lastSr": "Poprzednie okno tej prognozy zostało rozstrzygnięte jako {{outcome}}.",
+        "history": "Ostatnie okna, od najnowszych: {{list}}",
+        "outcome": {
+          "yes": "TAK",
+          "no": "NIE",
+          "void": "UNIEWAŻNIONE"
+        },
+        "void": {
+          "no_establishable_metric": "Brak odczytu dla tego pytania w źródle",
+          "value_source_never_settled": "Źródło nigdy nie opublikowało ostatecznej wartości",
+          "count_source_window_not_retained": "Źródło nie zachowało już tego okna czasowego",
+          "unsupported_window": "Nie można było sprawdzić pytania względem jego źródła",
+          "unsupported_metric_key": "Nie można było sprawdzić pytania względem jego źródła",
+          "not_hard_spec": "Nie można było sprawdzić pytania względem jego źródła",
+          "missing_threshold": "W pytaniu brakowało progu",
+          "missing_deadline": "W pytaniu brakowało terminu",
+          "missing_generated_at": "W prognozie brakowało daty rozpoczęcia",
+          "beyond_archive_horizon": "Archiwum wiadomości nie obejmowało już okna pytania",
+          "no_archive_evidence": "Archiwum wiadomości nie miało informacji na ten temat",
+          "all_judges_void": "Obaj sędziowie uznali dowody za niewystarczające",
+          "judge_disagreement": "Sędziowie się nie zgodzili",
+          "judge_retry_exhausted": "Sędziowie nie wydali wyroku",
+          "withheld_unpublished": "Ten rodzaj prognozy nie jest już publikowany",
+          "resolver_envelope_bug": "Oceniono na podstawie źródła danych, którego nie mogliśmy poprawnie odczytać",
+          "market_price_not_outcome": "Źródło pokazywało cenę rynkową, a nie to, jak rynek został rozstrzygnięty",
+          "judged_evidence_unreliable": "Wyłączono z oceny do czasu naprawienia materiałów dla sędziów",
+          "other": "Nie można było rozstrzygnąć"
+        }
+      },
+      "horizons": {
+        "label": "Również oceniany w: {{list}}",
+        "hint": "Główne prawdopodobieństwo jest oceniane na horyzoncie prognozy. Projekcja na każdym z tych horyzontów jest również oceniana względem źródła, przy użyciu wartości opublikowanej po raz pierwszy dla tej prognozy. Wartości projekcji nie są wyświetlane, ponieważ obecna wartość może różnić się od ocenianej."
       }
     },
     "escalationCorrelation": {

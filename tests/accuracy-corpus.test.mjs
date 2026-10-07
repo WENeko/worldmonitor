@@ -10,7 +10,9 @@ import {
   ACCURACY_DOMAIN_LABELS,
   ACCURACY_FAILURE_CODES,
   ACCURACY_PAGE_PATH,
+  MARKET_ALERT_TYPE_LABELS,
   SCORECARD_DECLARED_FIELDS,
+  SCORECARD_LIVE_ONLY_FIELDS,
   SCORECARD_STALE_AFTER_HOURS,
   accuracyDatasetDownload,
   classifyAccuracyState,
@@ -20,6 +22,8 @@ import {
   selectDeclaredScorecardFields,
   writeAccuracySection,
 } from '../scripts/build-accuracy-page.mjs';
+import { MARKET_ALERT_BASE_RATE_RULE, MARKET_ALERT_RESOLUTION_RULE, buildScorecard } from '../scripts/_market-alert-ledger.mjs';
+import { MARKET_ALERT_TYPES } from '../scripts/shared/market-alert-core.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relativePath) => readFileSync(join(repoRoot, relativePath), 'utf8');
@@ -81,6 +85,7 @@ const LIVE_SCORECARD = Object.freeze({
     { domain: 'market', count: 60, brier: 0.13, yesCount: 22 },
     { domain: 'political', count: 12, brier: 0.2, yesCount: 4 },
   ],
+  familyOutcomes: [{ forecastId: 'fc-conflict-1', outcome: 'YES' }],
   degraded: false,
   stale: false,
   error: '',
@@ -132,19 +137,56 @@ const RECEIPTS = Object.freeze([
   { question: 'Will cyber threat reports rise <img src=x onerror=alert(1)>?', forecastAt: Date.parse('2026-09-01T00:00:00Z'), probability: 0.6, outcome: 'YES', resolvedAt: Date.parse('2026-09-08T00:00:00Z'), sourceFeed: 'cyber-threats', observedValue: 41 },
 ]);
 const WITH_INTERVALS = sectionWith({ uncertainty: UNCERTAINTY, funnel: FUNNEL, receipts: RECEIPTS });
+// Issue #8867: the market-alert ledger's rolling hit rates, as the RPC serves
+// them after its own whitelist.
+const MARKET_ALERTS = Object.freeze({
+  generatedAt: Date.parse('2026-09-10T20:00:00Z'),
+  windowHours: 6,
+  rollingWindowDays: 30,
+  methodology: 'An emission resolves HIT when a tracked story names the same entity within six hours.',
+  byType: [
+    { type: 'market', scored: 4, hitRate: 0.75, baseN: 2, baseHitRate: 0.5, pairedHitRate: 0.5, medianLeadTimeMs: 3600000 },
+    { type: 'prediction-market', scored: 0, baseN: 0 },
+  ],
+});
+
+function protoMessageFields(messageName) {
+  const proto = read('proto/worldmonitor/forecast/v1/get_forecast_scorecard.proto');
+  const block = proto.match(new RegExp(`message ${messageName} \\{([\\s\\S]*?)\\n\\}`))[1];
+  return [...block.matchAll(/^\s*(?:optional |repeated )?[A-Za-z0-9_.]+ ([a-z0-9_]+) = \d+/gm)]
+    .map(([, name]) => name.replace(/_([a-z0-9])/g, (_, char) => char.toUpperCase()));
+}
 
 describe('forecast scorecard field whitelist', () => {
   it('declares exactly the fields proto GetForecastScorecardResponse declares', () => {
-    const proto = read('proto/worldmonitor/forecast/v1/get_forecast_scorecard.proto');
-    const responseBlock = proto.match(/message GetForecastScorecardResponse \{([\s\S]*?)\n\}/)[1];
-    const declared = [...responseBlock.matchAll(/^\s*(?:optional |repeated )?[A-Za-z0-9_.]+ ([a-z0-9_]+) = \d+/gm)]
-      .map(([, name]) => name.replace(/_([a-z0-9])/g, (_, char) => char.toUpperCase()));
+    const declared = protoMessageFields('GetForecastScorecardResponse');
     assert.ok(declared.length > 10, 'the proto parse must actually find fields');
     assert.deepEqual(
-      [...SCORECARD_DECLARED_FIELDS].sort(),
+      [...SCORECARD_DECLARED_FIELDS, ...SCORECARD_LIVE_ONLY_FIELDS].sort(),
       declared.sort(),
       'the published field list must track the proto, or an undeclared seeder field can reach the page',
     );
+  });
+
+  it('whitelists the market-alert block to the members proto MarketAlertScorecard and MarketAlertRow declare (#8867)', () => {
+    const containerFields = protoMessageFields('MarketAlertScorecard');
+    const rowFields = protoMessageFields('MarketAlertRow');
+    assert.ok(containerFields.length > 3 && rowFields.length > 5, 'the proto parse must actually find fields');
+    const numbered = (fields) => Object.fromEntries(fields.map((field, index) => [field, index + 1]));
+    const selected = selectDeclaredScorecardFields({
+      ...LIVE_SCORECARD,
+      marketAlerts: {
+        ...numbered([...containerFields, 'schemaVersion', 'totals', 'archive']),
+        byType: [numbered([...rowFields, 'pending', 'resolved', 'hit', 'miss', 'void'])],
+      },
+    });
+    assert.deepEqual(Object.keys(selected.marketAlerts).sort(), containerFields.sort());
+    assert.deepEqual(Object.keys(selected.marketAlerts.byType[0]).sort(), rowFields.sort());
+  });
+
+  it('yields no marketAlerts key for a payload captured before the block existed', () => {
+    const selected = selectDeclaredScorecardFields(LIVE_SCORECARD);
+    assert.equal(Object.hasOwn(selected, 'marketAlerts'), false);
   });
 
   it('drops the undeclared betEngine object the handler passes through', () => {
@@ -767,6 +809,16 @@ describe('accuracy page honesty rules', () => {
     }
   });
 
+  it('says the horizon projections are no longer published, never that the product shows them (#8967)', () => {
+    const text = stripTags(renderState(LIVE_SECTION).html);
+    const llms = renderAccuracyLlmsSection(LIVE_SECTION);
+    for (const [surface, body] of [['page', text], ['llms-full', llms]]) {
+      assert.doesNotMatch(body, /shown in the product/i, `${surface} claims the product shows the projections`);
+      assert.match(body, /no longer publishe[sd]/i, `${surface} must say the projections are no longer published`);
+      assert.match(body, /2026-10-07|7 October 2026/, `${surface} must date the change`);
+    }
+  });
+
   it('ships the calibration and per-domain data as real tables, with any chart aria-hidden', () => {
     const { html } = renderState(LIVE_SECTION);
     assert.ok((html.match(/<table/g) || []).length >= 4, 'totals, calibration, domains and origins are tables');
@@ -788,17 +840,27 @@ describe('accuracy page honesty rules', () => {
   it('whitelists the distribution rather than spreading the captured payload', () => {
     const leaky = {
       ...LIVE_SECTION,
-      scorecard: { ...WITH_INTERVALS.scorecard, betEngine: { count: 299 }, judgedLane: 'shadow' },
+      scorecard: {
+        ...WITH_INTERVALS.scorecard,
+        betEngine: { count: 299 },
+        judgedLane: 'shadow',
+        marketAlerts: {
+          ...MARKET_ALERTS,
+          archive: { coveredFromMs: 1 },
+          byType: MARKET_ALERTS.byType.map((row) => ({ ...row, pending: 1 })),
+        },
+      },
     };
     const { html } = renderState(leaky);
     const download = downloadFor(leaky);
-    assert.doesNotMatch(html, /betEngine|judgedLane|shadow/);
-    assert.doesNotMatch(JSON.stringify(download), /betEngine|judgedLane|shadow/);
+    assert.doesNotMatch(html, /betEngine|judgedLane|shadow|coveredFromMs/);
+    assert.doesNotMatch(JSON.stringify(download), /betEngine|judgedLane|shadow|coveredFromMs/);
     assert.deepEqual(
       Object.keys(download.scorecard).sort(),
       [...SCORECARD_DECLARED_FIELDS].sort(),
       'the distribution carries the declared surface and nothing else',
     );
+    assert.deepEqual(download.scorecard.marketAlerts, MARKET_ALERTS);
   });
 
   it('describes its own three facts and provenance in the distribution', () => {
@@ -820,7 +882,13 @@ describe('accuracy page honesty rules', () => {
     assert.match(download.license, /^https:\/\//);
     assert.deepEqual(download.confidenceIntervals.proportions, { published: true, method: 'wilson-95' });
     assert.equal(download.confidenceIntervals.meanScores.logScore.published, false);
-    assert.equal(download.horizonProjections.scored, false);
+    // Some horizons are graded internally since #8939, so a bare `scored: false`
+    // was untrue. The flags say what this file and page publish, nothing more.
+    assert.deepEqual(download.horizonProjections, {
+      valuesPublished: false,
+      gradesPublished: false,
+      trackedIn: 'https://github.com/koala73/worldmonitor/issues/7075',
+    });
     assert.equal(download.headlineCohort.excludedScored, 310);
     assert.deepEqual(download.headlineCohort.excludedOrigins, ['bet_engine', 'state_derived']);
     assert.deepEqual(download.pooledPopulations, {
@@ -915,6 +983,120 @@ describe('accuracy page published-origin domain table (#8952)', () => {
   });
 });
 
+describe('accuracy page market-alert hit rates (#8867)', () => {
+  const HOUR = 3_600_000;
+  const row = (type, overrides = {}) => ({
+    type, scored: 80, hitRate: 0.625, baseN: 32, baseHitRate: 0.25, pairedHitRate: 0.59375, medianLeadTimeMs: 2.5 * HOUR, ...overrides,
+  });
+  const withAlerts = (byType, overrides = {}) => sectionWith({
+    marketAlerts: { ...MARKET_ALERTS, methodology: buildScorecard({}, 0, { archive: {} }).methodology, byType, ...overrides },
+  });
+  const tableOf = (html) => html.match(/<table data-market-alerts>[\s\S]*?<\/table>/)?.[0] ?? null;
+  const cellsOf = (html, type) => [...html.match(new RegExp(`<tr data-alert-type="${type}">([\\s\\S]*?)</tr>`))[1]
+    .matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/g)].map(([, cell]) => stripTags(cell).trim());
+
+  it('shows count, hit rate, the paired comparison with its base count, and the median lead time', () => {
+    const { html } = renderState(withAlerts([row('silent_divergence')]));
+    assert.match(html, /<h2 id="market-alerts">/);
+    assert.deepEqual(cellsOf(html, 'silent_divergence'), [
+      MARKET_ALERT_TYPE_LABELS.silent_divergence,
+      '80',
+      '62.5% of 80 alerts',
+      '59.4% of 32 alerts',
+      '25.0% of 32 earlier windows',
+      '2 h 30 min',
+    ]);
+  });
+
+  it('applies the n>=30 floor separately to the hit rate and to the paired comparison', () => {
+    const { html } = renderState(withAlerts([
+      row('explained_market_move', { scored: 29, baseN: 29 }),
+      row('silent_divergence', { scored: 30, baseN: 29 }),
+      row('flow_price_divergence', { scored: 30, baseN: 30 }),
+    ]));
+    const [, , belowHit, belowPaired, belowBase, belowLead] = cellsOf(html, 'explained_market_move');
+    assert.deepEqual([belowHit, belowPaired, belowBase, belowLead], Array(4).fill('Not yet measurable'));
+    const [, , hit, paired, base, lead] = cellsOf(html, 'silent_divergence');
+    assert.equal(hit, '62.5% of 30 alerts');
+    assert.deepEqual([paired, base], ['Not yet measurable', 'Not yet measurable']);
+    assert.equal(lead, 'Not yet measurable', '19 hits are too few for a median');
+    assert.deepEqual(cellsOf(html, 'flow_price_divergence').slice(3, 5), ['59.4% of 30 alerts', '25.0% of 30 earlier windows']);
+  });
+
+  it('shows the median lead time only once 30 alerts were followed by news', () => {
+    const { html } = renderState(withAlerts([
+      row('silent_divergence', { scored: 48, hitRate: 0.625 }),
+      row('explained_market_move', { scored: 48, hitRate: 0.6 }),
+    ]));
+    assert.equal(cellsOf(html, 'silent_divergence')[5], '2 h 30 min', '30 hits');
+    assert.equal(cellsOf(html, 'explained_market_move')[5], 'Not yet measurable', '29 hits');
+  });
+
+  it('publishes nothing measured for prediction_leads_news until its control windows scored', () => {
+    const unpaired = renderState(withAlerts([row('prediction_leads_news', { scored: 120, baseN: 12 })])).html;
+    assert.deepEqual(cellsOf(unpaired, 'prediction_leads_news').slice(2), Array(4).fill('Not yet measurable'));
+    assert.doesNotMatch(tableOf(unpaired), /62\.5%|25\.0%|2 h 30 min/);
+    const paired = renderState(withAlerts([row('prediction_leads_news', { scored: 120, baseN: 30 })])).html;
+    assert.deepEqual(cellsOf(paired, 'prediction_leads_news').slice(2), [
+      '62.5% of 120 alerts', '59.4% of 30 alerts', '25.0% of 30 earlier windows', '2 h 30 min',
+    ]);
+  });
+
+  it('treats a missing or out-of-range rate as not yet measurable rather than printing it', () => {
+    const { html } = renderState(withAlerts([row('silent_divergence', { hitRate: undefined, pairedHitRate: 1.2, medianLeadTimeMs: undefined })]));
+    assert.deepEqual(cellsOf(html, 'silent_divergence').slice(2), [
+      'Not yet measurable', 'Not yet measurable', 'Not yet measurable', 'Not yet measurable',
+    ]);
+    assert.doesNotMatch(html, /undefined|NaN/);
+  });
+
+  it('describes alerts raised with related news as well as alerts raised without it', () => {
+    const intro = stripTags(renderState(withAlerts([row('silent_divergence')])).html.match(/<h2 id="market-alerts">[\s\S]*?<\/h2>\s*<p>([\s\S]*?)<\/p>/)[1]);
+    assert.match(intro, /no news/);
+    assert.match(intro, /related news is already out/);
+    assert.doesNotMatch(intro, /news does not explain the move yet/);
+  });
+
+  it('quotes the ledger resolution and base-rate rules verbatim', () => {
+    const { html } = renderState(withAlerts([row('silent_divergence')]));
+    const text = stripTags(html).replaceAll('&#39;', "'");
+    for (const rule of [MARKET_ALERT_RESOLUTION_RULE, MARKET_ALERT_BASE_RATE_RULE]) {
+      assert.ok(text.includes(rule), `the page must quote: ${rule.slice(0, 50)}...`);
+    }
+    assert.equal(buildScorecard({}, 0, { archive: {} }).methodology, `${MARKET_ALERT_RESOLUTION_RULE} ${MARKET_ALERT_BASE_RATE_RULE}`,
+      'the quoted rules are the ones the ledger scores under');
+  });
+
+  it('labels every alert type the ledger scores in plain words', () => {
+    assert.deepEqual(Object.keys(MARKET_ALERT_TYPE_LABELS).sort(), [...MARKET_ALERT_TYPES].sort());
+    const { html } = renderState(withAlerts(MARKET_ALERT_TYPES.map((type) => row(type))));
+    for (const type of MARKET_ALERT_TYPES) assert.equal(cellsOf(html, type)[0], MARKET_ALERT_TYPE_LABELS[type]);
+    assert.doesNotMatch(stripTags(tableOf(html)), /_/, 'no internal type ids in the table text');
+  });
+
+  it('keeps every published percentage next to its population', () => {
+    const { html } = renderState(withAlerts(MARKET_ALERT_TYPES.map((type) => row(type))));
+    const text = stripTags(tableOf(html));
+    const percentages = [...text.matchAll(/\d[\d.]*%/g)];
+    assert.equal(percentages.length, 12);
+    for (const match of percentages) assert.match(text.slice(match.index, match.index + 30), /% of [\d,]+ /);
+  });
+
+  it('renders an honest absent state for a snapshot captured before the block existed', () => {
+    const { html } = renderState(LIVE_SECTION);
+    assert.match(html, /<h2 id="market-alerts">/);
+    assert.equal(tableOf(html), null);
+    assert.match(stripTags(html), /This edition carries no market-alert scores/);
+    assert.doesNotMatch(stripTags(html), /captured before/, 'an absent block can also mean a failed read');
+  });
+
+  it('says no alert has been scored when the ledger has no rows', () => {
+    const { html } = renderState(withAlerts([]));
+    assert.equal(tableOf(html), null);
+    assert.match(stripTags(html), /No market alert has been scored yet/);
+  });
+});
+
 describe('accuracy page proportion intervals', () => {
   const rowOf = (html, marker) => stripTags(html.match(new RegExp(`<tr ${marker}[\\s\\S]*?</tr>`))[0]);
 
@@ -931,6 +1113,11 @@ describe('accuracy page proportion intervals', () => {
     const text = stripTags(renderState(LIVE_SECTION).html);
     assert.doesNotMatch(text, /Every rate (does )?carr/);
     assert.match(text, /scored share of the ledger and the base rates/);
+  });
+
+  it('says the ledger totals leave out forecasts withheld under #5234', () => {
+    const caption = renderState(LIVE_SECTION).html.match(/<table data-ledger-totals>[\s\S]*?<\/caption>/)[0];
+    assert.match(stripTags(caption), /withheld under issue #5234/);
   });
 
   it('puts a Wilson interval beside the overall void rate', () => {
@@ -973,6 +1160,15 @@ describe('accuracy page forecast receipts (#5092)', () => {
       receipts: [{ ...RECEIPTS[0], key: 'commodity:BZ=F@1', rationale: 'judge text', evidence: { metricKey: 'x' } }],
     });
     assert.deepEqual(selected.receipts, [RECEIPTS[0]]);
+  });
+
+  it('leaves the live-card family outcomes out of the frozen page and download', () => {
+    const selected = selectDeclaredScorecardFields({
+      ...WITH_INTERVALS.scorecard,
+      familyOutcomes: [{ forecastId: 'fc-1', outcome: 'VOID', voidReason: 'other' }],
+    });
+    assert.equal(Object.hasOwn(selected, 'familyOutcomes'), false);
+    assert.deepEqual([...SCORECARD_LIVE_ONLY_FIELDS], ['familyOutcomes']);
   });
 
   it('renders the receipts newest first with what was forecast, when, the chance, the outcome and the source', () => {
@@ -1499,5 +1695,30 @@ describe('accuracy page publishing contract', () => {
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('accuracy page after the #5233 correction', () => {
+  const CORRECTION = 'could not read';
+
+  it('the committed pre-correction snapshot carries no correction note', () => {
+    const snapshot = JSON.parse(read('docs/snapshots/crawlable-live-pulse-2026-10-05.json'));
+    const { html } = renderState(snapshot.forecastScorecard);
+    assert.doesNotMatch(stripTags(html), new RegExp(CORRECTION));
+  });
+
+  it('shows the note when the captured scorecard reports the voids', () => {
+    const methodology = `${LIVE_SCORECARD.methodology} 215 forecasts scored against a data feed we could not read correctly are voided and left out of every score (issue #5233).`;
+    const { html } = renderState(sectionWith({ methodology }));
+    assert.match(stripTags(html), /215 forecasts scored against a data feed we could not read correctly are voided/);
+  });
+
+  it('calls a headline cohort under the domain-table minimum a small sample', () => {
+    const small = stripTags(renderState(sectionWith({ skill: { ...LIVE_SCORECARD.skill, count: 28, yesCount: 20, brier: 0.311271 } })).html);
+    assert.match(small, /The headline cohort has 28 scored forecasts\. That is fewer than the 30 the domain table needs before it publishes a score, so read the headline score as a small sample\./);
+    assert.doesNotMatch(small, /enough to publish a score/);
+    const large = stripTags(renderState(LIVE_SECTION).html);
+    assert.match(large, /The headline cohort has 180 scored forecasts, enough to publish a score\./);
+    assert.doesNotMatch(large, /small sample/);
   });
 });
