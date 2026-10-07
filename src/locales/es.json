@@ -2363,7 +2363,7 @@
       "unscored": "Escenarios narrativos, no calificados por precisión."
     },
     "forecast": {
-      "infoTooltip": "<strong>Pronósticos de IA</strong> Estimaciones de probabilidad generadas por IA para eventos geopolíticos y económicos:<ul><li>Cobertura multidominios: conflicto, mercados, cadena de suministro, ciberseguridad, política</li><li>Cada pronóstico muestra probabilidad estimada, nivel de confianza e horizonte temporal</li><li>Calibrado contra líneas de base de mercados de predicción donde esté disponible</li></ul>Los pronósticos se actualizan a medida que llegan nuevas señales de inteligencia. Filtra por dominio usando las pestañas anteriores.",
+      "infoTooltip": "<strong>Pronósticos de IA</strong> Estimaciones de probabilidad generadas por IA para eventos geopolíticos y económicos:<ul><li>Cobertura multidominios: conflicto, mercados, cadena de suministro, ciberseguridad, política</li><li>Cada pronóstico muestra probabilidad estimada, nivel de confianza e horizonte temporal</li></ul>Los pronósticos se actualizan a medida que llegan nuevas señales de inteligencia. Filtra por dominio usando las pestañas anteriores.",
       "record": {
         "label": "Historial de aciertos",
         "labelHint": "Cómo puntuaron los pronósticos publicados una vez resueltos, en los últimos {{days}} días. Pasa el cursor sobre un número para ver qué significa.",
@@ -2413,12 +2413,20 @@
           "resolver_envelope_bug": "Se evaluó con una fuente de datos que no pudimos leer correctamente",
           "market_price_not_outcome": "El feed mostraba el precio del mercado, no cómo se resolvió el mercado",
           "judged_evidence_unreliable": "Excluido de la puntuación mientras se corrigen las pruebas de los jueces",
-          "other": "No se pudo resolver"
+          "other": "No se pudo resolver",
+          "judged_old_selection": "Resuelto con un método de evidencia posteriormente considerado no confiable",
+          "late_read": "El feed no se leyó lo bastante cerca de la fecha límite",
+          "feed_unavailable": "El feed de datos no estuvo disponible después de la fecha límite"
         }
       },
       "horizons": {
         "label": "También puntuado en: {{list}}",
         "hint": "La probabilidad titular se califica en el horizonte del pronóstico. La proyección en cada uno de estos horizontes también se califica, comparada con su fuente de datos, utilizando el valor publicado inicialmente para este pronóstico. Los valores de proyección no se muestran porque el valor actual puede diferir del calificado."
+      },
+      "audit": {
+        "label": "Precisión en auditoría",
+        "hint": "En auditoría desde {{date}}. Una auditoría encontró errores en cómo se calificaban los pronósticos. Las calificaciones se han retirado mientras se hacen las correcciones. Los pronósticos se siguen publicando y registrando.",
+        "unverified": "Resultado registrado, no verificado mientras la precisión está en auditoría."
       }
     },
     "escalationCorrelation": {

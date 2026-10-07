@@ -19,6 +19,9 @@ import { RECEIPT_VOID_REASON_LABELS } from '../../scripts/_forecast-scorecard.mj
 
 import { initTestI18n } from './helpers/i18n.mts';
 
+// Pins the lifted state; forecast-panel-under-audit.test.mts pins the audited one (#8990).
+vi.mock('../../shared/forecast-accuracy-audit', () => ({ FORECAST_ACCURACY_AUDIT: null }));
+
 const SCORECARD_PATH = '/api/forecast/v1/get-forecast-scorecard';
 
 type FamilyOutcome = NonNullable<GetForecastScorecardResponse['familyOutcomes']>[number];
@@ -249,6 +252,12 @@ describe('ForecastPanel resolution chips', () => {
     const [card] = await cardsWith([{ forecastId: 'fc-env', outcome: 'VOID', voidReason: 'resolver_envelope_bug' }], ['fc-env']);
     expect(card!.querySelector('.fc-res-chip')?.getAttribute('title')).toBe('Scored against a data feed we could not read correctly');
     expect(card!.querySelector('.fc-res-reasons')?.textContent).toBe('Scored against a data feed we could not read correctly');
+  });
+
+  it('names the #8990 old-selection judged void instead of falling back to other', async () => {
+    const [card] = await cardsWith([{ forecastId: 'fc-judged', outcome: 'VOID', voidReason: 'judged_old_selection' }], ['fc-judged']);
+    expect(card!.querySelector('.fc-res-chip')?.getAttribute('title')).toBe('Judged with an evidence method later found unreliable');
+    expect(card!.querySelector('.fc-res-reasons')?.textContent).toBe('Judged with an evidence method later found unreliable');
   });
 
   it('shows nothing on a card whose family has no resolved window', async () => {

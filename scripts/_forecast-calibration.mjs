@@ -14,6 +14,7 @@ import {
   DEFAULT_SKILL_EXCLUDED_ORIGINS,
   evaluateActivationGate,
   generationOriginOf,
+  hasPreLineageAnchor,
   isHorizonEntry,
   isPublishedOriginEntry,
   isScoredEntry,
@@ -105,20 +106,16 @@ function round6(value) {
   return Math.round(value * 1_000_000) / 1_000_000;
 }
 
-// An anchor without lineage was chosen by the pre-#7071 matcher, which paired
-// forecasts with unrelated markets, so its blended probability is not an
-// input the current seeder can produce.
-function hasPreLineageAnchor(entry) {
-  const calibration = entry?.calibration;
-  return Number.isFinite(Number(calibration?.marketPrice)) && !Number.isFinite(Number(calibration?.marketBlendedProbability));
-}
-
-/** Scored published-origin entries resolved inside the rolling window ending at nowMs. */
+/**
+ * Scored published-origin entries resolved inside the rolling window ending at nowMs.
+ * A row rescored to its first-seen probability (#8990) lost the raw value
+ * that came with that probability, so it has no fit input.
+ */
 export function selectFitCohort(ledger, nowMs, options = {}) {
   const rollingWindowDays = options.rollingWindowDays ?? DEFAULT_ROLLING_WINDOW_DAYS;
   const minResolvedAt = nowMs - rollingWindowDays * DAY_MS;
   return ledgerEntries(ledger).filter((entry) => {
-    if (!isScoredEntry(entry) || !isPublishedOriginEntry(entry) || hasPreLineageAnchor(entry)) return false;
+    if (!isScoredEntry(entry) || !isPublishedOriginEntry(entry) || hasPreLineageAnchor(entry) || entry.rescore) return false;
     const resolvedAt = Number(entry.resolvedAt);
     const emittedAt = emissionTime(entry);
     return Number.isFinite(resolvedAt) && resolvedAt >= minResolvedAt && resolvedAt <= nowMs

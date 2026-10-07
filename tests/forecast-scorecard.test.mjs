@@ -5,6 +5,7 @@ import {
   DEFAULT_ROLLING_WINDOW_DAYS,
   DEFAULT_SKILL_EXCLUDED_ORIGINS,
   INTERVAL_MIN_SAMPLE,
+  MARKET_SETTLEMENT_FEED,
   PUBLIC_RECEIPT_FIELDS,
   PUBLIC_RECEIPT_LINKS_SINCE_MS,
   PUBLIC_RECEIPT_LIMIT,
@@ -17,13 +18,16 @@ import {
   buildFamilyOutcomes,
   buildPublicReceipts,
   computeScorecard,
+  hasPreLineageAnchor,
   isWithheldEntry,
   wilsonInterval,
 } from '../scripts/_forecast-scorecard.mjs';
 import { PROJECTION_HORIZONS } from '../scripts/_forecast-resolution.mjs';
+import { MARKET_SETTLEMENT_FEED as BET_SETTLEMENT_FEED } from '../scripts/_bet-templates-markets.mjs';
 
 const NOW = Date.parse('2026-07-20T00:00:00Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
+const round6 = (value) => Math.round(value * 1_000_000) / 1_000_000;
 
 function resolved(overrides) {
   return {
@@ -77,12 +81,12 @@ describe('computeScorecard', () => {
       a: resolved({
         probability: 0.8,
         outcome: 'YES',
-        calibration: { marketPrice: 60 },
+        calibration: { marketPrice: 60, internalProbability: 0.93, marketBlendedProbability: 0.8 },
       }),
       b: resolved({
         probability: 0.4,
         outcome: 'NO',
-        calibration: { marketPrice: 70 },
+        calibration: { marketPrice: 70, internalProbability: 0.2, marketBlendedProbability: 0.4 },
       }),
       c: resolved({
         probability: 0.7,
@@ -292,6 +296,82 @@ describe('computeScorecard', () => {
   });
 });
 
+describe('market comparisons read only anchors that price the forecast question (#8990, #7071)', () => {
+  const preLineage = (overrides) => resolved({
+    title: 'Escalation risk: Ukraine',
+    calibration: { marketTitle: 'Will Ukraine agree to cede territory to Russia before 2027?', marketPrice: 0.105, drift: 0.283, source: 'polymarket' },
+    ...overrides,
+  });
+  const lineage = (overrides) => resolved({
+    title: 'Escalation risk: Iran',
+    calibration: { marketTitle: 'Will the U.S. strike Iran by October 20?', marketPrice: 0.3, drift: 0.05, source: 'polymarket', internalProbability: 0.35, marketBlendedProbability: 0.33 },
+    ...overrides,
+  });
+  const marketBet = (overrides) => resolved({
+    generationOrigin: 'bet_engine',
+    probabilitySource: 'ensemble',
+    spec: { kind: 'hard', sourceFeed: BET_SETTLEMENT_FEED },
+    calibration: { marketPrice: 13.5, source: 'polymarket' },
+    ...overrides,
+  });
+
+  it('leaves an anchor the pre-#7071 matcher chose out of vsMarketSkill', () => {
+    const scorecard = computeScorecard({
+      stale: preLineage({ probability: 0.388, outcome: 'YES' }),
+      matched: lineage({ probability: 0.33, outcome: 'NO' }),
+      bet: marketBet({ probability: 0.2, outcome: 'NO' }),
+    }, NOW);
+    assert.equal(scorecard.vsMarketSkill.count, 2);
+    assert.equal(scorecard.vsMarketSkill.forecastBrier, round6((0.33 ** 2 + 0.2 ** 2) / 2));
+    assert.equal(scorecard.vsMarketSkill.marketBrier, round6((0.3 ** 2 + 0.135 ** 2) / 2));
+  });
+
+  it('omits vsMarketSkill when every anchor predates lineage', () => {
+    const scorecard = computeScorecard({ stale: preLineage({ probability: 0.388, outcome: 'YES' }) }, NOW);
+    assert.ok(!Object.hasOwn(scorecard, 'vsMarketSkill'));
+  });
+
+  it('keeps scoring the published probability of a row blended toward a stale anchor', () => {
+    const scorecard = computeScorecard({
+      stale: preLineage({ probability: 0.388, outcome: 'YES' }),
+      clean: resolved({ probability: 0.2, outcome: 'NO' }),
+    }, NOW);
+    assert.equal(scorecard.skill.count, 2);
+    assert.equal(scorecard.skill.brier, round6(((1 - 0.388) ** 2 + 0.2 ** 2) / 2));
+  });
+
+  it('leaves a bet anchor that does not settle on the market out of the bet_engine market and deviation skill', () => {
+    const scorecard = computeScorecard({
+      bet: marketBet({ probability: 0.75, outcome: 'YES', calibration: { marketPrice: 60 } }),
+      titled: marketBet({
+        probability: 0.75,
+        outcome: 'NO',
+        spec: { kind: 'judged' },
+        calibration: { marketTitle: 'Will the U.S. invade Iran before 2027?', marketPrice: 0.2, source: 'polymarket' },
+      }),
+    }, NOW);
+    assert.equal(scorecard.betEngine.ensembleCount, 2);
+    assert.equal(scorecard.betEngine.vsMarketSkill.count, 1);
+    assert.equal(scorecard.betEngine.deviationSkill.count, 1);
+    assert.equal(scorecard.betEngine.deviationSkill.skill, 0.4);
+  });
+
+  it('names the same settlement feed the market bet templates write', () => {
+    assert.equal(MARKET_SETTLEMENT_FEED, BET_SETTLEMENT_FEED);
+    assert.ok(hasPreLineageAnchor(preLineage()));
+    assert.ok(!hasPreLineageAnchor(lineage()));
+    assert.ok(!hasPreLineageAnchor(marketBet()));
+    assert.ok(!hasPreLineageAnchor(resolved({})));
+  });
+
+  it('treats a null or blank blend as missing lineage', () => {
+    for (const marketBlendedProbability of [null, '', '0.33']) {
+      const entry = lineage({ calibration: { ...lineage().calibration, marketBlendedProbability } });
+      assert.ok(hasPreLineageAnchor(entry), JSON.stringify(marketBlendedProbability));
+    }
+  });
+});
+
 describe('scorecard uncertainty and maturity denominators (#7072)', () => {
   const deadline = (offsetDays) => NOW + offsetDays * DAY_MS;
 
@@ -376,8 +456,27 @@ describe('scorecard uncertainty and maturity denominators (#7072)', () => {
 
 describe('Phase-2 betEngine slice + promotion flag (#5525 U14)', () => {
   function betEngineEntry(overrides) {
-    return resolved({ generationOrigin: 'bet_engine', ...overrides });
+    return resolved({
+      generationOrigin: 'bet_engine',
+      probabilitySource: 'ensemble',
+      spec: { kind: 'hard', sourceFeed: BET_SETTLEMENT_FEED },
+      ...overrides,
+    });
   }
+
+  it('keeps windows that opened on the base-rate placeholder out of the skill comparisons (#8990)', () => {
+    const scorecard = computeScorecard({
+      a: betEngineEntry({ probability: 0.8, outcome: 'YES', baselineProbability: 0.4, calibration: { marketPrice: 60 } }),
+      b: betEngineEntry({ probability: 0.4, outcome: 'NO', baselineProbability: 0.4, probabilitySource: 'base_rate', calibration: { marketPrice: 70 } }),
+      c: betEngineEntry({ probability: 0.3, outcome: 'NO', baselineProbability: 0.4, probabilitySource: undefined, calibration: { marketPrice: 70 } }),
+      d: betEngineEntry({ probability: 0.2, outcome: 'NO', baselineProbability: 0.4, probabilitySource: 'ensemble_partial', calibration: { marketPrice: 70 } }),
+    }, NOW);
+    assert.equal(scorecard.betEngine.count, 4, 'every bet window is still scored');
+    assert.equal(scorecard.betEngine.ensembleCount, 2);
+    assert.equal(scorecard.betEngine.vsBaseRate.count, 2);
+    assert.equal(scorecard.betEngine.vsMarketSkill.count, 2);
+    assert.equal(scorecard.betEngine.deviationSkill.count, 2);
+  });
 
   it('exposes a bet_engine-scoped slice with calibration + brier, isolated from legacy', () => {
     const scorecard = computeScorecard({

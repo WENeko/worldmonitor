@@ -25,6 +25,7 @@ import {
 import { loadTickerSet } from './_ticker-validation.mjs';
 import { computeEmaWindows, computeRisk24h } from './_ema-threat-engine.mjs';
 import { CII_RISK_SCORE_CACHE_KEYS } from './_cii-risk-cache-keys.mjs';
+import { GPS_ZONE_MIN_HEXES, MARITIME_REGIONS, hexesInMaritimeRegion } from './_gps-maritime-regions.mjs';
 // Queue / outcome / runId constants live in the shared shim so the
 // HTTP-trigger handler (server/_shared/simulation-queue.ts) and this
 // seeder agree on the Redis schema. See #3734 + docs/plans/2026-05-18-
@@ -2107,14 +2108,6 @@ function detectCyberScenarios(inputs) {
   return predictions;
 }
 
-const MARITIME_REGIONS = {
-  'Eastern Mediterranean': { latRange: [33, 37], lonRange: [25, 37] },
-  'Red Sea': { latRange: [11, 22], lonRange: [32, 54] },
-  'Persian Gulf': { latRange: [20, 32], lonRange: [45, 60] },
-  'Black Sea': { latRange: [40, 48], lonRange: [26, 42] },
-  'Baltic Sea': { latRange: [52, 65], lonRange: [10, 32] },
-};
-
 function detectGpsJammingScenarios(inputs) {
   const predictions = [];
   const zones = Array.isArray(inputs.gpsJamming) ? inputs.gpsJamming
@@ -2122,13 +2115,8 @@ function detectGpsJammingScenarios(inputs) {
   if (zones.length === 0) return predictions;
 
   for (const [region, bounds] of Object.entries(MARITIME_REGIONS)) {
-    const inRegion = zones.filter(h => {
-      const lat = h.lat || h.latitude || 0;
-      const lon = h.lon || h.longitude || 0;
-      return lat >= bounds.latRange[0] && lat <= bounds.latRange[1]
-          && lon >= bounds.lonRange[0] && lon <= bounds.lonRange[1];
-    });
-    if (inRegion.length < 3) continue;
+    const inRegion = hexesInMaritimeRegion(zones, bounds);
+    if (inRegion.length < GPS_ZONE_MIN_HEXES) continue;
     predictions.push(makePrediction(
       'supply_chain', region,
       `GPS interference in ${region} shipping zone`,
@@ -8961,6 +8949,21 @@ const MACRO_REGION_MAP = {
   'Congo': 'AFRICA', 'Sudan': 'AFRICA', 'Ethiopia': 'AFRICA', 'Nigeria': 'AFRICA',
   'Somalia': 'AFRICA', 'Mali': 'AFRICA', 'Mozambique': 'AFRICA', 'Sahel': 'AFRICA',
 };
+
+// Every region label a forecast can carry: the judged resolver needs a subject
+// entry for each (#8990, scripts/build-judged-subject-terms.mjs).
+export const EMITTED_REGION_LABELS = Object.freeze([...new Set([
+  ...Object.values(THEATER_REGIONS),
+  ...Object.values(THEATER_LABELS),
+  ...Object.keys(CHOKEPOINT_COMMODITIES),
+  ...Object.keys(REGION_MACRO_BUCKETS),
+  ...Object.keys(REGION_KEYWORDS),
+  ...Object.keys(MARITIME_REGIONS),
+  ...Object.values(MARKET_TAG_TO_REGION),
+  ...Object.keys(MACRO_REGION_MAP),
+  ...CRITICAL_NEWS_GEO_HINTS.map((hint) => hint.region),
+  ...Object.values(loadCountryCodes()).map((row) => row.name),
+])].sort());
 
 const CROSS_THEATER_EXEMPT_CHANNELS = new Set(['cyber_disruption', 'market_repricing']);
 const CROSS_THEATER_ACTOR_SPECIFICITY_MIN = 0.90;
