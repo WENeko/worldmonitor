@@ -309,10 +309,10 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
     const body = id === 'energy' && this.hostedAtlasBody ? this.energyBody! : section.body;
     const notice = state === 'locked' ? this.makeProLocked(reason) : this.makeEmpty(reason);
     notice.dataset.briefState = state;
+    body.querySelector('.cdp-refresh-failure')?.remove();
     const previous = briefSectionState({ id, title: '', card, body });
     if (state === 'unavailable' && previous === 'ready') {
       notice.textContent = `${reason} Previously loaded observations remain visible.`;
-      body.querySelector('.cdp-refresh-failure')?.remove();
       notice.classList.add('cdp-refresh-failure');
       body.append(notice);
     } else body.replaceChildren(notice);
@@ -3454,11 +3454,15 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
       for (const rec of rows) {
         const tr = this.el('tr', '');
         const worldRec = worldByCommodity.get(rec.commodity);
+        const worldRatio = this.formatStocksToUse(worldRec?.stocksToUse, worldRec);
+        const worldLabel = worldRatio !== '—' && worldRec?.marketingYear
+          ? `${worldRatio} (${worldRec.marketingYear})`
+          : worldRatio;
         tr.append(
           this.el('td', '', this.foodStockCommodityLabel(rec.commodity)),
           this.el('td', '', rec.marketingYear || '—'),
           this.el('td', '', this.formatStocksToUse(rec.stocksToUse, rec)),
-          this.el('td', '', this.formatStocksToUse(worldRec?.stocksToUse, worldRec)),
+          this.el('td', '', worldLabel),
         );
         tbody.append(tr);
       }

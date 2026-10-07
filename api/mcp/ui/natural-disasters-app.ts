@@ -11,6 +11,8 @@ const STYLES = `
   .dcounts, .dwarning { font-size: 12px; color: var(--muted); margin: 6px 0; }
   .dwarning { color: var(--high); }
   .dtime { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+  .dprovider { font-size: 12px; line-height: 1.6; margin: 8px 0; padding: 8px; border: 1px solid var(--border); border-radius: 6px; overflow-wrap: anywhere; }
+  .dprovider-title { font-weight: 600; }
 `;
 
 const BODY = `
@@ -43,14 +45,8 @@ const RENDER = `
         ? new Date(value) : null;
       return date && Number.isFinite(date.getTime()) ? label + date.toISOString() : missing;
     }
-    function hasDataset(key) { return Object.prototype.hasOwnProperty.call(datasets, key); }
-    // Earthquakes and wildfires are the core pair: unless the payload carries
-    // only other natural events, an absent core label is a cache miss and must
-    // render as unavailable rather than disappear or read as empty.
-    var corePair = hasDataset("earthquakes") || hasDataset("fires") || !hasDataset("events");
     function group(key, label, field) {
-      var required = corePair && (key === "earthquakes" || key === "fires");
-      if (!required && !hasDataset(key)) return null;
+      if (!Object.prototype.hasOwnProperty.call(datasets, key)) return null;
       selectedCount++;
       var bucket = datasets[key] && typeof datasets[key] === "object" ? datasets[key] : null;
       var list = bucket && bucket[field];
@@ -84,6 +80,71 @@ const RENDER = `
     function providerState(view, field, label) {
       var state = view.bucket && view.bucket[field];
       if (typeof state === "string" && state !== "ok") warning(view.section, label + " coverage is " + collapseWs(state) + ".");
+    }
+    function sourceCounter(value) {
+      return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0 ? String(value) : "Unknown";
+    }
+    function sourceBoolean(value) {
+      return typeof value === "boolean" ? String(value) : "Unknown";
+    }
+    function sourceText(value) {
+      return typeof value === "string" && value.trim() ? collapseWs(value) : "Unknown";
+    }
+    function sourceError(value) {
+      return value === null ? "None reported" : sourceText(value);
+    }
+    function detailBlock(section, title, lines) {
+      var block = el("div", "dprovider");
+      block.appendChild(el("div", "dprovider-title", title));
+      lines.forEach(function (line) { block.appendChild(el("div", "", line)); });
+      section.appendChild(block);
+    }
+    function wildfireDetails(view) {
+      var bucket = view.bucket || {};
+      if (!Object.keys(bucket).some(function (key) { return /^_(firms|cwfis|bc)/.test(key); })) {
+        detailBlock(view.section, "Wildfire sources", ["Provider detail: Unknown"]);
+        return;
+      }
+      detailBlock(view.section, "NASA FIRMS", [
+        "State: " + sourceText(bucket._firmsState) + " · Source detections: " + sourceCounter(bucket._firmsCount),
+        "Partial: " + sourceBoolean(bucket._firmsPartial) + " · Failed calls: " + sourceCounter(bucket._firmsFailedCalls) + " · Error: " + sourceError(bucket._firmsErrorCode)
+      ]);
+      detailBlock(view.section, "Canadian CWFIS", [
+        "State: " + sourceText(bucket._cwfisState) + " · Source detections: " + sourceCounter(bucket._cwfisCount),
+        "Active: " + sourceCounter(bucket._cwfisActiveCount) + " · Prescribed: " + sourceCounter(bucket._cwfisPrescribedCount) + " · Error: " + sourceError(bucket._cwfisErrorCode)
+      ]);
+      detailBlock(view.section, "British Columbia", [
+        "State: " + sourceText(bucket._bcState) + " · Source records: " + sourceCounter(bucket._bcCount) + " · Transport: " + sourceText(bucket._bcVia),
+        "Enriched: " + sourceCounter(bucket._bcEnrichedCount) + " · Appended: " + sourceCounter(bucket._bcAppendedCount) + " · Error: " + sourceError(bucket._bcErrorCode)
+      ]);
+    }
+    function regionalDetails(view, region, coverage) {
+      if (!coverage || typeof coverage !== "object" || Array.isArray(coverage)) {
+        detailBlock(view.section, region.label, ["Provider detail: Unknown"]);
+        return;
+      }
+      var supplied = coverage.sourceDecisions;
+      var sampled = supplied && typeof supplied === "object" && !Array.isArray(supplied) && Array.isArray(supplied.sample);
+      var decisions = Array.isArray(supplied) ? supplied : sampled ? supplied.sample : null;
+      var lines = [];
+      if (!decisions) lines.push("Provider detail: Unknown");
+      else {
+        if (sampled) {
+          var knownTotal = sourceCounter(supplied.count) !== "Unknown" && supplied.count >= decisions.length;
+          lines.push("Showing " + decisions.length + " sampled source decisions" + (knownTotal ? " of " + supplied.count + " reported source decisions." : "; total: Unknown.") + " Full decision list is not loaded.");
+        }
+        if (!decisions.length) lines.push("No source decisions supplied.");
+        decisions.forEach(function (decision) {
+          var item = decision && typeof decision === "object" && !Array.isArray(decision) ? decision : {};
+          lines.push(sourceText(item.source) + " · " + sourceText(item.status) + " · " + sourceText(item.reason)
+            + " · Optional: " + sourceBoolean(item.optional) + " · Requests: " + sourceCounter(item.requestCount)
+            + " · Decision check time: " + eventTime(item.checkedAt, "", "Unknown"));
+        });
+      }
+      lines.push("Dataset fetch time: " + eventTime(view.bucket.fetchedAt, "", "Unknown"));
+      lines.push("Evaluation time: " + eventTime(coverage.evaluatedAt, "", "Unknown"));
+      lines.push("latestObservationAt (supplied): " + eventTime(coverage.latestObservationAt, "", "Unknown") + " · May use evaluation time as a fallback. Original publication is not established.");
+      detailBlock(view.section, region.label, lines);
     }
 
     var quakeView = group("earthquakes", "Earthquakes", "earthquakes");
@@ -124,7 +185,7 @@ const RENDER = `
         var firePlace = collapseWs(fire.region) || (latitude != null && longitude != null ? latitude.toFixed(2) + ", " + longitude.toFixed(2) : "detection");
         fireRow.appendChild(el("span", "dplace", firePlace));
         var brightness = num(fire.brightness);
-        var fireDetails = eventTime(fire.detectedAt, "Detected ", "Detection time unavailable");
+        var fireDetails = eventTime(fire.detectedAt === 0 ? null : fire.detectedAt, "Detected ", "Detection time unavailable");
         if (brightness != null) fireDetails += " · brightness " + Math.round(brightness);
         fireRow.appendChild(el("span", "dtime", fireDetails));
         fireView.section.appendChild(fireRow);
@@ -138,6 +199,7 @@ const RENDER = `
         if (fireView.bucket.upstreamUnavailable === true) warning(fireView.section, "Wildfire source coverage is unavailable.");
         if (fireView.bucket._bcErrorCode) warning(fireView.section, "British Columbia wildfire source reports an error.");
       }
+      wildfireDetails(fireView);
       counts(fireView, fireShown);
     }
 
@@ -168,12 +230,15 @@ const RENDER = `
               warning(otherView.section, region.label + " source coverage is incomplete.");
             }
           }
+          regionalDetails(otherView, region, coverage);
         });
       }
+      else detailBlock(otherView.section, "Regional sources", ["Provider detail: Unknown"]);
       counts(otherView, otherShown);
     }
 
-    if (emptyCount === selectedCount && !coverageLimited) host.appendChild(el("div", "empty", "No natural-hazard events available."));
+    if (!selectedCount) host.appendChild(el("div", "empty", "Natural-hazard data is temporarily unavailable."));
+    else if (emptyCount === selectedCount && !coverageLimited) host.appendChild(el("div", "empty", "No natural-hazard events available."));
     q("foot").textContent = envelope.cached_at
       ? "Snapshot: " + collapseWs(envelope.cached_at) + (envelope.stale ? " (stale)" : "")
       : "";

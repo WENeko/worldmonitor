@@ -468,6 +468,95 @@ export function applySectorValuationFreshness(
   return data;
 }
 
+const MARKET_TRANSPORT_LISTS = [
+  ['stocks-bootstrap', 'quotes'], ['commodities-bootstrap', 'quotes'],
+  ['crypto', 'quotes'], ['gulf-quotes', 'quotes'], ['sectors', 'sectors'], ['etf-flows', 'etfs'],
+] as const;
+
+export function isOrdinaryMarketDefault(params: Record<string, unknown>): boolean {
+  return !(typeof params.jmespath === 'string' && params.jmespath.length > 0)
+    && !['limit', 'summary', 'refresh', 'request_id', 'panel_request']
+    .some(key => Object.prototype.hasOwnProperty.call(params, key))
+    && argStrList(params.symbols).length === 0 && argStrList(params.asset_class).length === 0;
+}
+
+export function presentDefaultMarketData(result: Record<string, unknown>, budgetBytes: number): Record<string, unknown> {
+  if (!result.data || typeof result.data !== 'object' || Array.isArray(result.data)) return result;
+  const presented = structuredClone(result);
+  const data = presented.data as Record<string, unknown>;
+  const collections: Record<string, Record<string, unknown>> = {};
+  const lists = MARKET_TRANSPORT_LISTS.map(([section, field]) => {
+    const source = data[section];
+    const node = source && typeof source === 'object' && !Array.isArray(source) ? source as Record<string, unknown> : undefined;
+    const value = node?.[field];
+    const rows = Array.isArray(value) ? value : null;
+    const coverage: Record<string, unknown> = rows
+      ? { state: 'available', original_count: rows.length, returned_count: rows.length, omitted_count: 0, omission_reason: null }
+      : { state: Array.isArray(presented.unreadable) && presented.unreadable.includes(section) ? 'unavailable' : value === null || source === null ? 'null' : source === undefined || node !== undefined && value === undefined ? 'missing' : 'unavailable', original_count: null, returned_count: null, omitted_count: null, omission_reason: null };
+    collections[section + '.' + field] = coverage;
+    return { node, field, rows, coverage };
+  });
+  presented.transportCoverage = { count_scope: 'post_filter_snapshot', default_list_limit: 30, collections };
+  const size = () => new TextEncoder().encode(JSON.stringify(presented)).byteLength;
+  if (size() <= budgetBytes) return presented;
+  for (const list of lists) if (list.rows && list.node) {
+    list.node[list.field] = [];
+    list.coverage.returned_count = 0;
+    list.coverage.omitted_count = list.rows.length;
+    list.coverage.omission_reason = list.rows.length ? 'output_budget' : null;
+  }
+  if (size() > budgetBytes) return result;
+  const rounds = Math.max(0, ...lists.map(list => list.rows?.length ?? 0));
+  for (let ordinal = 0; ordinal < rounds; ordinal++) for (const list of lists) {
+    if (!list.rows || !list.node || ordinal >= list.rows.length) continue;
+    const selected = list.node[list.field] as unknown[];
+    selected.push(list.rows[ordinal]);
+    list.coverage.returned_count = selected.length;
+    list.coverage.omitted_count = list.rows.length - selected.length;
+    list.coverage.omission_reason = selected.length < list.rows.length ? 'output_budget' : null;
+    if (size() > budgetBytes) {
+      selected.pop();
+      list.coverage.returned_count = selected.length;
+      list.coverage.omitted_count = list.rows.length - selected.length;
+      list.coverage.omission_reason = selected.length < list.rows.length ? 'output_budget' : null;
+    }
+  }
+  return presented;
+}
+
+function forecastReliability(data: Record<string, unknown>, domains: string[]) {
+  const raw = data.scorecard;
+  const unavailable = { status: 'unavailable' };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return unavailable;
+  const card = raw as Record<string, unknown>;
+  if (card.degraded || card.error || typeof card.schemaVersion !== 'number'
+    || !Number.isFinite(card.schemaVersion) || card.schemaVersion < 2 || !Array.isArray(card.publishedByDomain)) return unavailable;
+  const rows = new Map<string, Record<string, unknown>>();
+  for (const value of card.publishedByDomain) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const row = value as Record<string, unknown>;
+    if (typeof row.domain === 'string' && row.domain !== 'bet_engine' && domains.includes(row.domain)) rows.set(row.domain, row);
+  }
+  const capturedAt = Date.now();
+  const meta = data.scorecardMeta;
+  const fetchedAt = meta && typeof meta === 'object' && 'fetchedAt' in meta ? Number(meta.fetchedAt) : NaN;
+  const knownClock = Number.isFinite(fetchedAt) && fetchedAt > 0 && fetchedAt <= capturedAt;
+  return {
+    status: 'ready', windowDays: typeof card.rollingWindowDays === 'number' && Number.isFinite(card.rollingWindowDays) && card.rollingWindowDays > 0 ? card.rollingWindowDays : 180,
+    stale: !knownClock || capturedAt - fetchedAt > 36 * 3600000, freshnessUnknown: !knownClock,
+    asOf: knownClock ? new Date(fetchedAt).toISOString() : null, capturedAt: new Date(capturedAt).toISOString(),
+    byDomain: [...new Set(domains)].filter(domain => domain !== 'bet_engine').map(domain => {
+      const row = rows.get(domain);
+      const sampleCount = typeof row?.count === 'number' && Number.isFinite(row.count) && row.count > 0 ? row.count : 0;
+      const yes = row?.yesCount;
+      return sampleCount >= 30 && typeof row?.brier === 'number' && Number.isFinite(row.brier)
+        && typeof yes === 'number' && Number.isInteger(yes) && yes >= 0 && yes <= sampleCount
+        ? { domain, kind: 'measured', n: sampleCount, brier: row.brier, yesShare: yes / sampleCount }
+        : { domain, kind: 'unmeasured', n: sampleCount };
+    }),
+  };
+}
+
 export const CACHE_TOOLS: ToolDef[] = [
   {
     name: 'get_toronto_reported_occurrences',
@@ -615,7 +704,8 @@ export const CACHE_TOOLS: ToolDef[] = [
     // This schema previously advertised `changePercent` and `flow`, which no
     // producer has ever written, so every agent projecting per the hint got
     // null for each row. Keep these names pinned to the seeders.
-    outputSchema: cacheEnvelope({
+    outputSchema: (() => {
+      const schema = cacheEnvelope({
       'stocks-bootstrap': {
         type: ['object', 'null'],
         properties: {
@@ -736,7 +826,20 @@ export const CACHE_TOOLS: ToolDef[] = [
           unavailable: { type: 'boolean' },
         },
       },
-    }),
+      }) as { properties: Record<string, unknown> };
+      return { ...schema, properties: { ...schema.properties, transportCoverage: {
+        type: 'object', required: ['count_scope', 'default_list_limit', 'collections'], properties: {
+          count_scope: { const: 'post_filter_snapshot' }, default_list_limit: { const: 30 },
+          collections: { type: 'object', properties: Object.fromEntries(MARKET_TRANSPORT_LISTS.map(([section, field]) => [section + '.' + field, {
+            type: 'object', required: ['state', 'original_count', 'returned_count', 'omitted_count', 'omission_reason'], properties: {
+              state: { type: 'string', enum: ['available', 'missing', 'null', 'unavailable'] },
+              original_count: { type: ['integer', 'null'], minimum: 0 }, returned_count: { type: ['integer', 'null'], minimum: 0 },
+              omitted_count: { type: ['integer', 'null'], minimum: 0 }, omission_reason: { enum: ['output_budget', null] },
+            },
+          }])) },
+        },
+      } } };
+    })(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _postFilter: (data, params) => {
       normalizePhysicalDivergenceDataset(data);
@@ -3103,6 +3206,7 @@ export const CACHE_TOOLS: ToolDef[] = [
     },
     outputSchema: (() => {
       const schema = cacheEnvelope({
+      reliability: { type: 'object', properties: { status: { type: 'string', enum: ['ready', 'unavailable'] }, byDomain: { type: 'array', maxItems: 30, items: { type: 'object' } } } },
       predictions: {
         type: ['object', 'null'],
         properties: { predictions: { type: 'array', items: { type: 'object', properties: {
@@ -3141,9 +3245,15 @@ export const CACHE_TOOLS: ToolDef[] = [
           }
         }
       }
-      return data;
+      if (execution?.panelScope === 'forecasts' || execution?.panelRequest && 'panel' in execution.panelRequest && execution.panelRequest.panel === 'forecasts') {
+        const node = data.predictions as { predictions?: unknown[] } | null;
+        const domains = (Array.isArray(node?.predictions) ? node.predictions : []).flatMap(value => value && typeof value === 'object' && 'domain' in value && typeof value.domain === 'string' ? [value.domain] : []);
+        return { predictions: data.predictions, reliability: forecastReliability(data, domains) };
+      }
+      return { predictions: data.predictions };
     },
-    _cacheKeys: ['forecast:predictions:v2'],
+    _cacheKeys: ['forecast:predictions:v2', 'forecast:scorecard:v1', 'seed-meta:forecast:scorecard'],
+    _cacheLabels: { 'forecast:predictions:v2': 'predictions', 'forecast:scorecard:v1': 'scorecard', 'seed-meta:forecast:scorecard': 'scorecardMeta' },
     _freshnessChecks: [{ key: 'seed-meta:forecast:predictions', maxStaleMin: 90 }],
     _apiPaths: [
       "GET /api/forecast/v1/get-forecasts",

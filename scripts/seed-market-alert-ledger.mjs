@@ -52,21 +52,26 @@ export const DIGEST_KEY = 'news:digest:v1:full:en';
 export const ACCUMULATOR_KEY = 'digest:accumulator:v1:full:en';
 export const READ_KEYS = [
   STOCKS_KEY, COMMODITIES_KEY, CRYPTO_KEY, PREDICTIONS_KEY, DIGEST_KEY,
-  CORRELATION_RUNTIME_MODE_KEY, MARKET_ALERT_LEDGER_KEY, MARKET_ALERT_SNAPSHOT_KEY,
+  CORRELATION_RUNTIME_MODE_KEY, MARKET_ALERT_LEDGER_KEY, MARKET_ALERT_SNAPSHOT_KEY, MARKET_ALERT_SCORECARD_KEY,
 ];
 
 const MIN_MS = 60 * 1000;
 const MARKET_MAX_AGE_MS = 30 * MIN_MS;
 const PREDICTION_MAX_AGE_MS = 90 * MIN_MS;
+// Two polls of the predictions seeder's live Railway cron (`*/10 * * * *`) plus jitter.
+export const PREDICTION_POLL_GAP_MAX_MS = 25 * MIN_MS;
 const DIGEST_MAX_AGE_MS = 60 * MIN_MS;
-// Three ticks: an older snapshot cannot say whether a move crossed the
-// threshold since the previous tick or drifted there over an outage.
+// Three ticks: an older snapshot cannot say whether an alert was absent on
+// the previous tick or lost over an outage.
 const SNAPSHOT_MAX_AGE_MS = 15 * MIN_MS;
 // Scorecard outlives the 30-minute health gate by days; the snapshot is only
-// the previous tick's prediction prices and market changes and is rewritten
-// every emitting tick.
+// the previous tick's prediction poll, market changes and emitted alert ids
+// and is rewritten every emitting tick.
 const SCORECARD_TTL_SECONDS = 7 * 24 * 60 * 60;
 const SNAPSHOT_TTL_SECONDS = 24 * 60 * 60;
+// A tick with nothing due reads no archive; the scorecard keeps the block of
+// the last tick that did, and starts from this one when none is on record.
+const UNREAD_ARCHIVE = { readFailed: false, truncated: false, unproven: 0, coveredFromMs: null, readAt: null };
 export const MAX_ARCHIVE_HASHES = 20_000;
 const SMEMBERS_BATCH = 500;
 const PREDICTION_POOLS = ['geopolitical', 'tech', 'finance'];
@@ -106,7 +111,7 @@ function freshPayload(raw, key, maxAgeMs, nowMs, discarded, timestampOf = (seed)
     discarded.push({ key, reason: 'stale' });
     return null;
   }
-  return data;
+  return { data, fetchedAt: at };
 }
 
 export function mapMarkets(payloads) {
@@ -174,10 +179,66 @@ function parseLedger(value) {
   return data;
 }
 
-function parseSnapshot(value) {
+function parsePreviousArchive(value) {
   const { data } = unwrapEnvelope(value);
-  if (!isPlainObject(data) || !isPlainObject(data.predictionChanges) || !isPlainObject(data.marketChanges)) return null;
-  return { timestamp: Number(data.timestamp), predictionChanges: data.predictionChanges, marketChanges: data.marketChanges };
+  return isPlainObject(data) && isPlainObject(data.archive) ? data.archive : null;
+}
+
+export function parseSnapshot(value) {
+  const { data } = unwrapEnvelope(value);
+  if (!isPlainObject(data) || !isPlainObject(data.predictionChanges) || !isPlainObject(data.marketChanges) || !Array.isArray(data.emitted)) return null;
+  if (!isPlainObject(data.activity) || !Object.values(data.activity).every(Array.isArray)) return null;
+  if (data.predictionsFetchedAt !== null && typeof data.predictionsFetchedAt !== 'number') return null;
+  return {
+    timestamp: Number(data.timestamp),
+    predictionChanges: data.predictionChanges,
+    predictionsFetchedAt: data.predictionsFetchedAt,
+    marketChanges: data.marketChanges,
+    emitted: data.emitted,
+    activity: data.activity,
+  };
+}
+
+const isRun = (run) => isPlainObject(run) && Number.isFinite(run.since) && Number.isFinite(run.until) && Array.isArray(run.types) && run.types.every((type) => typeof type === 'string');
+
+/**
+ * What the stored snapshot says about the past, salvaged from any shape: when
+ * it was observed and the runs of held activity it carried. A snapshot that
+ * parseSnapshot rejects for a missing field still supplies both; the
+ * object-valued activity of the previous snapshot shape supplies no runs.
+ */
+export function snapshotHistory(value) {
+  const { data } = unwrapEnvelope(value);
+  if (!isPlainObject(data)) return { observedAt: null, activity: {} };
+  const runs = isPlainObject(data.activity) && Object.values(data.activity).every((symbolRuns) => Array.isArray(symbolRuns) && symbolRuns.every(isRun));
+  return {
+    observedAt: Number.isFinite(data.timestamp) ? data.timestamp : null,
+    activity: runs ? data.activity : {},
+  };
+}
+
+// A re-read of the same poll (equal fetchedAt) or a gap wider than two polls
+// cannot say the move happened since the previous tick.
+function predictionBaseline(baseline, predictionsFetchedAt) {
+  if (!baseline || predictionsFetchedAt === null || typeof baseline.predictionsFetchedAt !== 'number') return null;
+  const gap = predictionsFetchedAt - baseline.predictionsFetchedAt;
+  if (gap <= 0 || gap > PREDICTION_POLL_GAP_MAX_MS) return null;
+  return new Map(Object.entries(baseline.predictionChanges));
+}
+
+export function liveBaseline(previousSnapshot, nowMs) {
+  return previousSnapshot && nowMs - previousSnapshot.timestamp <= SNAPSHOT_MAX_AGE_MS ? previousSnapshot : null;
+}
+
+export function snapshotOf({ nowMs, predictions, predictionsFetchedAt, markets, emitted, activity }) {
+  return {
+    timestamp: nowMs,
+    predictionChanges: Object.fromEntries(predictionChangesSnapshot(predictions)),
+    predictionsFetchedAt,
+    marketChanges: Object.fromEntries(markets.map((market) => [market.symbol, market.change])),
+    emitted,
+    activity,
+  };
 }
 
 function snapshotRecords(snapshot) {
@@ -198,51 +259,49 @@ export async function buildTick(raw, { nowMs = Date.now(), archive }) {
   const digest = freshPayload(raw, DIGEST_KEY, DIGEST_MAX_AGE_MS, nowMs, discarded, digestTimestamp);
   const runtimeMode = resolveCorrelationRuntimeMode(raw[CORRELATION_RUNTIME_MODE_KEY]);
   const previousSnapshot = parseSnapshot(raw[SNAPSHOT_KEY]);
-  const baseline = previousSnapshot && nowMs - previousSnapshot.timestamp <= SNAPSHOT_MAX_AGE_MS ? previousSnapshot : null;
+  const baseline = liveBaseline(previousSnapshot, nowMs);
+  const predictionsFetchedAt = predictionsPayload?.fetchedAt ?? null;
 
-  const markets = mapMarkets([stocks, commodities, crypto]);
-  const predictions = predictionsPayload ? mapPredictions(predictionsPayload) : [];
-  const items = digest ? digestNewsItems(digest) : [];
-  const observed = () => ({
-    timestamp: nowMs,
-    predictionChanges: Object.fromEntries(predictionChangesSnapshot(predictions)),
-    marketChanges: Object.fromEntries(markets.map((market) => [market.symbol, market.change])),
-  });
+  const markets = mapMarkets([stocks?.data, commodities?.data, crypto?.data]);
+  const predictions = predictionsPayload ? mapPredictions(predictionsPayload.data) : [];
+  const items = digest ? digestNewsItems(digest.data) : [];
+  const observed = (emitted, activity) => snapshotOf({ nowMs, predictions, predictionsFetchedAt, markets, emitted, activity });
 
   let signals = [];
-  let snapshot = previousSnapshot;
   if (digest) {
     const news = buildNewsContext(items);
     signals = detectMarketAlerts({
       markets,
       predictions,
-      previousPredictionChanges: predictionsPayload && baseline ? new Map(Object.entries(baseline.predictionChanges)) : null,
+      previousPredictionChanges: predictionBaseline(baseline, predictionsFetchedAt),
       newsTopics: news.newsTopics,
       newsEntityContexts: news.newsEntityContexts,
       pipelineFlowMentions: news.pipelineFlowMentions,
       isRecentDuplicate: () => false,
       markSignalSeen: () => {},
     });
-    snapshot = observed();
   }
 
-  const ingested = ingestSignals(parseLedger(raw[MARKET_ALERT_LEDGER_KEY]), signals, {
-    nowMs, runtimeMode, markets, predictions, previousMarketChanges: baseline ? baseline.marketChanges : null,
-  });
-  const resolved = await resolveDueEntries(ingested.ledger, { nowMs, archive });
+  // Runs are facts about the past, so they come from the stored snapshot even
+  // when it is no baseline; the resolver reads the snapshot's map rather than
+  // this tick's because ingest prunes against nowMs.
+  const { observedAt, activity: previousActivity } = snapshotHistory(raw[SNAPSHOT_KEY]);
+  const ingested = ingestSignals(parseLedger(raw[MARKET_ALERT_LEDGER_KEY]), signals, { nowMs, runtimeMode, markets, predictions, baseline, activity: previousActivity, observedAt });
+  const resolved = await resolveDueEntries(ingested.ledger, { nowMs, archive, activity: previousActivity });
   const ledger = pruneLedger(resolved.ledger, nowMs);
   const byType = {};
   for (const signal of signals) byType[signal.type] = (byType[signal.type] ?? 0) + 1;
+  const archiveStatus = resolved.read ? resolved : (parsePreviousArchive(raw[MARKET_ALERT_SCORECARD_KEY]) ?? UNREAD_ARCHIVE);
 
   return {
     ledger,
-    scorecard: buildScorecard(ledger, nowMs),
-    snapshot: snapshot ?? observed(),
+    scorecard: buildScorecard(ledger, nowMs, { archive: archiveStatus }),
+    snapshot: digest ? observed(ingested.emitted, ingested.activity) : (previousSnapshot ?? observed(null, {})),
     summary: {
       inputs: {
-        stocks: stocks?.quotes?.length ?? 0,
-        commodities: commodities?.quotes?.length ?? 0,
-        crypto: crypto?.quotes?.length ?? 0,
+        stocks: stocks?.data.quotes?.length ?? 0,
+        commodities: commodities?.data.quotes?.length ?? 0,
+        crypto: crypto?.data.quotes?.length ?? 0,
         predictions: predictions.length,
         digestItems: items.length,
         runtimeMode,
@@ -253,6 +312,7 @@ export async function buildTick(raw, { nowMs = Date.now(), archive }) {
       updated: ingested.updated,
       resolved: { hit: resolved.hit, miss: resolved.miss, void: resolved.void, unproven: resolved.unproven },
       readFailed: resolved.readFailed,
+      truncated: resolved.truncated,
       pending: resolved.pending,
       entries: Object.keys(ledger).length,
     },
@@ -266,7 +326,8 @@ export function formatSummary(summary) {
   return `  [market-alert-ledger] inputs stocks=${inputs.stocks} commodities=${inputs.commodities} crypto=${inputs.crypto} `
     + `predictions=${inputs.predictions} digestItems=${inputs.digestItems} mode=${inputs.runtimeMode} discarded=${discarded} | `
     + `emitted=${emitted.total} (${byType}) gated=${emitted.gated} held=${emitted.held} new=${summary.created} re-emitted=${summary.updated} | `
-    + `resolved hit=${resolved.hit} miss=${resolved.miss} void=${resolved.void} unproven=${resolved.unproven}${summary.readFailed ? ' archive-read-failed' : ''} | `
+    + `resolved hit=${resolved.hit} miss=${resolved.miss} void=${resolved.void} unproven=${resolved.unproven}`
+    + `${summary.readFailed ? ' archive-read-failed' : ''}${summary.truncated ? ' archive-truncated' : ''} | `
     + `pending=${summary.pending} entries=${summary.entries}`;
 }
 
@@ -296,16 +357,26 @@ function stayPending(what) {
 
 export function createRedisArchive(pipeline = defaultRedisPipeline) {
   return {
+    // Newest first: when the window overflows, the kept stories are the
+    // newest MAX_ARCHIVE_HASHES and coveredFromMs rises to one past the oldest
+    // kept lastSeen, since the LIMIT can split members tied at that score, so
+    // the newest due rows still resolve. A story's lastSeen is never below its
+    // firstSeen, so every story first seen at or after coveredFromMs is in the
+    // kept set.
     async readStories(sinceMs) {
       const rows = await pipeline([
         ['ZRANGE', ACCUMULATOR_KEY, '0', '0', 'WITHSCORES'],
-        ['ZRANGEBYSCORE', ACCUMULATOR_KEY, String(sinceMs), '+inf', 'LIMIT', '0', String(MAX_ARCHIVE_HASHES + 1)],
+        ['ZREVRANGEBYSCORE', ACCUMULATOR_KEY, '+inf', String(sinceMs), 'WITHSCORES', 'LIMIT', '0', String(MAX_ARCHIVE_HASHES + 1)],
       ]);
       const oldest = arrayResult(rows?.[0]);
-      const members = arrayResult(rows?.[1]);
-      if (!oldest || !members) return stayPending(`${ACCUMULATOR_KEY} read failed`);
-      if (members.length > MAX_ARCHIVE_HASHES) return stayPending(`archive window holds more than ${MAX_ARCHIVE_HASHES} stories`);
-      const coveredFromMs = oldest.length >= 2 && Number.isFinite(Number(oldest[1])) ? Number(oldest[1]) : null;
+      const newestFirst = arrayResult(rows?.[1]);
+      if (!oldest || !newestFirst) return stayPending(`${ACCUMULATOR_KEY} read failed`);
+      const truncated = newestFirst.length > 2 * MAX_ARCHIVE_HASHES;
+      const kept = truncated ? newestFirst.slice(0, 2 * MAX_ARCHIVE_HASHES) : newestFirst;
+      const members = kept.filter((_, i) => i % 2 === 0);
+      const scoreAt = (flat, i) => (flat.length > i && Number.isFinite(Number(flat[i])) ? Number(flat[i]) : null);
+      const oldestKept = scoreAt(kept, kept.length - 1);
+      const coveredFromMs = truncated ? (oldestKept == null ? null : oldestKept + 1) : scoreAt(oldest, 1);
       const tracks = await readStoryTracksChunked(members, pipeline, { context: 'market-alert-ledger' });
       if (!tracks) return null;
       const stories = [];
@@ -318,7 +389,7 @@ export function createRedisArchive(pipeline = defaultRedisPipeline) {
         if (typeof track.title !== 'string' || !Number.isFinite(firstSeen)) continue;
         stories.push({ hash: members[i], title: track.title, firstSeen });
       }
-      return { coveredFromMs, stories };
+      return { coveredFromMs, truncated, stories };
     },
     async readSourceTiers(hashes) {
       const tiers = new Map();

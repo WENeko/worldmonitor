@@ -486,6 +486,121 @@ describe('paid curated market panel through the MCP handler', () => {
     for (const key of Object.keys(process.env)) if (!(key in originalEnv)) delete process.env[key];
     Object.assign(process.env, originalEnv);
   });
+  it('serves usable ordinary default market data within the dispatched text budget without changing its canonical snapshot', async testContext => {
+    const now = 1787056200000;
+    testContext.mock.timers.enable({ apis: ['Date'], now });
+    const { readFileSync } = await import('node:fs');
+    const { buildProducerBackedPhysicalComparisonFixture } = await import('./helpers/mcp-producer-fixtures.mjs');
+    const { CACHE_TOOLS } = await import('../api/mcp/registry/cache-tools.ts');
+    const fixture = JSON.parse(readFileSync(new URL('./fixtures/jmespath-samples/fat-get-market-data.response.json', import.meta.url), 'utf8'));
+    const physical = buildProducerBackedPhysicalComparisonFixture('ok');
+    fixture.data['physical-premium'] = physical.premium;
+    fixture.data['physical-divergence'] = physical.divergence;
+    fixture.data.sectors.valuations = {"XLK": {"trailingPE": 20}, "XLF": {"trailingPE": 21}, "XLE": {"trailingPE": 22}, "XLV": {"trailingPE": 23}, "XLY": {"trailingPE": 24}, "XLI": {"trailingPE": 25}, "XLP": {"trailingPE": 26}, "XLU": {"trailingPE": 27}, "XLB": {"trailingPE": 28}, "XLRE": {"trailingPE": 29}, "XLC": {"trailingPE": 30}, "SMH": {"trailingPE": 31}};
+    fixture.data.sectors.valuationCoverage = {"valuationCount": 12, "expectedValuationCount": 12, "currentValuationCount": 12, "sourceStatus": "ok", "source": "controlled_fixture", "fetchedAt": 1787056200000, "stale": false};
+    const keyToSection = {"market:stocks-bootstrap:v1": "stocks-bootstrap", "market:commodities-bootstrap:v1": "commodities-bootstrap", "market:physical-premium:v1": "physical-premium", "market:physical-divergence:v1": "physical-divergence", "market:crypto:v1": "crypto", "market:sectors:v2": "sectors", "market:etf-flows:v1": "etf-flows", "market:gulf-quotes:v1": "gulf-quotes", "market:fear-greed:v1": "fear-greed"};
+    const metadataKeys = ["seed-meta:market:stocks", "seed-meta:market:sectors"];
+    const originalFetch = globalThis.fetch;
+    const fixtureBefore = JSON.stringify(fixture);
+    const reads = [];
+    testContext.after(() => { globalThis.fetch = originalFetch; testContext.mock.timers.reset(); });
+    const market = CACHE_TOOLS.find(tool => tool.name === 'get_market_data');
+    assert.equal(typeof market?._postFilter, 'function');
+    const expectedData = market._postFilter(structuredClone(fixture.data), { limit: 30 });
+    assert.ok(expectedData['physical-divergence'], 'Healthy physical cohort must survive existing normalization');
+    assert.equal(Object.hasOwn(expectedData['physical-divergence'], 'transitions'), false);
+    for (const reading of expectedData['physical-divergence'].readings) assert.equal(reading.historyKey, reading.provenance.historyKey);
+    globalThis.fetch = async (input, init) => {
+      const rawUrl = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
+      const url = new URL(rawUrl);
+      assert.equal(url.origin, 'https://market-seed.invalid');
+      assert.ok(url.pathname.startsWith('/get/'));
+      assert.equal(url.search, '');
+      assert.equal((init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase(), 'GET');
+      assert.equal(init?.body, undefined);
+      const key = decodeURIComponent(url.pathname.slice('/get/'.length));
+      assert.ok(Object.hasOwn(keyToSection, key) || metadataKeys.includes(key), `Unplanned read ${key}`);
+      reads.push(key);
+      const value = metadataKeys.includes(key) ? { fetchedAt: now } : fixture.data[keyToSection[key]];
+      assert.notEqual(value, undefined, `Missing controlled fixture ${key}`);
+      return Response.json({ result: JSON.stringify(value) });
+    };
+    const { deps, pipe } = makeProDeps();
+    const response = await handler(proReq('POST', callBody('get_market_data', {}, 100)), deps);
+    const wire = await response.text();
+    const body = JSON.parse(wire);
+    assert.equal(response.status, 200);
+    assert.equal(body.jsonrpc, '2.0');
+    assert.equal(body.id, 100);
+    assert.equal(body.error, undefined);
+    assert.equal(pipe.count, 1);
+    assert.deepEqual(reads.slice().sort(), [...Object.keys(keyToSection), ...metadataKeys].sort());
+    const stored = [...pipe.store].filter(([key]) => /:markets:.*:data:[a-f0-9]{64}$/.test(key));
+    assert.equal(stored.length, 1, 'Healthy complete cohort must save its canonical original');
+    const canonical = JSON.parse(stored[0][1]);
+    assert.equal(canonical.stale, false);
+    assert.equal(canonical.freshnessUnknown, undefined);
+    assert.equal(canonical.transportCoverage, undefined);
+    assert.equal(canonical.panelRequest, undefined);
+    const lists = [['stocks-bootstrap','quotes'],['commodities-bootstrap','quotes'],['crypto','quotes'],['gulf-quotes','quotes'],['sectors','sectors'],['etf-flows','etfs']];
+    for (const [section, list] of lists) assert.deepEqual(canonical.data[section][list], fixture.data[section][list].slice(0, 30));
+    assert.deepEqual(canonical.data, expectedData);
+    const savedSets = pipe.ops.flat().filter(cmd => cmd[0] === 'SET' && cmd[1] === stored[0][0]);
+    assert.equal(savedSets.length, 1);
+    assert.equal(savedSets[0][2], stored[0][1]);
+    assert.equal(JSON.stringify(fixture), fixtureBefore);
+    const value = body.result.structuredContent;
+    const text = body.result.content[0].text;
+    if (value._budget_exceeded === true) {
+      assert.equal(value.budget_bytes, 131072);
+      assert.ok(value.actual_bytes > 131072);
+      testContext.diagnostic(JSON.stringify({ expectedCurrentFailure: 'actual dispatch budget replacement', actualBytes: value.actual_bytes, textBytes: Buffer.byteLength(text), outerWireBytes: Buffer.byteLength(wire), allocationCount: pipe.count, cacheReads: reads.length }));
+    }
+    assert.notEqual(value._budget_exceeded, true, 'Ordinary default must retain usable market data');
+    assert.ok(Buffer.byteLength(text, 'utf8') <= 131072);
+    assert.deepEqual(JSON.parse(text), value);
+    assert.equal(value.transportCoverage.count_scope, 'post_filter_snapshot');
+    for (const [section, list] of lists) {
+      const originalRows = canonical.data[section][list], returnedRows = value.data[section][list];
+      assert.ok(returnedRows.length > 0, section + ' retains useful whole rows');
+      let lastOrdinal = -1;
+      for (const row of returnedRows) {
+        const ordinal = originalRows.findIndex(original => JSON.stringify(original) === JSON.stringify(row));
+        assert.ok(ordinal > lastOrdinal, section + ' preserves whole original rows and series in source order');
+        lastOrdinal = ordinal;
+      }
+      const coverage = value.transportCoverage.collections[section + '.' + list];
+      assert.equal(coverage.original_count, originalRows.length);
+      assert.equal(coverage.returned_count, returnedRows.length);
+      assert.equal(coverage.omitted_count, originalRows.length - returnedRows.length);
+    }
+    for (const section of ['physical-premium', 'physical-divergence', 'fear-greed']) assert.deepEqual(value.data[section], canonical.data[section]);
+    const snapshotValue = stored[0][1], readCount = reads.length;
+    let reusedDefaultText;
+    for (const args of [{}, { symbols: [], asset_class: [] }, { symbols: [' '] }, { jmespath: '' }, { jmespath: null }]) {
+      const next = await (await handler(proReq('POST', callBody('get_market_data', args)), deps)).json();
+      assert.equal(next.result.structuredContent._budget_exceeded, undefined);
+      assert.equal(next.result.structuredContent.transportCoverage.count_scope, 'post_filter_snapshot');
+      if (Object.keys(args).length === 0) reusedDefaultText = next.result.content[0].text;
+      if (Object.hasOwn(args, 'jmespath')) assert.equal(next.result.content[0].text, reusedDefaultText, 'identity requests preserve fitted bytes and the reused signed receipt');
+    }
+    assert.equal(reads.length, readCount, 'normalized empty defaults reuse the saved canonical snapshot');
+    for (const args of [{ limit: 30 }, { limit: 0 }, { summary: false }, { refresh: false }, { panel_request: value.panelRequest.token }]) {
+      const beforeReads = reads.length;
+      const next = await (await handler(proReq('POST', callBody('get_market_data', args)), deps)).json();
+      assert.equal(next.result.structuredContent._budget_exceeded, true, JSON.stringify(args) + ' keeps the existing explicit response');
+      if (args.panel_request) assert.equal(reads.length, beforeReads, 'the original reader reuses its snapshot without source reads');
+    }
+    const projectedCoverage = await (await handler(proReq('POST', callBody('get_market_data', { jmespath: 'transportCoverage' })), deps)).json();
+    assert.equal(projectedCoverage.result.content[0].text, 'null', 'real projection bypasses default coverage presentation');
+    assert.deepEqual(projectedCoverage.result.structuredContent, { projection: null });
+    for (const args of [{ limit: 10 }, { limit: 1 }, { symbols: ['AAPL'] }, { asset_class: ['equity'] }, { summary: true }, { jmespath: 'data' }]) {
+      const next = await (await handler(proReq('POST', callBody('get_market_data', args)), deps)).json();
+      assert.equal(next.result.structuredContent.transportCoverage, undefined, 'explicit presentation is not fitted');
+    }
+    assert.equal(pipe.count, 1);
+    assert.equal(pipe.store.get(stored[0][0]), snapshotValue);
+  });
   it('shares one allocation across opens and filters, while refresh retries share their original allocation', async () => {
     const { deps, pipe } = makeProDeps();
     const first = await invoke(deps, { symbols: ['AAPL'], asset_class: ['equity'] });
@@ -1288,5 +1403,91 @@ describe('paid prediction panel through the MCP handler', () => {
       assert.equal(result.body.result.structuredContent.panelRequest, undefined);
       assert.equal(pipe.count, 1);
     }
+  });
+});
+
+describe('public forecast reliability cache and completed output', () => {
+  const now = Date.parse('2026-10-07T00:00:00Z');
+  const predictions = { generatedAt: now, predictions: [{ id: 'reliability-case', domain: 'energy', region: 'Europe', title: 'Controlled forecast', probability: 0.4 }] };
+  const scorecard = { schemaVersion: 2, rollingWindowDays: 90, publishedByDomain: [{ domain: 'energy', count: 45, brier: 0.213, yesCount: 18 }] };
+  const originals = new WeakMap();
+  async function fixture(testContext, values) {
+    if (!originals.has(testContext)) originals.set(testContext, { beforeFetch: globalThis.fetch, beforeEnv: { ...process.env }, beforeNow: Date.now });
+    const { beforeFetch, beforeEnv, beforeNow } = originals.get(testContext);
+    testContext.after(() => { globalThis.fetch = beforeFetch; Date.now = beforeNow; for (const key of Object.keys(process.env)) if (!(key in beforeEnv)) delete process.env[key]; Object.assign(process.env, beforeEnv); });
+    process.env.MCP_INTERNAL_HMAC_SECRET = HMAC_SECRET; process.env.MCP_TELEMETRY = 'false';
+    process.env.UPSTASH_REDIS_REST_URL = 'https://forecast-reliability-fixture.test'; process.env.UPSTASH_REDIS_REST_TOKEN = 'fixture-token';
+    let clock = now; Date.now = () => clock;
+    const reads = [];
+    globalThis.fetch = async url => {
+      const parsed = new URL(url); assert.equal(parsed.hostname, 'forecast-reliability-fixture.test');
+      if (!parsed.pathname.startsWith('/get/')) return Response.json({ result: [9999, 10000] });
+      const key = decodeURIComponent(parsed.pathname.slice(5)); reads.push(key);
+      if (values[key] === 'unreadable') return new Response('not-json', { status: 200 });
+      return Response.json({ result: values[key] == null ? null : JSON.stringify(values[key]) });
+    };
+    const { mcpHandler } = await import('../api/mcp.ts'); const { deps, pipe } = makeProDeps();
+    const invoke = async args => { const body = await (await mcpHandler(proReq('POST', callBody('get_forecast_predictions', args)), deps)).json(); return body.result ?? { isError: true, error: body.error }; };
+    return { invoke, pipe, reads, values, advance: ms => { clock += ms; } };
+  }
+  const values = () => ({ 'forecast:predictions:v2': predictions, 'seed-meta:forecast:predictions': { fetchedAt: now }, 'forecast:scorecard:v1': scorecard, 'seed-meta:forecast:scorecard': { fetchedAt: now } });
+  it('uses four distinct production cache identities and preserves an optional outage in one signed replay', async testContext => {
+    const fixtureContext = await fixture(testContext, { ...values(), 'forecast:scorecard:v1': 'unreadable' });
+    const first = await fixtureContext.invoke({});
+    assert.deepEqual([...new Set(fixtureContext.reads)].sort(), Object.keys(values()).sort(), 'opening must read predictions and independent optional scorecard data/meta');
+    assert.equal(first.structuredContent.data.reliability.status, 'unavailable');
+    assert.equal(first.structuredContent.stale, false, 'optional scorecard failure must not relabel fresh predictions');
+    const readCount = fixtureContext.reads.length; const writes = fixtureContext.pipe.ops.flat().filter(operation => operation[0] === 'SET'); const replay = await fixtureContext.invoke({ panel_request: first.structuredContent.panelRequest.token });
+    assert.deepEqual(replay.structuredContent.data.reliability, first.structuredContent.data.reliability);
+    assert.deepEqual(fixtureContext.pipe.ops.flat().filter(operation => operation[0] === 'SET'), writes, 'replay must not rewrite the snapshot or extend its expiry');
+    assert.equal(fixtureContext.reads.length, readCount); assert.equal(fixtureContext.pipe.count, 1);
+  });
+  it('rejects required missing/null/unreadable predictions despite healthy optional data, but accepts readable empty predictions', async testContext => {
+    for (const bad of [null, 'unreadable', { _seed: { fetchedAt: now }, data: null }]) {
+      const fixtureContext = await fixture(testContext, { ...values(), 'forecast:predictions:v2': bad }); const result = await fixtureContext.invoke({});
+      assert.equal(result.isError, true, 'required prediction source must fail closed before healthy scorecard can mask it');
+      assert.equal(fixtureContext.pipe.ops.flat().filter(operation => operation[0] === 'SET' && String(operation[1]).includes('snapshot')).length, 0);
+    }
+    const fixtureContext = await fixture(testContext, { ...values(), 'forecast:predictions:v2': { ...predictions, predictions: [] } });
+    assert.deepEqual((await fixtureContext.invoke({})).structuredContent.data.predictions.predictions, []);
+  });
+  it('keeps the original 36-hour capture verdict across five-minute replay and reports unknown scorecard clocks', async testContext => {
+    const fixtureContext = await fixture(testContext, { ...values(), 'seed-meta:forecast:scorecard': { fetchedAt: now - 36 * 3600000 + 60000 } });
+    const first = await fixtureContext.invoke({}); const reliability = first.structuredContent.data.reliability;
+    assert.equal(reliability?.stale, false, 'scorecard is still inside its own 36-hour clock');
+    assert.equal(reliability.asOf, new Date(now - 36 * 3600000 + 60000).toISOString());
+    assert.equal(reliability.capturedAt, new Date(now).toISOString());
+    const count = fixtureContext.reads.length; fixtureContext.advance(120000); const replay = await fixtureContext.invoke({ panel_request: first.structuredContent.panelRequest.token });
+    assert.deepEqual(replay.structuredContent.data.reliability, reliability); assert.equal(fixtureContext.reads.length, count); assert.equal(fixtureContext.pipe.count, 1);
+    for (const meta of [null, { fetchedAt: 'bad' }, { fetchedAt: now + 60000 }, 'unreadable']) {
+      const clockFixture = await fixture(testContext, { ...values(), 'seed-meta:forecast:scorecard': meta }); const next = await clockFixture.invoke({});
+      assert.equal(next.structuredContent.data.reliability.freshnessUnknown, true); assert.equal(next.structuredContent.stale, false);
+    }
+    const clockFixture = await fixture(testContext, { ...values(), 'seed-meta:forecast:scorecard': { fetchedAt: now - 36 * 3600000 - 1 } });
+    assert.equal((await clockFixture.invoke({})).structuredContent.data.reliability.stale, true);
+  });
+  it('checks completed UTF-8 public bytes including the signed receipt before saving 131072/131073 results', async testContext => {
+    const fixtureContext = await fixture(testContext, values());
+    const tool = (await import('../api/mcp/registry/index.ts')).TOOL_REGISTRY.find(entry => entry.name === 'get_forecast_predictions');
+    const old = tool._execute; testContext.after(() => { tool._execute = old; });
+    let target = 131072;
+    tool._execute = async (unusedArguments, unusedOptions, unusedContext, execution) => {
+      const value = { data: { predictions }, panelRequest: execution.panelRequest, notice: 'é', attribution: 'Fixture source', padding: '' };
+      value.padding = 'x'.repeat(target - Buffer.byteLength(JSON.stringify(value)));
+      assert.equal(Buffer.byteLength(JSON.stringify(value)), target); return value;
+    };
+    const first = await fixtureContext.invoke({}); assert.equal(first.structuredContent._budget_exceeded, undefined);
+    target = 131073; const before = fixtureContext.pipe.ops.flat().filter(operation => operation[0] === 'SET').length;
+    const second = await fixtureContext.invoke({ refresh: true, request_id: 'ee947e6a-4a49-4f7d-9c44-0dc6cdd7c041' });
+    assert.equal(second.structuredContent._budget_exceeded, true);
+    assert.equal(fixtureContext.pipe.ops.flat().filter(operation => operation[0] === 'SET').length, before, 'oversized completed output must not save a public snapshot');
+    const projected = await fixtureContext.invoke({ refresh: true, request_id: 'f4ef78a9-f2a6-4d45-90c5-89acd4d1aa55', jmespath: 'data.predictions' });
+    assert.equal(projected.structuredContent._budget_exceeded, true, 'a selective reply must not admit an oversized full public snapshot');
+    assert.equal(fixtureContext.pipe.ops.flat().filter(operation => operation[0] === 'SET').length, before, 'selective projection must not bypass the complete public snapshot limit');
+    tool._execute = undefined;
+    fixtureContext.values['forecast:predictions:v2'] = { ...predictions, predictions: [{ ...predictions.predictions[0], title: 'x'.repeat(140000) }] };
+    const summarized = await fixtureContext.invoke({ refresh: true, request_id: 'c78df96e-604c-4c23-a635-fca8dbf50daa', summary: true });
+    assert.equal(summarized.structuredContent._budget_exceeded, true, 'summary must not admit the oversized complete production cache document');
+    assert.equal(fixtureContext.pipe.ops.flat().filter(operation => operation[0] === 'SET').length, before, 'summary must not save oversized full public predictions');
   });
 });
