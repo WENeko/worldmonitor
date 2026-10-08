@@ -431,9 +431,9 @@ The sections below are produced by `npm run build:llms-full` from the source cat
 <a id="corpus-source-provider-directory"></a>
 ## Source provider directory
 
-World Monitor publishes 757 named providers across 18 source catalog pages. Each linked page contains provider names, source hosts, origins and coverage in static HTML; no search or JavaScript is required.
+World Monitor publishes 759 named providers across 18 source catalog pages. Each linked page contains provider names, source hosts, origins and coverage in static HTML; no search or JavaScript is required.
 
-- [Geopolitics & Conflict](https://www.worldmonitor.app/sources/geopolitics/): 36 providers.
+- [Geopolitics & Conflict](https://www.worldmonitor.app/sources/geopolitics/): 38 providers.
 - [Military & Strategic](https://www.worldmonitor.app/sources/military/): 22 providers.
 - [News & OSINT](https://www.worldmonitor.app/sources/news/): 60 providers.
 - [News & OSINT — page 2](https://www.worldmonitor.app/sources/news/page/2/): 60 providers.
@@ -820,6 +820,9 @@ tier, but `flowEstimate` is absent until a baseline-backed flow model is added.
 
 The live transit counter uses AIS entry and exit reports for the same vessel.
 The vessel must remain inside the monitored area for at least five minutes.
+A crossing is recorded at the first report outside the area that arrives
+within six hours of the vessel's last report inside it. Reports often arrive in
+bursts, so a vessel can be silent for most of that time.
 Counts cover the preceding 24 hours. They are observed crossings, not a census
 of all traffic. Missing entry or exit reports prevent a measurement.
 PortWatch history and week-over-week movement are separate inputs and do not

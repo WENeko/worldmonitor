@@ -9,22 +9,33 @@ import {
   SCORECARD_LIVE_ONLY_FIELDS,
   SCORECARD_NESTED_CHILD_FIELDS,
   SCORECARD_NESTED_OBJECT_FIELDS,
+  SCORECARD_NESTED_ROW_FIELDS,
   selectDeclaredScorecardFields,
 } from '../scripts/build-accuracy-page.mjs';
 import {
   FAMILY_OUTCOME_FIELDS,
   MARKET_ALERT_FIELDS,
   MARKET_ALERT_ROW_FIELDS,
+  PUBLISHED_DOMAIN_EXTENDED_FIELDS,
+  PUBLISHED_DOMAIN_FIELDS,
   RECEIPT_FIELDS,
   SCORECARD_BLOCK_FIELDS,
+  SKILL_EXTENDED_FIELDS,
+  SKILL_FIELDS,
+  selectScorecardFields,
 } from '../server/worldmonitor/forecast/v1/scorecard-fields.ts';
 import { PUBLIC_FAMILY_OUTCOME_FIELDS, PUBLIC_RECEIPT_FIELDS } from '../scripts/_forecast-scorecard.mjs';
+import { FORECAST_ACCURACY_AUDIT } from '../shared/forecast-accuracy-audit.js';
 
 const originalFetch = globalThis.fetch;
 const originalConsoleError = console.error;
 const originalEnv = { ...process.env };
 
 const REDIS_KEY = 'forecast:scorecard:v1';
+const AUDIT = { since: '2026-10-07', issue: 8990, reason: 'Scoring errors found.' };
+const LIVE_UNDER_AUDIT = FORECAST_ACCURACY_AUDIT
+  ? { underAudit: { since: FORECAST_ACCURACY_AUDIT.since, reason: FORECAST_ACCURACY_AUDIT.reason, issue: FORECAST_ACCURACY_AUDIT.issue } }
+  : {};
 const MARKET_ALERTS_KEY = 'correlation:market-alerts:scorecard:v1';
 
 const FORECAST_DATA = {
@@ -214,12 +225,43 @@ describe('getForecastScorecard backend status', () => {
     }));
     assert.equal(response.status, 200);
     const serialized = await response.json();
-    assert.deepEqual(Object.keys(serialized).sort(), [...SCORECARD_DECLARED_FIELDS, ...SCORECARD_LIVE_ONLY_FIELDS].sort());
+    assert.deepEqual(
+      Object.keys(serialized).sort(),
+      [...SCORECARD_DECLARED_FIELDS, ...SCORECARD_LIVE_ONLY_FIELDS].filter((field) => field !== 'underAudit' || FORECAST_ACCURACY_AUDIT).sort(),
+    );
     assert.deepEqual(
       serialized,
-      { ...data, marketAlerts: MARKET_ALERTS_SERVED },
+      { ...data, marketAlerts: MARKET_ALERTS_SERVED, ...LIVE_UNDER_AUDIT },
       'every declared field must survive the real gateway and serializer, and a null interval is omitted',
     );
+  });
+
+  it('flags the response under audit from the shared switch (#8993)', async () => {
+    const { scorecardUnderAudit } = await import('../server/worldmonitor/forecast/v1/get-forecast-scorecard.ts');
+    assert.deepEqual(scorecardUnderAudit(AUDIT), { underAudit: { since: '2026-10-07', reason: 'Scoring errors found.', issue: 8990 } });
+    assert.deepEqual(scorecardUnderAudit(null), {}, 'a lifted audit leaves the field absent');
+    assert.deepEqual(scorecardUnderAudit(), LIVE_UNDER_AUDIT, 'defaults to FORECAST_ACCURACY_AUDIT');
+  });
+
+  it('serves the live audit state on healthy, empty and degraded responses (#8993)', async () => {
+    console.error = () => {};
+    const cases: Array<[string, Record<string, unknown>, string[]]> = [
+      ['healthy', { [REDIS_KEY]: envelope(FORECAST_DATA), [MARKET_ALERTS_KEY]: envelope(MARKET_ALERTS_STORED) }, []],
+      ['empty', {}, []],
+      ['degraded', {}, [REDIS_KEY, MARKET_ALERTS_KEY]],
+    ];
+    for (const [label, stored, failing] of cases) {
+      serveRedis(stored, failing);
+      const res = await getForecastScorecard(makeCtx(), {});
+      assert.equal(Object.hasOwn(res, 'underAudit'), Boolean(FORECAST_ACCURACY_AUDIT), label);
+      assert.deepEqual(res.underAudit, LIVE_UNDER_AUDIT.underAudit, label);
+    }
+  });
+
+  it('never passes a seeder underAudit through (#8993)', async () => {
+    serveRedis({ [REDIS_KEY]: envelope({ ...FORECAST_DATA, underAudit: { since: 'seeder', reason: 'x', issue: 1 } }) });
+    const res = await getForecastScorecard(makeCtx(), {});
+    assert.deepEqual(res.underAudit, LIVE_UNDER_AUDIT.underAudit);
   });
 
   it('filters the market-alert block with the member lists the /accuracy/ page keeps', () => {
@@ -237,6 +279,22 @@ describe('getForecastScorecard backend status', () => {
   it('filters receipt rows with the member list the producer publishes', () => {
     assert.deepEqual([...RECEIPT_FIELDS], [...PUBLIC_RECEIPT_FIELDS]);
     assert.deepEqual([...FAMILY_OUTCOME_FIELDS], [...PUBLIC_FAMILY_OUTCOME_FIELDS]);
+  });
+
+  it('serves the contract skill members on REST and the seeder extras only to MCP (#8990)', () => {
+    const numbered = (fields: readonly string[]) => Object.fromEntries(fields.map((field, index) => [field, index + 1]));
+    const data = {
+      skill: numbered([...SKILL_FIELDS, ...SKILL_EXTENDED_FIELDS, 'internal']),
+      publishedByDomain: [numbered([...PUBLISHED_DOMAIN_FIELDS, ...PUBLISHED_DOMAIN_EXTENDED_FIELDS, 'internal'])],
+    };
+    const rest = selectScorecardFields(data);
+    assert.deepEqual(Object.keys(rest.skill ?? {}).sort(), [...SKILL_FIELDS].sort());
+    assert.deepEqual(Object.keys(rest.publishedByDomain?.[0] ?? {}).sort(), [...PUBLISHED_DOMAIN_FIELDS].sort());
+    const mcp = selectScorecardFields(data, { extended: true });
+    assert.deepEqual(Object.keys(mcp.skill ?? {}).sort(), [...SKILL_FIELDS, ...SKILL_EXTENDED_FIELDS].sort());
+    assert.deepEqual(Object.keys(mcp.publishedByDomain?.[0] ?? {}).sort(), [...PUBLISHED_DOMAIN_FIELDS, ...PUBLISHED_DOMAIN_EXTENDED_FIELDS].sort());
+    assert.deepEqual([...SKILL_FIELDS], [...SCORECARD_NESTED_OBJECT_FIELDS.skill], 'the /accuracy/ capture keeps the same skill members');
+    assert.deepEqual([...PUBLISHED_DOMAIN_FIELDS], [...SCORECARD_NESTED_ROW_FIELDS.publishedByDomain], 'and the same domain members');
   });
 
   it('filters the interval and funnel blocks with the same member lists the /accuracy/ page uses', () => {

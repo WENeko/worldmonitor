@@ -2971,6 +2971,20 @@
       ]
     },
     {
+      "host": "data.unhcr.org",
+      "provider": "data.unhcr.org",
+      "kind": "structured",
+      "observed": true,
+      "license": "Provider terms for this upstream API/dataset; verify before redistribution",
+      "attribution": "Credit data.unhcr.org and link to the original upstream API/dataset.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "scripts/seed-cross-border-arrivals.mjs"
+        }
+      ]
+    },
+    {
       "host": "data.uspto.gov",
       "provider": "USPTO Open Data Portal",
       "kind": "structured",
@@ -3307,6 +3321,20 @@
       "references": [
         {
           "path": "scripts/benchmark-resilience-external.mjs"
+        }
+      ]
+    },
+    {
+      "host": "dtmapi.iom.int",
+      "provider": "dtmapi.iom.int",
+      "kind": "structured",
+      "observed": true,
+      "license": "Provider terms for this upstream API/dataset; verify before redistribution",
+      "attribution": "Credit dtmapi.iom.int and link to the original upstream API/dataset.",
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "scripts/seed-dtm-displacement.mjs"
         }
       ]
     },

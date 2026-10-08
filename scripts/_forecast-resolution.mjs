@@ -604,16 +604,61 @@ function deriveHardMetrics(pred, family, inputs, options = {}) {
   }
 }
 
-// Threshold is a boolean-shaped condition (disruption present), represented as
-// riskScore >= 60 (the detector's own "disrupted" gate threshold,
-// seed-forecasts.mjs detectSupplyChainScenarios).
+// 50 is the feed's red boundary (scoreToStatus in
+// server/worldmonitor/supply-chain/v1/_scoring.mjs) and the score at which
+// detectSupplyChainScenarios emits a supply-chain forecast. A state-derived
+// freight forecast attaches the same contract at any score. A war-zone route
+// whose standing threat base is already red cannot fall through 50, so it
+// resolves on a score above that base (#9033). Pending rows move to the
+// current contract before they resolve.
+export const CHOKEPOINT_DISRUPTED_MIN_SCORE = 50;
+export const CHOKEPOINT_RESOLUTION_RULE = 'disrupted';
+export const CHOKEPOINT_RESOLUTION_RULE_VERSION = 1;
+export const CHOKEPOINT_ABOVE_FIXED_BASE_RULE = 'above_fixed_base';
+
+// Relay names whose standing threat base is already red. The base is
+// THREAT_LEVEL.war_zone. The names are the relay names for hormuz_strait and
+// kerch_strait. This file cannot import those tables: the forecast seeders
+// package only scripts/. The parity test walks the live tables.
+const WAR_ZONE_FIXED_BASE_BY_ROUTE = new Map([
+  ['Strait of Hormuz', 70],
+  ['Kerch Strait', 70],
+]);
+
+export function chokepointHardContract(route) {
+  const base = WAR_ZONE_FIXED_BASE_BY_ROUTE.get(route);
+  if (base !== undefined) {
+    return {
+      operator: '>',
+      threshold: base,
+      rule: CHOKEPOINT_ABOVE_FIXED_BASE_RULE,
+      ruleVersion: CHOKEPOINT_RESOLUTION_RULE_VERSION,
+    };
+  }
+  return {
+    operator: '>=',
+    threshold: CHOKEPOINT_DISRUPTED_MIN_SCORE,
+    rule: CHOKEPOINT_RESOLUTION_RULE,
+    ruleVersion: CHOKEPOINT_RESOLUTION_RULE_VERSION,
+  };
+}
+
+export function isChokepointDisrupted(riskScore, route) {
+  const { operator, threshold } = chokepointHardContract(route);
+  const score = Number(riskScore);
+  return operator === '>' ? score > threshold : score >= threshold;
+}
+
 function chokepointDisruptionMetrics(route) {
+  const contract = chokepointHardContract(route);
   return {
     metricKey: `supply_chain:chokepoints:v4|riskScore(route==${route})`,
     sourceFeed: 'supply_chain:chokepoints:v4',
-    operator: '>=',
-    threshold: 60,
+    operator: contract.operator,
+    threshold: contract.threshold,
     window: FAMILY_WINDOW.supply_chain,
+    rule: contract.rule,
+    ruleVersion: contract.ruleVersion,
   };
 }
 

@@ -167,6 +167,7 @@ export interface GetForecastScorecardResponse {
   receipts: ScorecardReceipt[];
   marketAlerts?: MarketAlertScorecard;
   familyOutcomes: ScorecardFamilyOutcome[];
+  underAudit?: ScorecardUnderAudit;
 }
 
 export interface ScorecardTotals {
@@ -230,6 +231,7 @@ export interface ScorecardSkill {
   excludedScored: number;
   excludedOrigins: string[];
   yesCount: number;
+  bssCi95: number[];
 }
 
 export interface ScorecardPublishedDomain {
@@ -237,6 +239,7 @@ export interface ScorecardPublishedDomain {
   count: number;
   brier: number;
   yesCount: number;
+  bss?: number;
 }
 
 export interface ScorecardUncertainty {
@@ -306,6 +309,12 @@ export interface ScorecardFamilyOutcome {
   forecastId: string;
   outcome: string;
   voidReason: string;
+}
+
+export interface ScorecardUnderAudit {
+  since: string;
+  reason: string;
+  issue: number;
 }
 
 export interface GetSimulationPackageRequest {

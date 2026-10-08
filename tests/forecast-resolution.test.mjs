@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  CHOKEPOINT_DISRUPTED_MIN_SCORE,
   HORIZON_MS,
   CONFLICT_COUNT_SOURCE_FEED,
   UNREST_COUNT_SOURCE_FEED,
@@ -633,13 +634,23 @@ describe('state-derived hard specs (#5234)', () => {
     });
   }
 
-  it('a freight bucket resolves on the most disrupted chokepoint of its sea at emission', () => {
+  it('a freight bucket on a war-zone route resolves above that route\'s fixed base', async () => {
+    const { resolveHardSpec } = await import('../scripts/_forecast-resolution-eval.mjs');
     const spec = buildResolutionSpec(stateDerived('supply_chain', 'freight', 'Black Sea', '7d'), CHOKEPOINT_INPUTS, GENERATED_AT);
     assert.equal(spec.kind, 'hard');
     assert.equal(spec.metricKey, 'supply_chain:chokepoints:v4|riskScore(route==Kerch Strait)');
-    assert.equal(spec.operator, '>=');
-    assert.equal(spec.threshold, 60);
+    assert.equal(spec.operator, '>');
+    assert.equal(spec.threshold, 70);
+    assert.equal(spec.rule, 'above_fixed_base');
     assert.equal(spec.window, 'at-deadline');
+    const outcome = (score) => resolveHardSpec(
+      { deadline: spec.deadline, spec },
+      null,
+      [{ ts: spec.deadline + 1000, value: score }],
+      spec.deadline + 2000,
+    ).outcome;
+    assert.equal(outcome(70), 'NO');
+    assert.equal(outcome(75), 'YES');
   });
 
   it('stays judged when the emission inputs cannot anchor the check', () => {
@@ -1224,6 +1235,8 @@ describe('projection horizon contracts (#7075)', () => {
         threshold: parent.threshold,
         window: 'at-deadline',
         sourceFeed: parent.sourceFeed,
+        rule: parent.rule,
+        ruleVersion: parent.ruleVersion,
         deadline: GENERATED_AT + HORIZON_MS[timeHorizon],
         sampleToleranceMs: horizonSampleToleranceMs(timeHorizon),
       });
