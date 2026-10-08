@@ -6,7 +6,7 @@ import { unwrapEnvelope } from '../_seed-envelope.js';
 import { chokepointCacheIdentity, chokepointSourcePolicy, type ChokepointPanelRead } from './_chokepoint-snapshot';
 import { newsIntelligenceFreshness, newsIntelligenceReuseUntil, type NewsIntelligencePanelRead } from './_news-intelligence-snapshot';
 import { resolveCountryFilter } from './_country-args';
-import { filterNaturalDisastersPanelData, naturalDisastersReuseUntil, type NaturalDisastersPanelRead } from './_natural-disasters-reuse';
+import { filterNaturalDisastersPanelData, naturalDisastersReuseUntil, presentNaturalDisastersPanel, type NaturalDisastersPanelRead } from './_natural-disasters-reuse';
 import { isAppOwnedRedisKey } from '../_redis-key-ownership.js';
 // @ts-expect-error — JS module, no declaration file
 import { captureSilentError } from '../_sentry-edge.js';
@@ -835,7 +835,10 @@ export async function dispatchToolsCall(
         ? { ...original, data: filterCacheToolData(tool, original.data, callArguments) }
         : tool.name === 'get_conflict_events' ? { ...original, data: presentConflictEvents(original.data, callArguments) } : original;
       result = snapshot;
-      if (argBool(callArguments.summary)) result = { ...snapshot, data: tool._summarize ? tool._summarize(snapshot.data) : summarizeData(snapshot.data) };
+      if (argBool(callArguments.summary)) {
+        const presented = result as typeof snapshot;
+        result = { ...presented, data: tool._summarize ? tool._summarize(presented.data) : summarizeData(presented.data) };
+      }
       if (panelRequest) result = { ...result as Record<string, unknown>, panelRequest };
     }
     // Convex `internal-validate-pro-mcp-token` schedules touchProMcpTokenLastUsed
@@ -854,7 +857,16 @@ export async function dispatchToolsCall(
       && result && typeof result === 'object') {
       result = presentDefaultMarketData(result as Record<string, unknown>, tool._outputBudgetBytes);
     }
-    const { text: projectedText, value: projectedValue, failed } = applyJmespath(result, jmespathArg);
+    let { text: projectedText, value: projectedValue, failed } = applyJmespath(result, jmespathArg);
+    if (tool.name === 'get_natural_disasters' && dedicatedPanel && panelRead?.panel === 'disasters'
+      && result && typeof result === 'object'
+      && (failed === 'projection_too_large' || utf8ByteLength(projectedText) > tool._outputBudgetBytes)) {
+      const presented = presentNaturalDisastersPanel(result as Record<string, unknown>, tool._outputBudgetBytes, argBool(callArguments.summary));
+      if (presented !== result) {
+        result = presented;
+        ({ text: projectedText, value: projectedValue, failed } = applyJmespath(result, jmespathArg));
+      }
+    }
     // Attribution accompaniment. A projection can detach a redistribution-
     // permitted value from the licence fields sitting beside it in the
     // unprojected payload, so a licence-bearing tool declares an extraction
