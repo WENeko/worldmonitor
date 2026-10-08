@@ -167,7 +167,7 @@ const MARKET_ALERTS = Object.freeze({
   rollingWindowDays: 30,
   methodology: 'An emission resolves HIT when a tracked story names the same entity within six hours.',
   byType: [
-    { type: 'market', scored: 4, hitRate: 0.75, baseN: 2, baseHitRate: 0.5, pairedHitRate: 0.5, medianLeadTimeMs: 3600000 },
+    { type: 'market', scored: 40, hitRate: 0.75, baseN: 2, baseHitRate: 0.5, pairedHitRate: 0.5, medianLeadTimeMs: 3600000 },
     { type: 'prediction-market', scored: 0, baseN: 0 },
   ],
 });
@@ -762,7 +762,18 @@ describe('accuracy page honesty rules', () => {
     const tied = sectionWith({ vsMarketSkill: { count: 4, forecastBrier: 0.1, marketBrier: 0.1, brierDelta: 0 } });
     assert.match(stripTags(renderState(tied).html), /tied|the same/i);
     const absent = sectionWith({ vsMarketSkill: { count: 0, forecastBrier: 0, marketBrier: 0, brierDelta: 0 } });
-    assert.match(stripTags(renderState(absent).html), /no resolved forecast .{0,40}overlapped/i);
+    assert.match(stripTags(renderState(absent).html), /No resolved forecast in this window carried a liquid prediction market's price/);
+  });
+
+  // Matched #7071 anchors are not the forecast's own question, so the market
+  // comparison may not claim every price answered the scored question (#9010).
+  it('does not claim every market price was for the forecast\'s own question', () => {
+    const market = (html) => { const text = stripTags(html).replaceAll('&#39;', "'"); return text.slice(text.indexOf('Against prediction markets')); };
+    const section = market(renderState(LIVE_SECTION).html);
+    assert.match(section, /every scored entry that carried a liquid prediction market's price/);
+    assert.match(section, /For a market bet the price is for the bet's own question\. For any other forecast it is the price of a market on the same subject and kind of event that settles after the forecast was issued and no later than one more horizon, at least a week, past its deadline\. That market can ask a narrower or broader question than the forecast\./);
+    assert.match(section, /On 78 such resolved entries/);
+    assert.doesNotMatch(stripTags(renderState(LIVE_SECTION).html), /own question a liquid|covered the same question|overlapped/);
   });
 
   it('describes the headline cohort by what it excludes, not by a publication property', () => {
@@ -915,8 +926,12 @@ describe('accuracy page honesty rules', () => {
     assert.deepEqual(download.horizonProjections, {
       valuesPublished: false,
       gradesPublished: false,
-      trackedIn: 'https://github.com/koala73/worldmonitor/issues/7075',
+      trackedIn: 'https://github.com/koala73/worldmonitor/issues/9057',
     });
+    // #7075 closed with internal grading; publishing those grades is #9057.
+    const html = renderState(LIVE_SECTION).html;
+    assert.match(html, /Those horizon grades are not published yet\. Tracking: <a href="https:\/\/github\.com\/koala73\/worldmonitor\/issues\/9057">issue #9057<\/a>\./);
+    assert.doesNotMatch(html, /issues\/7075/);
     assert.equal(download.headlineCohort.excludedScored, 310);
     assert.deepEqual(download.headlineCohort.excludedOrigins, ['bet_engine', 'state_derived']);
     assert.deepEqual(download.pooledPopulations, {
@@ -1102,6 +1117,43 @@ describe('accuracy page market-alert hit rates (#8867)', () => {
     }
     assert.equal(buildScorecard({}, 0, { archive: {} }).methodology, `${MARKET_ALERT_RESOLUTION_RULE} ${MARKET_ALERT_BASE_RATE_RULE}`,
       'the quoted rules are the ones the ledger scores under');
+  });
+
+  it('quotes the rules captured with the figures, not the rules in the current code (#8985)', () => {
+    const captured = 'Captured rule: an alert resolves HIT when a fixture story names it.';
+    const text = stripTags(renderState(withAlerts([row('silent_divergence')], { methodology: captured })).html);
+    assert.ok(text.includes(captured), 'the page quotes the rules the figures were scored under');
+    for (const rule of [MARKET_ALERT_RESOLUTION_RULE, MARKET_ALERT_BASE_RATE_RULE]) {
+      assert.equal(text.replaceAll('&#39;', "'").includes(rule), false, 'a rule changed after the capture must not sit beside the old figures');
+    }
+  });
+
+  it('applies the page median floor and control gate to the dataset download (#8985)', () => {
+    const download = downloadFor(withAlerts([
+      row('silent_divergence', { scored: 48, hitRate: 0.625 }),
+      row('explained_market_move', { scored: 48, hitRate: 0.6 }),
+      row('prediction_leads_news', { scored: 120, baseN: 12 }),
+      row('flow_price_divergence', { scored: 120, baseN: 30 }),
+    ]));
+    const median = Object.fromEntries(download.scorecard.marketAlerts.byType.map((entry) => [entry.type, entry.medianLeadTimeMs]));
+    assert.deepEqual(median, {
+      silent_divergence: 2.5 * HOUR,
+      explained_market_move: undefined,
+      prediction_leads_news: undefined,
+      flow_price_divergence: 2.5 * HOUR,
+    }, 'a capture taken before the API floor must not publish a median the page withholds');
+    const kept = download.scorecard.marketAlerts.byType.find((entry) => entry.type === 'explained_market_move');
+    assert.equal(kept.scored, 48, 'only the median is withheld; the row stays');
+  });
+
+  it('says the rules were not captured rather than quoting the current code', () => {
+    for (const methodology of [undefined, '', '   ']) {
+      for (const byType of [[row('silent_divergence')], []]) {
+        const text = stripTags(renderState(withAlerts(byType, { methodology })).html);
+        assert.match(text, /This edition did not capture the rules these alerts were scored under\./);
+        assert.equal(text.replaceAll('&#39;', "'").includes(MARKET_ALERT_RESOLUTION_RULE), false);
+      }
+    }
   });
 
   it('labels every alert type the ledger scores in plain words', () => {
@@ -1516,13 +1568,13 @@ describe('accuracy verdict block', () => {
   });
 
   it('states the market comparison in words that follow the delta sign', () => {
-    assert.match(verdictText(renderState(LIVE_SECTION).html), /In the 78 cases where a liquid prediction market covered the same question, the market's odds were closer to what happened than World Monitor's/);
+    assert.match(verdictText(renderState(LIVE_SECTION).html), /In the 78 graded cases that carried a liquid prediction market's price, the market's odds were closer to what happened than World Monitor's\. A market matched to a forecast, rather than one the forecast bet on, can ask a narrower or broader question\./);
     const flipped = sectionWith({ vsMarketSkill: { count: 78, forecastBrier: 0.073136, marketBrier: 0.154623, brierDelta: 0.081487 } });
     assert.match(verdictText(renderState(flipped).html), /World Monitor's odds were closer to what happened than the market's/);
     const tied = sectionWith({ vsMarketSkill: { count: 4, forecastBrier: 0.1, marketBrier: 0.1, brierDelta: 0 } });
     assert.match(verdictText(renderState(tied).html), /the two were equally close/);
     const absent = sectionWith({ vsMarketSkill: { count: 0, forecastBrier: 0, marketBrier: 0, brierDelta: 0 } });
-    assert.match(verdictText(renderState(absent).html), /No graded forecast overlapped a liquid prediction market/);
+    assert.match(verdictText(renderState(absent).html), /No graded forecast carried a liquid prediction market's price, so there is no market comparison\./);
   });
 
   it('reports the all-scored count from the calibration buckets but never judges skill on the pooled rate (#8990)', () => {

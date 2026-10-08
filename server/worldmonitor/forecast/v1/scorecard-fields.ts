@@ -171,12 +171,29 @@ export function selectMarketAlertScorecard(value: unknown): MarketAlertScorecard
   return selected as unknown as MarketAlertScorecard;
 }
 
+// The median lead time is taken over HIT rows only, and the contract carries
+// no hit count beside it, so it is withheld wherever /accuracy/ withholds it
+// (marketAlertMedianPublished in scripts/build-accuracy-page.mjs, test-pinned).
+export const MARKET_ALERT_MEDIAN_MIN_HITS = 30;
+// A prediction question's topic words reach the news often anyway, so the page
+// publishes nothing for this type until 30 control windows scored.
+const CONTROL_GATED_ALERT_TYPES = new Set(['prediction_leads_news']);
+
+const isRate = (value: unknown): boolean => typeof value === 'number' && value >= 0 && value <= 1;
+const atFloor = (value: unknown): boolean => Number.isInteger(value) && (value as number) >= MARKET_ALERT_MEDIAN_MIN_HITS;
+
+function medianPublished(row: Record<string, unknown>): boolean {
+  const compared = atFloor(row.baseN) && isRate(row.pairedHitRate) && isRate(row.baseHitRate);
+  return atFloor(row.hit) && isRate(row.hitRate) && (compared || !CONTROL_GATED_ALERT_TYPES.has(String(row.type)));
+}
+
 // The ledger names the count n, which sebuf's JSON output turns into the
 // property "false" (YAML 1.1), so the contract calls it scored. The ledger's
 // median of an even count can end in .5, and the contract field is int64.
 function selectMarketAlertRow(row: Record<string, unknown>): Record<string, unknown> {
   const selected = pickNonNull(row, MARKET_ALERT_ROW_FIELDS);
   if (row.n != null) selected.scored = row.n;
+  if (!medianPublished(row)) delete selected.medianLeadTimeMs;
   if (typeof selected.medianLeadTimeMs === 'number') selected.medianLeadTimeMs = Math.round(selected.medianLeadTimeMs);
   return selected;
 }

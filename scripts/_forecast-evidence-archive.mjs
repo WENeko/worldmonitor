@@ -45,10 +45,21 @@ export const FORECAST_EVIDENCE_MAX_LOOKBACK_MS = 14 * 24 * 60 * 60 * 1000;
  *                                                    24h default, ~12h twice-
  *                                                    daily, ~6.5-7d WEEKLY,
  *                                                    older after missed ticks
+ *                                                    (but see story rows below)
+ *   seed-market-alert-ledger readStories()           full:en, emission - 24h
+ *                                                    for due rows <= 6d past
+ *                                                    deadline: <= 7d6h; its
+ *                                                    oldest-member coverage
+ *                                                    proof needs <= 6d6h
+ *   seed-forecast-bets.mjs:295 ensemble news         full:en, 3d (via
+ *                                                    readDigestAccumulatorArchive)
  *   scripts/lib/watchlist-story-scan.mjs             24h
  *   api/mcp/registry/nlp-tools.ts keyword spikes     48h
- *   seed-forecast-resolutions (judged)               14d -> migrating to the
- *                                                    dedicated archive below
+ *   seed-forecast-resolutions (judged)               none since #8995: judging
+ *                                                    reads only the archive
+ *   backfill-forecast-evidence-archive.mjs           14d, operator repair tool
+ *                                                    only; members past the 7d
+ *                                                    story row are unrecoverable
  *
  * A 48-hour member prune silently truncates every weekly digest to two days of
  * stories, so retention is sized to the widest surviving reader instead. Seven
@@ -56,7 +67,9 @@ export const FORECAST_EVIDENCE_MAX_LOOKBACK_MS = 14 * 24 * 60 * 60 * 1000;
  * every hash it reads here, so an accumulator member that outlives its story
  * row is unusable anyway — plus a one-day guard band, mirroring how the
  * evidence archive's own retention is sized. This still bounds a key that
- * previously grew without limit; it bounds it at the real contract.
+ * previously grew without limit; it bounds it at the real contract. Every
+ * reader above fits inside it, so `full:en` is pruned to the same 8 days once
+ * FORECAST_EVIDENCE_CUTOVER_ENABLED is set (#7082).
  */
 export const ACCUMULATOR_RETENTION_MS = 8 * 24 * 60 * 60 * 1000;
 
@@ -184,16 +197,22 @@ export function parseForecastEvidenceCoverage(raw) {
 
 /**
  * `maxLagMs` is the staleness budget described on
- * FORECAST_EVIDENCE_COVERAGE_MAX_LAG_MS. It defaults to 0 — a caller that
- * authorizes destruction (the accumulator prune gate, the sweep tool) must
- * demand a marker that already reaches the instant it is reasoning about, and
+ * FORECAST_EVIDENCE_COVERAGE_MAX_LAG_MS. It defaults to 0: the backfill tool
+ * verifies the marker it just wrote against the instant it reasons about, and
  * only the read path opts into a budget.
+ *
+ * No accumulator prune consults this marker any more. Since #7082 (owner
+ * decision 2026-10-08) the digest prune and the sweep tool are gated by
+ * FORECAST_EVIDENCE_CUTOVER_ENABLED alone, because judging stopped reading the
+ * accumulator in #8995. Do not re-add a marker gate to either: production
+ * carries only the v2 continuity marker, which the default rejects.
  *
  * @param {unknown} raw
  * @param {number} startMs
  * @param {number} endMs
  * @param {number} [maxLagMs]
- * @param {boolean} [allowContinuity] Reader-only attestation; never a prune authorization.
+ * @param {boolean} [allowContinuity] Accept the v2 continuity attestation; the
+ *   judging read path sets it, backfill certification does not.
  */
 export function forecastEvidenceCoversWindow(raw, startMs, endMs, maxLagMs = 0, allowContinuity = false) {
   const metadata = parseForecastEvidenceCoverage(raw);

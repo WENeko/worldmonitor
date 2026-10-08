@@ -14,7 +14,6 @@ import {
   SKILL_MIN_OUTCOME_FAMILIES,
   wilsonInterval,
 } from './_forecast-scorecard.mjs';
-import { MARKET_ALERT_BASE_RATE_RULE, MARKET_ALERT_RESOLUTION_RULE } from './_market-alert-ledger.mjs';
 import { FORECAST_ACCURACY_AUDIT } from '../shared/forecast-accuracy-audit.js';
 
 /** Bump when the page copy changes so its lastmod advances without touching every sibling. */
@@ -133,7 +132,7 @@ export const SCORECARD_NESTED_ROW_FIELDS = Object.freeze({
 
 const ISSUE_URL = 'https://github.com/koala73/worldmonitor/issues';
 const CONFIDENCE_INTERVAL_ISSUE = `${ISSUE_URL}/7072`;
-const HORIZON_SCORING_ISSUE = `${ISSUE_URL}/7075`;
+const HORIZON_SCORING_ISSUE = `${ISSUE_URL}/9057`;
 const DATASET_IDENTIFIER = 'forecast-resolution-scorecard';
 const DATASET_LICENSE = {
   '@type': 'CreativeWork',
@@ -966,10 +965,16 @@ ${rows.map((row) => `          <tr data-origin="${escapeHtml(row.generationOrigi
       </table></div>`;
 }
 
+// A market bet carries its own market's price. Any other forecast carries
+// the price of the market it was blended toward (#7071): same subject, same
+// kind of event, settling by one more horizon (at least a week) past the
+// forecast's deadline, but not its exact question (#9010).
+const MARKET_COMPARISON_SCOPE = "For a market bet the price is for the bet's own question. For any other forecast it is the price of a market on the same subject and kind of event that settles after the forecast was issued and no later than one more horizon, at least a week, past its deadline. That market can ask a narrower or broader question than the forecast.";
+
 function marketSection(vsMarketSkill, escapeHtml) {
   if (!isPlainObject(vsMarketSkill) || !isFiniteNumber(vsMarketSkill.count) || vsMarketSkill.count === 0) {
     return `      <h2>Against prediction markets</h2>
-      <p>No resolved forecast in this window overlapped a liquid market, so there is no head-to-head comparison to publish.</p>`;
+      <p>No resolved forecast in this window carried a liquid prediction market's price, so there is no head-to-head comparison to publish.</p>`;
   }
   const delta = Number(vsMarketSkill.brierDelta);
   const verdict = delta < 0
@@ -978,7 +983,7 @@ function marketSection(vsMarketSkill, escapeHtml) {
       ? 'the forecast scored better'
       : 'the two tied';
   return `      <h2>Against prediction markets</h2>
-      <p>Measured over every scored entry whose own question a liquid prediction market priced, not over the narrower headline cohort. On ${escapeHtml(formatCount(vsMarketSkill.count))} such resolved questions the forecast Brier was ${escapeHtml(formatScore(vsMarketSkill.forecastBrier))} and the market Brier was ${escapeHtml(formatScore(vsMarketSkill.marketBrier))}. ${escapeHtml(BRIER_DELTA_CONVENTION)} Here the delta is ${escapeHtml(formatScore(delta))}, so on this sample ${escapeHtml(verdict)}.</p>`;
+      <p>Measured over every scored entry that carried a liquid prediction market's price, not over the narrower headline cohort. ${escapeHtml(MARKET_COMPARISON_SCOPE)} On ${escapeHtml(formatCount(vsMarketSkill.count))} such resolved entries the forecast Brier was ${escapeHtml(formatScore(vsMarketSkill.forecastBrier))} and the market Brier was ${escapeHtml(formatScore(vsMarketSkill.marketBrier))}. ${escapeHtml(BRIER_DELTA_CONVENTION)} Here the delta is ${escapeHtml(formatScore(delta))}, so on this sample ${escapeHtml(verdict)}.</p>`;
 }
 
 const NOT_YET_MEASURABLE = 'Not yet measurable';
@@ -988,7 +993,9 @@ const CONTROL_GATED_ALERT_TYPES = new Set(['prediction_leads_news']);
 
 const isRate = (value) => isFiniteNumber(value) && value >= 0 && value <= 1;
 // Alerts are not forecast families, so they keep their own row count floor.
-const MARKET_ALERT_MIN_SAMPLE = 30;
+// The API withholds the median below MARKET_ALERT_MEDIAN_MIN_HITS in
+// server/worldmonitor/forecast/v1/scorecard-fields.ts (a test pins the parity).
+export const MARKET_ALERT_MIN_SAMPLE = 30;
 const isMeasurableCount = (value) => Number.isInteger(value) && value >= MARKET_ALERT_MIN_SAMPLE;
 
 function formatLeadTime(ms) {
@@ -998,16 +1005,27 @@ function formatLeadTime(ms) {
   return minutes % 60 === 0 ? `${hours} h` : `${hours} h ${minutes % 60} min`;
 }
 
-function marketAlertCells(row) {
+function marketAlertGates(row) {
   const compared = isMeasurableCount(row.baseN) && isRate(row.pairedHitRate) && isRate(row.baseHitRate);
   const published = compared || !CONTROL_GATED_ALERT_TYPES.has(row.type);
   const hit = published && isMeasurableCount(row.scored) && isRate(row.hitRate);
-  const leadMeasured = hit && Math.round(row.hitRate * row.scored) >= MARKET_ALERT_MIN_SAMPLE;
+  return { compared, published, hit };
+}
+
+// hitRate × scored is the hit count exactly: the ledger's hitRate is hit / n.
+// The API applies the same gate (selectMarketAlertRow, test-pinned).
+export function marketAlertMedianPublished(row) {
+  return marketAlertGates(row).hit && Math.round(row.hitRate * row.scored) >= MARKET_ALERT_MIN_SAMPLE
+    && isFiniteNumber(row.medianLeadTimeMs) && row.medianLeadTimeMs >= 0;
+}
+
+function marketAlertCells(row) {
+  const { compared, published, hit } = marketAlertGates(row);
   return [
     hit ? rateOf(row.hitRate, row.scored, 'alerts') : NOT_YET_MEASURABLE,
     published && compared ? rateOf(row.pairedHitRate, row.baseN, 'alerts') : NOT_YET_MEASURABLE,
     published && compared ? rateOf(row.baseHitRate, row.baseN, 'earlier windows') : NOT_YET_MEASURABLE,
-    leadMeasured && isFiniteNumber(row.medianLeadTimeMs) && row.medianLeadTimeMs >= 0 ? formatLeadTime(row.medianLeadTimeMs) : NOT_YET_MEASURABLE,
+    marketAlertMedianPublished(row) ? formatLeadTime(row.medianLeadTimeMs) : NOT_YET_MEASURABLE,
   ];
 }
 
@@ -1023,9 +1041,11 @@ function marketAlertsSection(marketAlerts, escapeHtml, audited = false) {
   const days = isFiniteNumber(marketAlerts.rollingWindowDays) ? marketAlerts.rollingWindowDays : 30;
   const generated = isFiniteNumber(marketAlerts.generatedAt) ? ` and were generated ${formatUtcDateTime(marketAlerts.generatedAt)}` : '';
   const intro = `      <p>World Monitor raises a market alert when a market or a prediction market makes an unusual move. Some alerts fire when there is no news behind the move, and one type fires when related news is already out. Each alert is checked ${escapeHtml(formatCount(hours))} hours later. It counts as a hit if an established news outlet published a new story about the same company, commodity or topic in that time. The same check also runs on the same market for a stretch of the same length one day earlier, when no alert was raised, and that gives the base rate. An alert type is useful only when its hit rate is clearly above the base rate on the same alerts. The figures cover the last ${escapeHtml(formatCount(days))} days${escapeHtml(generated)}.</p>`;
+  // The rules come from the capture, so a rule change after it never sits
+  // beside figures scored under the old rules.
+  const methodology = typeof marketAlerts.methodology === 'string' ? marketAlerts.methodology.trim() : '';
   const rules = `      <h3>How an alert is scored</h3>
-      <p>${escapeHtml(MARKET_ALERT_RESOLUTION_RULE)}</p>
-      <p>${escapeHtml(MARKET_ALERT_BASE_RATE_RULE)}</p>`;
+      <p>${escapeHtml(methodology || 'This edition did not capture the rules these alerts were scored under.')}</p>`;
   if (marketAlerts.byType.length === 0) {
     return `${heading}
 ${intro}
@@ -1110,7 +1130,7 @@ function bandSentence({ band, count, yesCount }, escapeHtml) {
 
 function marketVerdictSentence(vsMarketSkill) {
   if (!isPlainObject(vsMarketSkill) || !isFiniteNumber(vsMarketSkill.count) || vsMarketSkill.count === 0) {
-    return 'No graded forecast overlapped a liquid prediction market, so there is no market comparison.';
+    return "No graded forecast carried a liquid prediction market's price, so there is no market comparison.";
   }
   const delta = Number(vsMarketSkill.brierDelta);
   const closer = delta < 0
@@ -1118,7 +1138,7 @@ function marketVerdictSentence(vsMarketSkill) {
     : delta > 0
       ? "World Monitor's odds were closer to what happened than the market's"
       : 'the two were equally close to what happened';
-  return `In the ${formatCount(vsMarketSkill.count)} cases where a liquid prediction market covered the same question, ${closer}.`;
+  return `In the ${formatCount(vsMarketSkill.count)} graded cases that carried a liquid prediction market's price, ${closer}. A market matched to a forecast, rather than one the forecast bet on, can ask a narrower or broader question.`;
 }
 
 // One rate over every graded forecast mixes domains whose outcomes come true
@@ -1200,7 +1220,7 @@ function limitsSection(omittedBuckets, escapeHtml) {
       <ul>
         <li>${escapeHtml(bucketSentence)}</li>
         <li>No confidence intervals on the log scores or the per-domain skill scores, so the domain table does not say which domains beat their actual rate. An interval on a mean score needs every forecast's own score, which the public scorecard does not carry, and this page will not invent one from the averages. The Brier scores and the headline skill score carry a 95% interval when the scorecard includes one, computed by the scoring service by resampling whole forecast families. Void rates and calibration-bucket rates do carry a 95% Wilson interval, because a rate's interval needs only the two counts printed beside it; the scored share of the ledger and the base rates in the summary do not carry one yet. Tracking: <a href="${escapeHtml(CONFIDENCE_INTERVAL_ISSUE)}">issue #7072</a>.</li>
-        <li>No 24-hour, 7-day or 30-day projections, and no accuracy for them. World Monitor no longer publishes those projections, as of 2026-10-07. It still grades some of those horizons internally, and removing the projections changed none of the scores on this page. Those horizon grades are not published yet. Tracking: <a href="${escapeHtml(HORIZON_SCORING_ISSUE)}">issue #7075</a>.</li>
+        <li>No 24-hour, 7-day or 30-day projections, and no accuracy for them. World Monitor no longer publishes those projections, as of 2026-10-07. It still grades some of those horizons internally, and removing the projections changed none of the scores on this page. Those horizon grades are not published yet. Tracking: <a href="${escapeHtml(HORIZON_SCORING_ISSUE)}">issue #9057</a>.</li>
         <li>Individual forecasts appear only as the receipts for the most recently resolved ones. The judges' reasoning, the full news archive they read and internal data locations are not published.</li>
       </ul>`;
 }
@@ -1419,6 +1439,24 @@ function skillDownload(scorecard) {
   };
 }
 
+// A capture taken before the API applied the median floor can still carry a
+// median the page withholds; the download must not publish it either.
+function withPublishedMarketAlertMedians(scorecard) {
+  const marketAlerts = scorecard?.marketAlerts;
+  if (!isPlainObject(marketAlerts) || !Array.isArray(marketAlerts.byType)) return scorecard;
+  return {
+    ...scorecard,
+    marketAlerts: {
+      ...marketAlerts,
+      byType: marketAlerts.byType.map((row) => {
+        if (!isPlainObject(row) || !('medianLeadTimeMs' in row) || marketAlertMedianPublished(row)) return row;
+        const { medianLeadTimeMs: _withheld, ...rest } = row;
+        return rest;
+      }),
+    },
+  };
+}
+
 export function accuracyDatasetDownload({ state, snapshotPath, audit = FORECAST_ACCURACY_AUDIT }) {
   const skill = isPlainObject(state.scorecard?.skill) ? state.scorecard.skill : null;
   const payload = {
@@ -1474,7 +1512,7 @@ export function accuracyDatasetDownload({ state, snapshotPath, audit = FORECAST_
     // Point-in-time horizons are graded internally (#8939); neither the
     // projection values (#8967) nor those grades are published here.
     horizonProjections: { valuesPublished: false, gradesPublished: false, trackedIn: HORIZON_SCORING_ISSUE },
-    scorecard: state.scorecard,
+    scorecard: withPublishedMarketAlertMedians(state.scorecard),
   };
   return `${JSON.stringify(payload, null, 2)}\n`;
 }

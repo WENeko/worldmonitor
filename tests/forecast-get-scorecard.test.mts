@@ -5,6 +5,8 @@ import { issueSessionToken } from '../api/_session.js';
 import { createRedisFetch } from './helpers/fake-upstash-redis.mts';
 import { drainResponseHeaders } from '../server/_shared/response-headers.ts';
 import {
+  MARKET_ALERT_MIN_SAMPLE,
+  marketAlertMedianPublished,
   SCORECARD_DECLARED_FIELDS,
   SCORECARD_LIVE_ONLY_FIELDS,
   SCORECARD_NESTED_CHILD_FIELDS,
@@ -15,6 +17,7 @@ import {
 import {
   FAMILY_OUTCOME_FIELDS,
   MARKET_ALERT_FIELDS,
+  MARKET_ALERT_MEDIAN_MIN_HITS,
   MARKET_ALERT_ROW_FIELDS,
   PUBLISHED_DOMAIN_EXTENDED_FIELDS,
   PUBLISHED_DOMAIN_FIELDS,
@@ -22,6 +25,7 @@ import {
   SCORECARD_BLOCK_FIELDS,
   SKILL_EXTENDED_FIELDS,
   SKILL_FIELDS,
+  selectMarketAlertScorecard,
   selectScorecardFields,
 } from '../server/worldmonitor/forecast/v1/scorecard-fields.ts';
 import { PUBLIC_FAMILY_OUTCOME_FIELDS, PUBLIC_RECEIPT_FIELDS } from '../scripts/_forecast-scorecard.mjs';
@@ -54,10 +58,10 @@ const MARKET_ALERTS_STORED = {
   windowHours: 6,
   rollingWindowDays: 30,
   methodology: 'market-alert methodology',
-  totals: { pending: 1, resolved: 4, hit: 3, miss: 1, void: 0 },
+  totals: { pending: 1, resolved: 40, hit: 30, miss: 10, void: 0 },
   archive: { readFailed: false, truncated: false, unproven: false, coveredFromMs: 1, readAt: 2 },
   byType: [
-    { type: 'market', pending: 1, resolved: 4, hit: 3, miss: 1, void: 0, n: 4, hitRate: 0.75, pairedHitRate: 0.5, baseN: 2, baseHitRate: 0.5, medianLeadTimeMs: 3600000 },
+    { type: 'market', pending: 1, resolved: 40, hit: 30, miss: 10, void: 0, n: 40, hitRate: 0.75, pairedHitRate: 0.5, baseN: 2, baseHitRate: 0.5, medianLeadTimeMs: 3600000 },
     { type: 'prediction-market', pending: 0, resolved: 0, hit: 0, miss: 0, void: 0, n: 0, hitRate: null, pairedHitRate: null, baseN: 0, baseHitRate: null, medianLeadTimeMs: null },
   ],
 };
@@ -67,7 +71,7 @@ const MARKET_ALERTS_SERVED = {
   rollingWindowDays: 30,
   methodology: 'market-alert methodology',
   byType: [
-    { type: 'market', scored: 4, hitRate: 0.75, baseN: 2, baseHitRate: 0.5, pairedHitRate: 0.5, medianLeadTimeMs: 3600000 },
+    { type: 'market', scored: 40, hitRate: 0.75, baseN: 2, baseHitRate: 0.5, pairedHitRate: 0.5, medianLeadTimeMs: 3600000 },
     { type: 'prediction-market', scored: 0, baseN: 0 },
   ],
 };
@@ -297,6 +301,21 @@ describe('getForecastScorecard backend status', () => {
     assert.deepEqual([...PUBLISHED_DOMAIN_FIELDS], [...SCORECARD_NESTED_ROW_FIELDS.publishedByDomain], 'and the same domain members');
   });
 
+  // Internal until the audit-lift checklist reads it (#9010): no public
+  // surface may serve the count of headline rows with pre-#7071 anchors.
+  it('keeps skill.preLineageAnchorCount off REST, MCP and the /accuracy/ capture', () => {
+    for (const list of [SKILL_FIELDS, SKILL_EXTENDED_FIELDS, SCORECARD_NESTED_OBJECT_FIELDS.skill]) {
+      assert.ok(!list.includes('preLineageAnchorCount'));
+    }
+    const data = { skill: { count: 3, preLineageAnchorCount: 1 } };
+    for (const extended of [false, true]) {
+      const { skill } = selectScorecardFields(data, { extended });
+      assert.equal(skill?.count, 3);
+      assert.ok(!Object.hasOwn(skill ?? {}, 'preLineageAnchorCount'));
+    }
+    assert.ok(!Object.hasOwn((selectDeclaredScorecardFields(data) as { skill?: object }).skill ?? {}, 'preLineageAnchorCount'));
+  });
+
   it('filters the interval and funnel blocks with the same member lists the /accuracy/ page uses', () => {
     for (const [block, { fields, children }] of Object.entries(SCORECARD_BLOCK_FIELDS)) {
       assert.deepEqual([...fields], [...SCORECARD_NESTED_OBJECT_FIELDS[block]], `${block} members`);
@@ -325,6 +344,52 @@ describe('getForecastScorecard backend status', () => {
     const res = await getForecastScorecard(makeCtx(), {});
 
     assert.equal(res.marketAlerts?.byType[0]?.medianLeadTimeMs, 1001);
+  });
+
+  it('serves the median lead time only once a type has 30 hits, the floor /accuracy/ applies (#8985)', async () => {
+    const market = MARKET_ALERTS_STORED.byType[0];
+    const stored = {
+      ...MARKET_ALERTS_STORED,
+      byType: [
+        { ...market, type: 'at-floor', hit: 30 },
+        { ...market, type: 'below-floor', hit: 29, miss: 11 },
+        { ...market, type: 'no-hit-count', hit: undefined },
+      ],
+    };
+    serveRedis({ [REDIS_KEY]: envelope(FORECAST_DATA), [MARKET_ALERTS_KEY]: envelope(stored) });
+
+    const res = await getForecastScorecard(makeCtx(), {});
+
+    const median = Object.fromEntries((res.marketAlerts?.byType ?? []).map((row) => [row.type, row.medianLeadTimeMs]));
+    assert.deepEqual(median, { 'at-floor': 3600000, 'below-floor': undefined, 'no-hit-count': undefined });
+    assert.equal(MARKET_ALERT_MEDIAN_MIN_HITS, MARKET_ALERT_MIN_SAMPLE, 'the API and the page share one floor');
+  });
+
+  it('withholds the median exactly where /accuracy/ reads Not yet measurable, control gate included (#8985)', () => {
+    const rows = [];
+    for (const type of ['silent_divergence', 'prediction_leads_news']) {
+      for (const hit of [29, 30, 40]) {
+        for (const baseN of [0, 12, 29, 30]) {
+          for (const paired of [null, 0.5]) {
+            rows.push({
+              type, pending: 0, resolved: hit + 10, hit, miss: 10, void: 0, n: hit + 10, hitRate: hit / (hit + 10),
+              baseN, pairedHitRate: baseN > 0 ? paired : null, baseHitRate: baseN > 0 ? 0.25 : null, medianLeadTimeMs: 3600000,
+            });
+          }
+        }
+      }
+    }
+    const served = selectMarketAlertScorecard({ ...MARKET_ALERTS_STORED, byType: rows })?.byType ?? [];
+    assert.equal(served.length, rows.length);
+    let shown = 0;
+    served.forEach((row, index) => {
+      const pageShows = marketAlertMedianPublished({ ...row, medianLeadTimeMs: rows[index].medianLeadTimeMs });
+      shown += Number(pageShows);
+      assert.equal(Object.hasOwn(row, 'medianLeadTimeMs'), pageShows, JSON.stringify(rows[index]));
+    });
+    assert.ok(shown > 0 && shown < rows.length, 'the grid must cover both outcomes');
+    const gated = served.find((row, index) => row.type === 'prediction_leads_news' && rows[index].hit === 40 && rows[index].baseN === 12);
+    assert.equal(gated && Object.hasOwn(gated, 'medianLeadTimeMs'), false, 'prediction_leads_news waits for 30 scored controls');
   });
 
   it('starts both Redis reads before either answers', async () => {
@@ -357,6 +422,37 @@ describe('getForecastScorecard backend status', () => {
     assert.equal(await noStore(forecast), true, 'missing');
     assert.equal(await noStore({ ...forecast, [MARKET_ALERTS_KEY]: envelope({ ...MARKET_ALERTS_STORED, generatedAt: null }) }), true, 'malformed');
     assert.equal(await noStore(forecast, [MARKET_ALERTS_KEY]), true, 'failed read');
+  });
+
+  it('the gateway serves no-store, with no CDN header, when the market-alert block is missing (#8985)', async () => {
+    process.env.WM_SESSION_SECRET = 'synthetic-scorecard-session-secret-long-enough';
+    const token = (await issueSessionToken()).token;
+    const { fetchImpl } = createRedisFetch({});
+    const throughGateway = async (stored: Record<string, unknown>) => {
+      globalThis.fetch = async (input, init) => {
+        const url = String(input);
+        const key = decodeURIComponent(url.split('/get/')[1] ?? '');
+        if (Object.hasOwn(stored, key)) return Response.json({ result: JSON.stringify(stored[key]) });
+        assert.equal(new URL(url).origin, 'https://fake-upstash.example', 'all I/O must stay in the mock');
+        return fetchImpl(input, init);
+      };
+      const response = await forecastRoute(new Request(makeCtx().request.url, {
+        headers: { Origin: 'https://worldmonitor.app', 'X-WorldMonitor-Key': token },
+      }));
+      assert.equal(response.status, 200);
+      return response;
+    };
+    const forecast = { [REDIS_KEY]: envelope(FORECAST_DATA) };
+
+    const missing = await throughGateway(forecast);
+    assert.equal(missing.headers.get('Cache-Control'), 'no-store');
+    assert.equal(missing.headers.get('CDN-Cache-Control'), null);
+    assert.equal(missing.headers.get('Vercel-CDN-Cache-Control'), null);
+    assert.equal(missing.headers.get('X-No-Cache'), null, 'the internal marker never reaches the client');
+    assert.equal(Object.hasOwn(await missing.json(), 'marketAlerts'), false);
+
+    const present = await throughGateway({ ...forecast, [MARKET_ALERTS_KEY]: envelope(MARKET_ALERTS_STORED) });
+    assert.match(present.headers.get('Cache-Control') ?? '', /max-age=\d+/, 'control: the same route caches once the block is back');
   });
 
   it('omits marketAlerts when its key is missing', async () => {

@@ -8,9 +8,10 @@ import { loadEnvFile, runSeed, CHROME_UA, withRetry, parseRetryAfterMs, getRespo
 import { compactForecastDashboardPayload } from './_forecast-dashboard.mjs';
 import { unwrapEnvelope } from './_seed-envelope-source.mjs';
 import { allBootstrapMarkets } from './_prediction-classify.mjs';
+import { subjectMatcherForRegion } from './_forecast-subject.mjs';
 import { tagRegions } from './_prediction-scoring.mjs';
 import { attachResolutionSpecs, CHOKEPOINT_MARKET_REGIONS, evaluateExtractionShadow, isChokepointDisrupted, extractionShadowFeedKeys, HORIZON_MS, scoredHorizonKeys, summarizeExtractionShadow } from './_forecast-resolution.mjs';
-import { assessFunnelDiversity, NON_REAL_FUNNEL_ORIGINS } from './_forecast-funnel.mjs';
+import { assessFunnelDiversity, buildFunnelHealthMeta, NON_REAL_FUNNEL_ORIGINS } from './_forecast-funnel.mjs';
 import { alignPriorToPublication, applyPublishedCalibration, CALIBRATION_FORCE_RAW_ENV, decideCalibrationPublication, parseCalibrationMap, recordCalibrationPublication } from './_forecast-calibration.mjs';
 import { resolveR2StorageConfig, putR2JsonObject, getR2JsonObject } from './_r2-storage.mjs';
 import { extractFirstJsonObject, extractFirstJsonArray, cleanJsonText } from './_llm-json.mjs';
@@ -2061,6 +2062,7 @@ function detectUcdpConflictZones(inputs, emaRiskScores) {
   return predictions;
 }
 
+// Not published while cyber is in WITHHELD_PUBLISH_FAMILIES (#8990).
 function detectCyberScenarios(inputs) {
   const predictions = [];
   const threats = Array.isArray(inputs.cyberThreats) ? inputs.cyberThreats : inputs.cyberThreats?.threats || [];
@@ -2212,11 +2214,12 @@ const MARKET_PRICE_EVENT_PATTERNS = [
 // (#7071). Region overlap alone let invasion, leadership, and territory markets
 // calibrate cyber and posture forecasts. A domain or title family with no entry
 // gets no anchor. Cyber has none: its forecasts resolve on a threat count, and
-// no market prices a count. `adverse` serves forecasts whose YES outcome is escalation,
+// no market prices a count. Military has none: its forecasts (theater posture,
+// airlift and air-activity surges) assert an observed force posture, and a
+// strike or invasion market is a sub-event of it at best (#9010). `adverse` serves forecasts whose YES outcome is escalation,
 // `deescalatory` serves ceasefire-style forecasts; a missing slot means no anchor.
 const MARKET_ANCHOR_EVENT_CLASSES = {
   conflict: { adverse: ARMED_ESCALATION_EVENT_PATTERNS, deescalatory: DE_ESCALATION_EVENT_PATTERNS },
-  military: { adverse: ARMED_ESCALATION_EVENT_PATTERNS, deescalatory: DE_ESCALATION_EVENT_PATTERNS },
   // Leadership-identity questions ("next prime minister", "become president
   // before 2045") are not instability outcomes, so bare office titles do not count.
   political: {
@@ -2517,6 +2520,7 @@ function capMarketCalibrationProbability(domain, probability) {
   return +Math.max(0, Math.min(cap, probability)).toFixed(3);
 }
 
+// Not published while prediction_market is in WITHHELD_PUBLISH_FAMILIES (#8990).
 function detectFromPredictionMarkets(inputs) {
   const predictions = [];
   // All three pools (#5733). This detector scores any market whose title tags a
@@ -2655,6 +2659,10 @@ function resolveCascades(predictions, rules) {
 }
 
 // ── Phase 3: Probability projections ───────────────────────
+// Bump on any change to how computeProjections maps a probability to its
+// horizons (curves, anchoring, floor, cap). Every projected forecast carries
+// it, and the horizon scorecard reports each version apart (#7075).
+const PROJECTION_CURVES_VERSION = 1;
 const PROJECTION_CURVES = {
   conflict:       { h24: 0.91, d7: 1.0, d30: 0.78 },
   market:         { h24: 1.0, d7: 0.58, d30: 0.42 },
@@ -2688,6 +2696,7 @@ function computeProjections(predictions) {
       d7:  Math.round(Math.min(PROJECTION_PROBABILITY_CAP, Math.max(PROJECTION_PROBABILITY_FLOOR, base * curve.d7)) * 1000) / 1000,
       d30: Math.round(Math.min(PROJECTION_PROBABILITY_CAP, Math.max(PROJECTION_PROBABILITY_FLOOR, base * curve.d30)) * 1000) / 1000,
     };
+    pred.projectionCurvesVersion = PROJECTION_CURVES_VERSION;
   }
 }
 
@@ -2702,21 +2711,27 @@ function calibrateWithMarkets(predictions, markets) {
     noPrice: 0,
     lowVolume: 0,
     direction: 0,
-    region: 0,
     semantic: 0,
     eventClass: 0,
     horizon: 0,
     capNoop: 0,
     noClass: 0,
+    marketCopy: 0,
   };
   for (const pred of predictions) {
     const keywords = REGION_KEYWORDS[pred.region] || [];
     const regionTerms = [...new Set([...getSearchTermsForRegion(pred.region), pred.region])];
-    const subjectTerms = getSubjectTermsForRegion(pred.region);
+    const subject = subjectMatcherForRegion(pred.region, { regionMembers: false });
     const expectedTags = buildExpectedRegionTags(regionTerms, pred.region);
     const titleTokens = extractMeaningfulTokens(pred.title, regionTerms);
     const predictionDeEscalatoryOutcome = predictionYesOutcomeLooksDeEscalatory(pred);
     if (keywords.length === 0 && regionTerms.length === 0) continue;
+    // A forecast copied from a market already asks that market's question;
+    // any other market on its subject asks a different one (#9010).
+    if (pred.signals?.some((signal) => signal.type === 'prediction_market')) {
+      stats.marketCopy++;
+      continue;
+    }
     const eventPatterns = resolveMarketAnchorEventPatterns(pred, predictionDeEscalatoryOutcome);
     if (!eventPatterns) {
       stats.noClass++;
@@ -2744,13 +2759,12 @@ function calibrateWithMarkets(predictions, markets) {
           stats.direction++;
           return false;
         }
-        if (item.tagMismatch && item.regionHits === 0) {
-          stats.region++;
-          return false;
-        }
         // A shared macro tag or an entity-graph neighbour is not the same subject:
         // "Escalation risk: Syria" must not anchor to a US-invades-Iran market.
-        const hasSpecificRegionSignal = countTermMatches(item.market.title, subjectTerms).hits > 0;
+        // The judged lane's subject table, without a region's unnamed members:
+        // "Red Sea" matches Bab el-Mandeb, "Baltic" never "Baltimore", and a
+        // Middle East forecast never borrows a one-country market's price.
+        const hasSpecificRegionSignal = subject.matches(item.market.title);
         const hasTitleOverlap = item.titleHits > 0 && (item.domainHits > 0 || item.score >= 7);
         if (!hasSpecificRegionSignal || (requireTitleOverlap && !hasTitleOverlap)) {
           stats.semantic++;
@@ -2794,9 +2808,9 @@ function calibrateWithMarkets(predictions, markets) {
       stats.applied++;
     }
   }
-  const dropped = stats.noPrice + stats.lowVolume + stats.direction + stats.region + stats.semantic + stats.eventClass + stats.horizon + stats.capNoop;
-  if (stats.applied > 0 || dropped > 0 || stats.noClass > 0) {
-    console.log(`  [calibrateWithMarkets] applied=${stats.applied} dropped=${dropped} no_price=${stats.noPrice} low_volume=${stats.lowVolume} direction=${stats.direction} region=${stats.region} semantic=${stats.semantic} event_class=${stats.eventClass} horizon=${stats.horizon} cap_noop=${stats.capNoop} no_class_forecasts=${stats.noClass}`);
+  const dropped = stats.noPrice + stats.lowVolume + stats.direction + stats.semantic + stats.eventClass + stats.horizon + stats.capNoop;
+  if (stats.applied > 0 || dropped > 0 || stats.noClass > 0 || stats.marketCopy > 0) {
+    console.log(`  [calibrateWithMarkets] applied=${stats.applied} dropped=${dropped} no_price=${stats.noPrice} low_volume=${stats.lowVolume} direction=${stats.direction} semantic=${stats.semantic} event_class=${stats.eventClass} horizon=${stats.horizon} cap_noop=${stats.capNoop} no_class_forecasts=${stats.noClass} market_copy_forecasts=${stats.marketCopy}`);
   }
 }
 
@@ -4979,6 +4993,7 @@ function buildHistoryForecastEntry(pred) {
       d7: finiteOrNull(pred.projections.d7),
       d30: finiteOrNull(pred.projections.d30),
     } : null,
+    ...(Number.isInteger(pred.projectionCurvesVersion) && { projectionCurvesVersion: pred.projectionCurvesVersion }),
     // Resolution spec (#4976 Bet 1) — same camelCase block the canonical
     // payload emits, so Bet 2's resolver can score forecasts still in-window.
     // History also keeps the rule version, or the resolver would migrate a
@@ -5033,16 +5048,9 @@ async function seedForecastFunnelHealth(predictions) {
   }
   const { url, token } = getRedisCredentials();
   await redisSet(url, token, FUNNEL_HEALTH_KEY, assessment, FUNNEL_HEALTH_TTL_SECONDS);
-  // Companion seed-meta so /api/health surfaces a collapse via its existing
-  // freshness+status machinery: status:'error' → SEED_ERROR (warn), recordCount
-  // = distinct domain count. A healthy run writes status:'ok' and stays fresh.
-  const meta = {
-    fetchedAt: Date.now(),
-    recordCount: assessment.domainCount,
-    sourceVersion: 'funnel-guardrail:v1',
-    status: assessment.collapsed ? 'error' : 'ok',
-    reasons: assessment.reasons,
-  };
+  // Companion seed-meta: /api/health reads its freshness. A collapse is
+  // recorded in it as information and never sets an error status.
+  const meta = buildFunnelHealthMeta(assessment, Date.now());
   await redisCommand(url, token, [
     'SET', `seed-meta:${FUNNEL_HEALTH_KEY}`, JSON.stringify(meta), 'EX', FUNNEL_HEALTH_TTL_SECONDS,
   ]).catch((err) => console.warn(`  [FunnelHealth] seed-meta write failed: ${err.message}`));
@@ -5087,8 +5095,8 @@ async function resolveCalibrationPublication(nowMs, { env = process.env, logger 
   const { flipped, record } = recordCalibrationPublication(previousRead.value, decision, nowMs);
   const gate = decision.gate;
   const gateText = gate
-    ? `eligible=${gate.eligible} forward=${gate.forwardCount} brierDeltaUpper=${gate.brierDeltaUpper} `
-      + `domains=${gate.domains.map((row) => `${row.domain}:${row.count}:${row.brierDeltaUpper}`).join(',') || 'none'} `
+    ? `eligible=${gate.eligible} forward=${gate.forwardCount} forwardFamilies=${gate.forwardFamilies} brierDeltaUpper=${gate.brierDeltaUpper} `
+      + `domains=${gate.domains.map((row) => `${row.domain}:${row.count}:${row.families}:${row.brierDeltaUpper}`).join(',') || 'none'} `
       + `gateReasons=${gate.reasons.join(',') || 'none'}`
     : 'gate=none';
   const line = `mode=${decision.mode} reason=${decision.reason} map=${decision.mapVersion ?? 'none'} ${gateText}`;
@@ -14290,8 +14298,32 @@ function isWeakForecastFallback(pred) {
     && counterEvidenceTypes.has('confidence');
 }
 
+// Forecast families withheld from publication until they have a checkable
+// question (#8990, the rule #5234 set for state-derived buckets). Cyber rows
+// all VOID while CYBER_JUDGING_HELD (seed-forecast-resolutions.mjs) holds the
+// judges; prediction-market detector rows read the bootstrap feed's crowd
+// price, which the resolver always VOIDs as market_price_not_outcome. Withheld
+// forecasts still feed the run's world state; they never reach the published
+// payload, so the resolution ledger opens no new rows for them. To restore a
+// family, remove it here once it resolves (cyber: lift the hold; prediction
+// market: resolve by slug on prediction:markets-resolution:v1). With both back,
+// restore DEFAULT_MIN_DISTINCT_DOMAINS (_forecast-funnel.mjs) to 4.
+const WITHHELD_PUBLISH_FAMILIES = Object.freeze(['cyber', 'prediction_market']);
+
+function getPublishWithholdFamily(pred) {
+  if (pred?.domain === 'cyber') return 'cyber';
+  if ((pred?.signals || []).some((signal) => signal?.type === 'prediction_market')) return 'prediction_market';
+  return null;
+}
+
+function getWithheldPublishFamily(pred) {
+  const family = getPublishWithholdFamily(pred);
+  return family && WITHHELD_PUBLISH_FAMILIES.includes(family) ? family : null;
+}
+
 function isPublishEligibleForecast(pred, minProbability = PUBLISH_MIN_PROBABILITY) {
-  return (pred?.probability || 0) > minProbability && !isWeakForecastFallback(pred);
+  return (pred?.probability || 0) > minProbability && !isWeakForecastFallback(pred)
+    && !getWithheldPublishFamily(pred);
 }
 
 function summarizeResolutionHardCoverage(predictions = []) {
@@ -14856,6 +14888,11 @@ function markDeferredFamilySelection(predictions, selectedPool) {
     if ((pred?.probability || 0) <= PUBLISH_MIN_PROBABILITY) continue;
     if (selectedIds.has(pred.id)) continue;
     if (pred.publishDiagnostics?.reason) continue;
+    const withheldFamily = getWithheldPublishFamily(pred);
+    if (withheldFamily) {
+      pred.publishDiagnostics = { reason: 'withheld_family', family: withheldFamily };
+      continue;
+    }
     if (isWeakForecastFallback(pred)) {
       pred.publishDiagnostics = { reason: 'weak_fallback' };
       continue;
@@ -15046,7 +15083,9 @@ function selectForecastsForEnrichment(predictions, options = {}) {
   const minReadiness = options.minReadiness ?? ENRICHMENT_MIN_READINESS;
   const maxTotal = maxCombined + maxScenario;
 
+  // Narratives for withheld forecasts are never published (#8990).
   const ranked = predictions
+    .filter(pred => !getWithheldPublishFamily(pred))
     .map((pred, index) => ({
       pred,
       index,
@@ -19770,6 +19809,7 @@ export {
   filterPublishedForecasts,
   applySituationFamilyCaps,
   summarizePublishFiltering,
+  WITHHELD_PUBLISH_FAMILIES,
   selectForecastsForEnrichment,
   parseForecastProviderOrder,
   getForecastLlmCallOptions,
@@ -19802,6 +19842,7 @@ export {
   PREDICATE_EVALUATORS,
   DEFAULT_CASCADE_RULES,
   PROJECTION_CURVES,
+  PROJECTION_CURVES_VERSION,
   normalizeChokepoints,
   normalizeGpsJamming,
   deriveStateDrivenForecasts,
