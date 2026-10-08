@@ -208,6 +208,12 @@ export function buildScorecard(ledger, nowMs, calibrationMap = null, publication
  * rather than refitting: a refit after a transient Redis error would move
  * fittedAt and silently restart the forward cohort.
  */
+// The run's clock, so the scorecard's gate verdict is the one the map
+// resolution held or refitted on.
+export function buildScorecardForRun(ledger, runState) {
+  return buildScorecard(ledger, runState.nowMs, runState.map, runState.publication);
+}
+
 export async function resolveCalibrationMap(ledger, nowMs, readJson = readRedisJson) {
   let existing;
   try {
@@ -749,6 +755,17 @@ function collectNormalizeClasses(judgments) {
     .filter((reason) => JUDGE_ATTEMPT_CLASS_SET.has(reason));
   return classes.length ? classes : undefined;
 }
+
+// Bump whenever the judged lane changes which evidence the judges see, so a
+// later correction finds the verdicts sealed under the old selection by their
+// stamp rather than by a deploy time (#9011). Any change to which archive items
+// reach the judges (subject matching, ranking, the window, the item cap) needs
+// a bump. Every judged seal carries the stamp, VOIDs included.
+//  1: stock words from the question template, no deadline cutoff (before #8995).
+//  2: subject-gated evidence through the deadline (#8995).
+//  3: subject table, title-first ranking, event-word absence floor (#8999), and
+//     the country-match fix (#9002), which deployed before any judged YES or NO.
+export const JUDGED_EVIDENCE_SELECTION_VERSION = 3;
 
 export function selectJudgedArchiveItems(entry, archiveItems, options = {}) {
   return selectNormalizedJudgedArchiveItems(entry, normalizeJudgedArchiveItems(archiveItems), options);
@@ -1425,6 +1442,7 @@ function resolvedJudgedResult(outcome, reason, entry, judgments, archiveItems, n
       reason,
       basis: outcome === 'VOID' ? undefined : judgments[0]?.basis,
       resolvedAt: nowMs,
+      selectionVersion: JUDGED_EVIDENCE_SELECTION_VERSION,
       question: spec.question,
       deadline: Number.isFinite(Number(spec.deadline ?? entry?.deadline)) ? Number(spec.deadline ?? entry?.deadline) : undefined,
       judgedBy: judgments.map((judgment) => pruneUndefined({
@@ -2120,13 +2138,28 @@ export function voidEnvelopeBugResolutions(ledger, nowMs) {
 // Re-running is a no-op: a voided row is no longer YES or NO.
 export const JUDGED_OLD_SELECTION_VOID_REASON = 'judged_old_selection';
 export const SUBJECT_GATED_SELECTION_SINCE_MS = Date.parse('2026-10-07T14:39:00Z');
+// Verdicts sealed under an older selection than this are voided. Raise it to
+// retire a selection; the stamp says which rows that reaches.
+export const JUDGED_MIN_TRUSTED_SELECTION_VERSION = 2;
 
-export function voidOldSelectionJudgedResolutions(ledger, nowMs) {
+// The selection a verdict was sealed under. Rows sealed before the stamp
+// existed are dated by the #8995 deploy. No judged YES or NO was sealed
+// between that deploy and #8999's, so every later unstamped row is version 3.
+export function judgedSelectionVersion(entry) {
+  const stamp = entry?.evidence?.selectionVersion ?? entry?.evidence?.supersededEvidence?.selectionVersion;
+  if (Number.isInteger(stamp)) return stamp;
+  const resolvedAt = Number(entry?.resolvedAt);
+  if (!Number.isFinite(resolvedAt)) return null;
+  return resolvedAt < SUBJECT_GATED_SELECTION_SINCE_MS ? 1 : 3;
+}
+
+export function voidOldSelectionJudgedResolutions(ledger, nowMs, minTrustedVersion = JUDGED_MIN_TRUSTED_SELECTION_VERSION) {
   let voided = 0;
   for (const entry of Object.values(ledger)) {
     if (entry?.status !== 'resolved' || entry.spec?.kind !== 'judged') continue;
     if (entry.outcome !== 'YES' && entry.outcome !== 'NO') continue;
-    if (!(Number(entry.resolvedAt) < SUBJECT_GATED_SELECTION_SINCE_MS)) continue;
+    const version = judgedSelectionVersion(entry);
+    if (version == null || version >= minTrustedVersion) continue;
     entry.evidence = {
       reason: JUDGED_OLD_SELECTION_VOID_REASON,
       resolvedAt: entry.resolvedAt,
@@ -2907,6 +2940,7 @@ async function buildLedgerForRun(runState) {
   console.log(`  R2 receipts archived: ${archivedReceipts.length}`);
   reportJudgedLaneObservability(result.ledger, nowMs, judgedOptions);
   const calibration = await resolveCalibrationMap(result.ledger, nowMs);
+  runState.nowMs = nowMs;
   runState.map = calibration.map;
   runState.publication = await readRedisJson(CALIBRATION_PUBLICATION_KEY)
     .then((value) => unwrapEnvelope(value).data ?? null)
@@ -2914,7 +2948,10 @@ async function buildLedgerForRun(runState) {
       console.warn(`  [forecast-resolutions] calibration publication read failed: ${err?.message || err}`);
       return null;
     });
-  console.log(`  Calibration map: ${calibration.action}${calibration.reason ? ` (${calibration.reason})` : ''}${calibration.map ? ` ${calibration.map.version}` : ''}`);
+  const trigger = calibration.held
+    ? `${calibration.held.reason}: ${calibration.held.domain}, held by the activation gate`
+    : calibration.reason && `${calibration.reason}${calibration.domain ? `: ${calibration.domain}` : ''}`;
+  console.log(`  Calibration map: ${calibration.action}${trigger ? ` (${trigger})` : ''}${calibration.map ? ` ${calibration.map.version} data v${calibration.map.dataVersion}` : ''}`);
   return result.ledger;
 }
 
@@ -3058,7 +3095,7 @@ export async function appendR2Receipts(receipts, options = {}) {
 if (DIRECT_RUN && process.argv.includes('--dry-run')) {
   await dryRun();
 } else if (DIRECT_RUN) {
-  const runState = { map: null };
+  const runState = { nowMs: Date.now(), map: null };
   await runSeed('forecast', 'resolutions', RESOLUTIONS_KEY, () => buildLedgerForRun(runState), {
     // Persistent working ledger: no ttlSeconds by design (#5007 R11).
     validateFn: (ledger) => ledger && typeof ledger === 'object' && !Array.isArray(ledger),
@@ -3072,7 +3109,7 @@ if (DIRECT_RUN && process.argv.includes('--dry-run')) {
     extraKeys: [{
       key: SCORECARD_KEY,
       ttl: SCORECARD_TTL_SECONDS,
-      transform: (ledger) => buildScorecard(ledger, Date.now(), runState.map, runState.publication),
+      transform: (ledger) => buildScorecardForRun(ledger, runState),
       declareRecords: declareScorecardRecords,
       metaKey: SCORECARD_META_KEY,
       metaCritical: true,
