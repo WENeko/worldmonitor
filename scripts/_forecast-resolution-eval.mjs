@@ -121,6 +121,43 @@ export function countSettlementLagMs(feedKey) {
   return 0;
 }
 
+// A hard spec resolveHardSpec VOIDs on its first read, before the deadline
+// check: a metric it cannot evaluate (unsupported_metric_key) or no threshold
+// (missing_threshold). Such a window resolves before the emissions it goes on
+// covering.
+export function voidsOnFirstRead(spec) {
+  return spec?.kind === 'hard' && !evaluableHardSpec(spec);
+}
+
+function evaluableHardSpec(spec) {
+  const parsed = parseMetricKey(spec?.metricKey);
+  return Boolean(parsed) && SUPPORTED_FUNCTIONS.has(parsed.fn) && Number.isFinite(Number(spec?.threshold));
+}
+
+// The longest a hard window waits after its deadline, by design, before
+// resolveHardSpec seals or VOIDs it while its data is missing (#7072). The
+// branches follow resolveHardSpec's order, so the first one that would decide
+// the window names its bound. A window whose spec the resolver cannot evaluate
+// VOIDs on the first run (0). A live point read VOIDs past one resolver cycle.
+// A period feed (EIA, FRED, GPS jamming, market settlement) waits for its own
+// period. A count seals after its settlement lag and VOIDs a feed still down
+// VALUE_SETTLEMENT_MAX_LAG_MS later; a count whose feed is present but lags
+// the deadline pends with no bound, so it sits past its service level until it
+// resolves. A within-horizon read resolves on the first run. The scorecard's
+// hard-lane service level adds one resolver cycle, the run that applies the
+// seal; a test drives resolveHardSpec to hold these bounds to its behaviour.
+export function hardResolutionBoundMs(spec) {
+  if (!evaluableHardSpec(spec)) return 0;
+  const parsed = parseMetricKey(spec?.metricKey);
+  const feedKey = parsed.feedKey || spec?.sourceFeed;
+  if (parsed.fn === 'yesPrice' && (spec?.sourceFeed === MARKET_BOOTSTRAP_FEED_KEY || parsed.feedKey === MARKET_BOOTSTRAP_FEED_KEY)) return 0;
+  const isPointWindow = spec?.window === 'at-deadline' || spec?.window === 'at-endDate';
+  if (isLivePointRead(spec)) return LATE_READ_MAX_LAG_MS;
+  if (parsed.fn === 'count') return countSettlementLagMs(feedKey) + VALUE_SETTLEMENT_MAX_LAG_MS;
+  if (isPointWindow) return valueSettlementMaxLagMs(feedKey);
+  return 0;
+}
+
 export function parseMetricKey(metricKey) {
   if (typeof metricKey !== 'string' || !metricKey) return null;
   const pipe = metricKey.indexOf('|');
@@ -159,6 +196,10 @@ export function resolveHardSpec(entry, feedData, samples, nowMs) {
   // (#5233). Bets read the settlement feed instead.
   if (parsed.fn === 'yesPrice' && (spec.sourceFeed === MARKET_BOOTSTRAP_FEED_KEY || parsed.feedKey === MARKET_BOOTSTRAP_FEED_KEY)) {
     return voidResult('market_price_not_outcome', entry, spec, parsed, nowMs);
+  }
+
+  if (parsed.fn === 'yesPrice' && (parsed.feedKey === MARKET_SETTLEMENT_FEED_KEY || spec.sourceFeed === MARKET_SETTLEMENT_FEED_KEY)) {
+    feedData = settlementRecordsForMarket(feedData, entry, spec);
   }
 
   const isPointWindow = spec.window === 'at-deadline' || spec.window === 'at-endDate';
@@ -857,4 +898,36 @@ function summarizeSamples(samples) {
 function aggregateTimeline(fn, timeline) {
   if (fn === 'riskScore' || fn === 'hexCount') return Math.max(...timeline.map((s) => s.value));
   return timeline[timeline.length - 1]?.value;
+}
+
+// One market of a Polymarket event slug, compared on its normalized title
+// (#8990). The bootstrap feed carries no market id, and an event lists its
+// next market under the same slug once one closes, so the settlement feed can
+// hold several records for one slug. Case, spacing, curly apostrophes and a
+// trailing "?" do not change the market; a year does. A Kalshi ticker is one
+// market, so Kalshi bets skip the comparison. A venue retitling its own
+// Polymarket market beyond that reads as a new market: its later bets open
+// their own window, and the first window keeps its last deadline.
+export function marketQuestionIdentity(value) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\s+/g, ' ')
+    .replace(/[?\s]+$/, '');
+}
+
+export function isSingleMarketVenue(entry) {
+  return entry?.marketSource === 'kalshi';
+}
+
+// The settlement records of this window's own market. The loader appends one
+// record per market it settles, named by the window's title, so a record for
+// another market of the slug never grades this window.
+function settlementRecordsForMarket(feedData, entry, spec) {
+  if (feedData == null || isSingleMarketVenue(entry)) return feedData;
+  const question = spec?.question ?? entry?.title;
+  if (question == null) return feedData;
+  const identity = marketQuestionIdentity(question);
+  return [...iterateRecords(feedData)].filter((record) => marketQuestionIdentity(record.market) === identity);
 }

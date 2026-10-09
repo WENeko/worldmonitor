@@ -41,10 +41,17 @@ import {
   selectJudgedArchiveItems,
   ingestHistory,
   samplePendingEntries,
+  buildScorecardForRun,
+  summarizeWithheldEmissions,
+  emissionHash,
+  summarizeRegistration,
+  buildScorecard,
 } from '../scripts/seed-forecast-resolutions.mjs';
+import { DEFAULT_JUDGED_SLA_MS, hardSlaMs } from '../scripts/_forecast-scorecard.mjs';
+import { createHash } from 'node:crypto';
 import { buildFamilyOutcomes, buildPublicReceipts, computeScorecard } from '../scripts/_forecast-scorecard.mjs';
-import { __setForecastLlmCallOverrideForTests, __setRedisStoreForTests, buildPublishedForecastPayload, runExtractionGateShadow } from '../scripts/seed-forecasts.mjs';
-import { CONFLICT_COUNT_SOURCE_FEED, HORIZON_MS, PROJECTION_HORIZONS, UNREST_COUNT_SOURCE_FEED, attachResolutionSpecs, chokepointHardContract, evaluateExtractionShadow, horizonSampleToleranceMs, scoredHorizonKeys } from '../scripts/_forecast-resolution.mjs';
+import { __setForecastLlmCallOverrideForTests, __setRedisStoreForTests, buildHistorySnapshot, buildPublishedForecastPayload, runExtractionGate, runExtractionGateShadow } from '../scripts/seed-forecasts.mjs';
+import { CONFLICT_COUNT_SOURCE_FEED, CYBER_COUNT_SOURCE_FEED, HORIZON_MS, PROJECTION_HORIZONS, UNREST_COUNT_SOURCE_FEED, applyExtractionGate, attachResolutionSpecs, chokepointHardContract, evaluateExtractionShadow, horizonSampleToleranceMs, scoredHorizonKeys } from '../scripts/_forecast-resolution.mjs';
 import { shapeResolutionFeeds } from '../scripts/_forecast-resolution-eval.mjs';
 import { GPS_RESOLUTION_RULE, GPS_RESOLUTION_RULE_VERSION, GPS_ZONE_MIN_HEXES } from '../scripts/_gps-maritime-regions.mjs';
 
@@ -138,6 +145,15 @@ describe('processResolutionCycle', () => {
         assert.deepEqual(ledger[KEY].calibration, anchored);
       });
     }
+
+    it('freezes the pre-blend internalProbability recorded at the first emission (#7070)', () => {
+      const lineage = { ...anchored, internalProbability: 0.8, marketBlendedProbability: 0.6 };
+      const opening = forecast({ probability: 0.6, calibration: lineage });
+      const second = forecast({ probability: 0.62, generatedAt: T0 + 6 * 60 * 60 * 1000, deadline: T0 + DAY_MS, calibration: { ...lineage, internalProbability: 0.9, marketBlendedProbability: 0.62 } });
+      const { ledger } = processResolutionCycle({}, [snapshot(T0, [opening]), snapshot(T0 + 6 * 60 * 60 * 1000, [second])], FEEDS, T0 + 12 * 60 * 60 * 1000);
+      assert.equal(ledger[KEY].calibration.internalProbability, 0.8);
+      assert.equal(ledger[KEY].calibration.marketBlendedProbability, 0.6);
+    });
 
     it('leaves a resolved entry calibration untouched', () => {
       const resolvedFeeds = { 'supply_chain:chokepoints:v4': { chokepoints: [{ route: 'Strait of Hormuz', riskScore: 61 }] } };
@@ -1714,6 +1730,266 @@ describe('appendSample and seed contract', () => {
       console.warn = originalWarn;
     }
   });
+
+  it('refuses a receipt prefix inside the trace prefix, which has a retention rule (#9058)', async () => {
+    const base = {
+      CLOUDFLARE_R2_ACCOUNT_ID: 'acct',
+      CLOUDFLARE_R2_ACCESS_KEY_ID: 'id',
+      CLOUDFLARE_R2_SECRET_ACCESS_KEY: 'secret',
+      CLOUDFLARE_R2_BUCKET: 'bucket',
+    };
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(' '));
+    try {
+      for (const env of [
+        base, // receipt prefix unset: falls back to the trace default
+        { ...base, CLOUDFLARE_R2_TRACE_PREFIX: 'traces', CLOUDFLARE_R2_FORECAST_RESOLUTION_PREFIX: 'traces/receipts' },
+      ]) {
+        const puts = [];
+        const archived = await appendR2Receipts([{ key: 'a@1', resolvedAt: T0, entry: { outcome: 'YES' } }], { env, putObject: async (_config, key) => { puts.push(key); } });
+        assert.deepEqual([archived, puts], [[], []]);
+      }
+      assert.equal(warnings.filter((line) => line.includes('inside the trace prefix')).length, 2);
+
+      const outside = [];
+      const archived = await appendR2Receipts([{ key: 'a@1', resolvedAt: T0, entry: { outcome: 'YES' } }], {
+        env: { ...base, CLOUDFLARE_R2_TRACE_PREFIX: 'data/traces', CLOUDFLARE_R2_FORECAST_RESOLUTION_PREFIX: 'data' },
+        putObject: async (_config, key) => { outside.push(key); },
+      });
+      assert.equal(archived.length, 1, 'a parent of the trace prefix is not inside it');
+      assert.match(outside[0], /^data\/forecast-resolutions\//);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+});
+
+describe('ledger provenance and registration coverage (#7072)', () => {
+  const sha256 = (text) => createHash('sha256').update(text).digest('hex');
+
+  it('stamps each window with the emitting commit, its service level and an emission hash when it opens', () => {
+    const emitted = forecast();
+    const ledger = ingestHistory({}, [{ ...snapshot(T0, [emitted]), codeVersion: 'abc123' }], T0);
+    const entry = ledger[`fc-hormuz@${T0 + DAY_MS}`];
+    assert.equal(entry.codeVersion, 'abc123');
+    assert.deepEqual(entry.sla, { lane: 'hard', ms: hardSlaMs(emitted.resolution) });
+    assert.equal(entry.sla.ms, 2 * (DAY_MS + 60 * 60 * 1000), 'a live chokepoint read: one cycle plus jitter, plus the sealing run');
+    assert.equal(entry.emissionHash, sha256(JSON.stringify(['fc-hormuz', T0 + DAY_MS, T0, 0.62, emitted.resolution])));
+    assert.equal(entry.emissionHash, emissionHash('fc-hormuz', emitted, emitted.resolution, T0, T0 + DAY_MS));
+  });
+
+  it('keeps the opening stamps when a later emission of the same window carries another commit', () => {
+    const first = ingestHistory({}, [{ ...snapshot(T0, [forecast()]), codeVersion: 'abc123' }], T0);
+    const later = forecast({ generatedAt: T0 + 3_600_000, deadline: T0 + DAY_MS, probability: 0.9 });
+    const ledger = ingestHistory(first, [{ ...snapshot(T0 + 3_600_000, [later]), codeVersion: 'def456' }], T0 + 3_600_000);
+    const entry = ledger[`fc-hormuz@${T0 + DAY_MS}`];
+    assert.equal(entry.codeVersion, 'abc123');
+    assert.equal(entry.emissionHash, first[`fc-hormuz@${T0 + DAY_MS}`].emissionHash);
+  });
+
+  it('stamps the judged service level on a judged window and leaves codeVersion out for history written before it', () => {
+    const judged = forecast({ id: 'fc-judged', resolution: { kind: 'judged', question: 'Will X happen?', deadline: T0 + DAY_MS } });
+    const entry = ingestHistory({}, [snapshot(T0, [judged])], T0)[`fc-judged@${T0 + DAY_MS}`];
+    assert.deepEqual(entry.sla, { lane: 'judged', ms: DEFAULT_JUDGED_SLA_MS });
+    assert.equal('codeVersion' in entry, false);
+  });
+
+  it('counts published id@deadline windows against the ledger and names every gap', () => {
+    const NOW = T0 + 2 * 3_600_000;
+    const history = [
+      snapshot(T0, [
+        forecast(),
+        forecast({ id: 'fc-nospec', resolution: null }),
+        forecast({ id: 'fc-nodeadline', resolution: { kind: 'hard', deadline: 'soon' } }),
+        // Already past its deadline when the resolver first read it.
+        forecast({ id: 'fc-late', generatedAt: T0 - 2 * DAY_MS, deadline: T0 - DAY_MS }),
+        { title: 'no id' },
+      ]),
+      // A later emission of the same question with a later deadline joins the
+      // open window: two published windows, one ledger question. The gap of a
+      // window is named by its first unregistered emission.
+      snapshot(T0 + 3_600_000, [
+        forecast({ generatedAt: T0 + 3_600_000, deadline: T0 + DAY_MS + 3_600_000 }),
+        forecast({ id: 'fc-nospec', resolution: { kind: 'hard', deadline: 'soon' } }),
+      ]),
+    ];
+    const ledger = ingestHistory({}, history, NOW);
+    const registration = summarizeRegistration(ledger, history, NOW);
+    assert.deepEqual(registration, {
+      publishedCount: 5,
+      ledgerRegisteredCount: 2,
+      registrationCoverage: 0.4,
+      registeredLedgerWindows: 1,
+      unregisteredByReason: { no_resolution_spec: 1, no_deadline: 1, deadline_passed_before_registration: 1 },
+      historySnapshots: 2,
+      historyFrom: T0,
+      historyTo: T0 + 3_600_000,
+    });
+  });
+
+  it('registers a window only when the ledger covers every emission of it', () => {
+    const first = forecast();
+    // Same id and deadline, another question: the ledger below never opened it.
+    const moved = forecast({ generatedAt: T0 + 3_600_000, deadline: T0 + DAY_MS, region: 'Bab el-Mandeb' });
+    const ledger = ingestHistory({}, [snapshot(T0, [first])], T0);
+    const registration = summarizeRegistration(ledger, [snapshot(T0, [first]), snapshot(T0 + 3_600_000, [moved])], T0 + 3_600_000);
+    assert.equal(registration.publishedCount, 1);
+    assert.equal(registration.ledgerRegisteredCount, 0);
+    assert.deepEqual(registration.unregisteredByReason, { unregistered: 1 });
+  });
+
+  it('stamps a monthly FRED window with its own 76-day service level', () => {
+    const fred = forecast({ id: 'fc-fred', resolution: { kind: 'hard', metricKey: 'economic:fred:v1:CPIAUCSL:0|value(series==CPIAUCSL)', operator: 'gt', threshold: 3, window: 'at-deadline', deadline: T0 + DAY_MS, sourceFeed: 'economic:fred:v1:CPIAUCSL:0' } });
+    const entry = ingestHistory({}, [snapshot(T0, [fred])], T0)[`fc-fred@${T0 + DAY_MS}`];
+    assert.deepEqual(entry.sla, { lane: 'hard', ms: 76 * DAY_MS + 60 * 60 * 1000 });
+  });
+
+  it('names a forecast the extraction gate withheld from scoring as withheld, not lost (#7067)', () => {
+    const withheld = forecast({ id: 'fc-withheld', resolution: { kind: 'unscored', reason: 'generic_question', deadline: T0 + DAY_MS } });
+    const ledger = ingestHistory({}, [snapshot(T0, [withheld])], T0);
+    assert.deepEqual(summarizeRegistration(ledger, [snapshot(T0, [withheld])], T0).unregisteredByReason, { withheld_at_emission: 1 });
+  });
+
+  it('names a bet emitted only on the base-rate placeholder as a placeholder, not lost (#8990)', () => {
+    const bet = (probabilitySource, generatedAt) => forecast({ id: 'bet:eia', generationOrigin: 'bet_engine', probabilitySource, generatedAt, resolution: { kind: 'hard', metricKey: 'energy:eia-petroleum:v1|value(metric==brent)', operator: 'crosses', threshold: 90, baselineValue: 85, window: 'at-deadline', deadline: T0 + 7 * DAY_MS, sourceFeed: 'energy:eia-petroleum:v1' } });
+    const placeholderOnly = [snapshot(T0, [bet('base_rate', T0)])];
+    const ledger = ingestHistory({}, placeholderOnly, T0);
+    assert.deepEqual(summarizeRegistration(ledger, placeholderOnly, T0).unregisteredByReason, { base_rate_placeholder: 1 });
+    const thenEnsembled = [...placeholderOnly, snapshot(T0 + 3_600_000, [bet('ensemble', T0 + 3_600_000)])];
+    const opened = ingestHistory({}, thenEnsembled, T0 + 3_600_000);
+    const registration = summarizeRegistration(opened, thenEnsembled, T0 + 3_600_000);
+    assert.equal(registration.ledgerRegisteredCount, 1, 'the ensemble emission opened the window; the placeholder beside it is no gap');
+    assert.deepEqual(registration.unregisteredByReason, {});
+  });
+
+  it('does not read a window a previous run pruned as a gap (#7072 review)', () => {
+    // Run N, 186 days after a bet window resolved, prunes it; run N+1 reads
+    // the pruned ledger with the same old snapshot still in the bet history.
+    const RESOLVED_AT = T0 + 5 * DAY_MS;
+    const old = forecast({ deadline: T0 + 4 * DAY_MS });
+    const opened = ingestHistory({}, [snapshot(T0, [old])], T0);
+    const key = `fc-hormuz@${T0 + 4 * DAY_MS}`;
+    opened[key] = { ...opened[key], status: 'resolved', outcome: 'NO', resolvedAt: RESOLVED_AT, receiptArchivedAt: RESOLVED_AT };
+    const runN = T0 + 186 * DAY_MS;
+    const pruned = pruneArchivedTerminalEntries(opened, runN);
+    assert.equal(pruned[key], undefined, 'run N pruned the window');
+    const fresh = forecast({ id: 'fc-fresh', generatedAt: runN, deadline: runN + 3 * DAY_MS });
+    // A recent run can still carry the old emission, stamped with its old generatedAt.
+    const history = [snapshot(T0, [old]), snapshot(runN, [fresh, old])];
+    const nextLedger = ingestHistory(pruned, history, runN + DAY_MS);
+    const registration = summarizeRegistration(nextLedger, history, runN + DAY_MS);
+    assert.deepEqual(registration.unregisteredByReason, {}, 'the pruned window is outside the counted history');
+    assert.equal(registration.publishedCount, 1);
+    assert.equal(registration.historySnapshots, 1);
+    assert.equal(registration.historyFrom, runN);
+  });
+
+  // Round-3 review probe: a daily bet re-emitted until its 30-day deadline,
+  // resolved and archived by each daily run, over 240 runs. A spec the
+  // resolver VOIDs on its first read resolves before the emissions it covers,
+  // so its window is pruned while they are still in the bet history.
+  it('reads no gap on any day for a daily bet, including one whose spec the resolver voids on its first read (#7072)', () => {
+    const contract = chokepointHardContract('Strait of Hormuz');
+    const gapDays = (overrides) => {
+      const deadline = T0 + 30 * DAY_MS;
+      const bet = (generatedAt) => forecast({
+        id: 'b-1', generationOrigin: 'bet_engine', probabilitySource: 'ensemble', generatedAt, deadline,
+        resolution: { kind: 'hard', metricKey: 'supply_chain:chokepoints:v4|riskScore(route==Strait of Hormuz)', operator: contract.operator, threshold: contract.threshold, window: 'at-deadline', deadline, sourceFeed: 'supply_chain:chokepoints:v4', ...overrides },
+      });
+      let ledger = {};
+      const history = [];
+      const days = [];
+      for (let day = 0; day <= 240; day += 1) {
+        const now = T0 + day * DAY_MS;
+        if (now < deadline) history.unshift(snapshot(now, [bet(now)]));
+        const read = history.slice(0, 200);
+        const registration = summarizeRegistration(ingestHistory(ledger, read, now), read, now);
+        if (Object.keys(registration.unregisteredByReason).length) days.push(day);
+        ledger = processResolutionCycle(ledger, read, {}, now).ledger;
+        for (const entry of Object.values(ledger)) if (entry.status === 'resolved' && !entry.receiptArchivedAt) entry.receiptArchivedAt = now;
+      }
+      return days;
+    };
+    assert.deepEqual(gapDays({}), [], 'valid spec');
+    assert.deepEqual(gapDays({ metricKey: 'supply_chain:chokepoints:v4|bogus(route==x)' }), [], 'unsupported metric');
+    assert.deepEqual(gapDays({ threshold: undefined }), [], 'missing threshold');
+  });
+
+  it('counts a window the ledger scores as registered even when the gate withheld one of its emissions (#7067)', () => {
+    const hard = forecast();
+    const withheld = forecast({ generatedAt: T0 + 3_600_000, resolution: { kind: 'unscored', reason: 'generic_question', deadline: T0 + DAY_MS } });
+    for (const order of [[hard, withheld], [withheld, hard]]) {
+      const history = order.map((emission) => snapshot(emission.generatedAt, [emission]));
+      const ledger = ingestHistory({}, history, T0 + 3_600_000);
+      const registration = summarizeRegistration(ledger, history, T0 + 3_600_000);
+      assert.equal(registration.ledgerRegisteredCount, 1);
+      assert.deepEqual(registration.unregisteredByReason, {});
+    }
+  });
+
+  it('names a lost window unregistered even after its deadline passes, when the resolver had a run to open it', () => {
+    // Published 5 days before its deadline; the ledger never opened it.
+    const lost = forecast({ deadline: T0 + 5 * DAY_MS });
+    const registration = summarizeRegistration({}, [snapshot(T0, [lost])], T0 + 10 * DAY_MS);
+    assert.deepEqual(registration.unregisteredByReason, { unregistered: 1 });
+  });
+
+  it('reports a window the ledger lost as unregistered, and nothing as null coverage', () => {
+    const history = [snapshot(T0, [forecast()])];
+    assert.deepEqual(summarizeRegistration({}, history, T0).unregisteredByReason, { unregistered: 1 });
+    const empty = summarizeRegistration({}, [], T0);
+    assert.equal(empty.publishedCount, 0);
+    assert.equal(empty.registrationCoverage, null);
+    assert.equal(empty.historyFrom, null);
+  });
+
+  it('carries the registration counts into the scorecard corpus block', () => {
+    const history = [snapshot(T0, [forecast()])];
+    const ledger = ingestHistory({}, history, T0);
+    const { corpus } = buildScorecard(ledger, T0, null, null, null, summarizeRegistration(ledger, history, T0));
+    assert.equal(corpus.publishedCount, 1);
+    assert.equal(corpus.ledgerRegisteredCount, 1);
+    assert.equal(corpus.registrationCoverage, 1);
+  });
+
+  it('records the SHA-256 of the receipt bytes it archived beside the object key', async () => {
+    const receipt = { key: 'a@1', resolvedAt: T0, entry: { outcome: 'YES' } };
+    const stored = new Map();
+    const archived = await appendR2Receipts([receipt], {
+      env: {
+        CLOUDFLARE_R2_ACCOUNT_ID: 'acct',
+        CLOUDFLARE_R2_ACCESS_KEY_ID: 'id',
+        CLOUDFLARE_R2_SECRET_ACCESS_KEY: 'secret',
+        CLOUDFLARE_R2_BUCKET: 'bucket',
+        CLOUDFLARE_R2_FORECAST_RESOLUTION_PREFIX: 'receipts',
+      },
+      // Stands in for the writer: the body is built here, not by the module
+      // under test, and the writer reports the digest of what it sent.
+      putObject: async (_config, key, payload) => {
+        const body = `${JSON.stringify(payload, null, 2)}\n`;
+        stored.set(key, body);
+        return { key, sha256: sha256(body) };
+      },
+    });
+    const [{ objectKey, receiptHash }] = archived;
+    assert.equal(receiptHash, sha256(stored.get(objectKey)), 'the hash is of the bytes stored');
+    // A writer that reports another body's digest is believed: the hash names what was written.
+    const [drifted] = await appendR2Receipts([receipt], {
+      env: { CLOUDFLARE_R2_ACCOUNT_ID: 'acct', CLOUDFLARE_R2_ACCESS_KEY_ID: 'id', CLOUDFLARE_R2_SECRET_ACCESS_KEY: 'secret', CLOUDFLARE_R2_BUCKET: 'bucket', CLOUDFLARE_R2_FORECAST_RESOLUTION_PREFIX: 'receipts' },
+      putObject: async () => ({ sha256: sha256('compressed body') }),
+    });
+    assert.equal(drifted.receiptHash, sha256('compressed body'));
+    // A writer that reports nothing falls back to hashing the serialized receipt.
+    const [fallback] = await appendR2Receipts([receipt], {
+      env: { CLOUDFLARE_R2_ACCOUNT_ID: 'acct', CLOUDFLARE_R2_ACCESS_KEY_ID: 'id', CLOUDFLARE_R2_SECRET_ACCESS_KEY: 'secret', CLOUDFLARE_R2_BUCKET: 'bucket', CLOUDFLARE_R2_FORECAST_RESOLUTION_PREFIX: 'receipts' },
+      putObject: async () => undefined,
+    });
+    assert.equal(fallback.receiptHash, sha256(`${JSON.stringify(receipt, null, 2)}\n`));
+    const ledger = { 'a@1': { key: 'a@1', status: 'resolved', outcome: 'YES', resolvedAt: T0 } };
+    markReceiptsArchived(ledger, archived, T0 + 1);
+    assert.equal(ledger['a@1'].receiptHash, receiptHash);
+  });
 });
 
 describe('pruneArchivedTerminalEntries', () => {
@@ -1871,6 +2147,7 @@ describe('Gate-2 promotion env wiring (review R3 #8)', () => {
       outcome: 'YES',
       probability: 0.8,
       generationOrigin: 'bet_engine',
+      probabilitySource: 'ensemble',
       domain: 'market',
       resolvedAt: T0,
     },
@@ -3285,6 +3562,206 @@ describe('extraction gate shadow shares the resolver feed view (#7067)', () => {
   });
 });
 
+describe('extraction gate enforcement end to end (#7067)', () => {
+  const GPS_FEED = 'intelligence:gpsjam:v2';
+  const PM_FEED = 'prediction:markets-bootstrap:v1';
+  const SCORECARD_KEY_LITERAL = 'forecast:scorecard:v1';
+  const FEEDS = {
+    [GPS_FEED]: { date: '2026-07-07', hexes: Array.from({ length: 14 }, () => ({ lat: 26, lon: 52, level: 'high', region: 'iran-iraq' })) },
+    [PM_FEED]: { geopolitical: [] },
+  };
+  const forecast = (overrides) => ({
+    probability: 0.6,
+    confidence: 0.5,
+    timeHorizon: '7d',
+    generationOrigin: 'legacy_detector',
+    generatedAt: T0,
+    ...overrides,
+  });
+
+  function emitted() {
+    return attachResolutionSpecs([
+      forecast({ id: 'fc-gps-gulf', domain: 'supply_chain', region: 'Persian Gulf', title: 'GPS jamming: Persian Gulf', signals: [{ type: 'gps_jamming', value: '12 jamming hexes in Persian Gulf', weight: 0.5 }] }),
+      forecast({ id: 'fc-gps-guinea', domain: 'supply_chain', region: 'Gulf of Guinea', title: 'GPS jamming: Gulf of Guinea', signals: [{ type: 'gps_jamming', value: '12 jamming hexes in Gulf of Guinea', weight: 0.5 }] }),
+      forecast({ id: 'fc-pm', domain: 'conflict', region: 'Sudan', title: 'Will the Sudan ceasefire hold?', signals: [{ type: 'prediction_market', value: 'Polymarket: 40%', weight: 0.8 }] }),
+      forecast({ id: 'fc-mil', domain: 'military', region: 'Baltic', title: 'Naval posture shift: Baltic', signals: [] }),
+    ], {}, T0);
+  }
+
+  async function run(forecasts, store, options) {
+    const logs = [];
+    const originalLog = console.log;
+    console.log = (...args) => logs.push(args.join(' '));
+    __setRedisStoreForTests(store);
+    try {
+      return { result: await runExtractionGate(forecasts, T0, options), logs };
+    } finally {
+      __setRedisStoreForTests(null);
+      console.log = originalLog;
+    }
+  }
+
+  it('with the switch off, emission, history and the ledger match the shadow-only run', async () => {
+    const reads = [];
+    const store = new Proxy(FEEDS, { get(target, key) { reads.push(key); return target[key]; } });
+    const forecasts = emitted();
+    const before = JSON.stringify(forecasts);
+    const { result } = await run(forecasts, store);
+    assert.equal(JSON.stringify(forecasts), before);
+    assert.equal(result.decision.mode, 'shadow');
+    assert.ok(!reads.includes(SCORECARD_KEY_LITERAL), 'the scorecard is not read while the gate is off');
+    const snapshot = buildHistorySnapshot({ generatedAt: T0, predictions: forecasts });
+    assert.equal(JSON.stringify(snapshot), JSON.stringify(buildHistorySnapshot({ generatedAt: T0, predictions: emitted() })));
+    const ledger = ingestHistory({}, [snapshot], T0);
+    assert.ok(Object.values(ledger).every((entry) => !('specOrigin' in entry)));
+  });
+
+  it('the shadow counter line names the deploy, so a spec change splits the counters', async () => {
+    const previous = process.env.RAILWAY_GIT_COMMIT_SHA;
+    process.env.RAILWAY_GIT_COMMIT_SHA = '0123456789abcdef';
+    try {
+      const { logs } = await run(emitted(), FEEDS);
+      assert.match(logs.find((line) => line.includes('[ExtractionGate] shadow')), / deploy=0123456789ab /);
+    } finally {
+      if (previous === undefined) delete process.env.RAILWAY_GIT_COMMIT_SHA;
+      else process.env.RAILWAY_GIT_COMMIT_SHA = previous;
+    }
+  });
+
+  it('enforcing on a healthy lane carries specOrigin through history into the ledger', async () => {
+    const forecasts = emitted();
+    const store = { ...FEEDS, [SCORECARD_KEY_LITERAL]: { generatedAt: T0, judgedLane: { pendingJudge: 3, instrumentedResolved: 9, scoredWithinSlaRate: 0.6 } } };
+    const { result, logs } = await run(forecasts, store, { enforced: true, nowMs: T0 });
+    assert.deepEqual(result.decision, { mode: 'enforce', downgrade: true, reason: 'judged_lane_healthy' });
+    assert.match(logs.find((line) => line.includes('[ExtractionGate] enforce')), /downgraded=\{"gps":1,"prediction_market":1\} withheld=\{"supply_chain":1,"military":1\}/);
+
+    const snapshot = buildHistorySnapshot({ generatedAt: T0, predictions: forecasts });
+    const history = Object.fromEntries(snapshot.predictions.map((entry) => [entry.id, entry.resolution]));
+    assert.equal(history['fc-pm'].kind, 'judged');
+    assert.equal(history['fc-pm'].specOrigin, 'hard_downgraded_unextractable');
+    assert.equal(history['fc-pm'].originalFamily, 'prediction_market');
+    assert.equal(history['fc-pm'].downgradeReason, 'metric_not_found');
+    assert.deepEqual([history['fc-gps-guinea'].kind, history['fc-gps-guinea'].reason], ['unscored', 'generic_judged_question']);
+
+    const ledger = ingestHistory({}, [snapshot], T0);
+    const byId = Object.fromEntries(Object.values(ledger).filter((entry) => !entry.parentKey).map((entry) => [entry.id, entry]));
+    assert.deepEqual(Object.keys(byId).sort(), ['fc-gps-gulf', 'fc-pm'], 'withheld forecasts open no window');
+    assert.equal(byId['fc-pm'].status, 'pending-judge');
+    assert.equal(byId['fc-pm'].specOrigin, 'hard_downgraded_unextractable');
+    assert.equal(byId['fc-gps-gulf'].specOrigin, 'hard');
+    assert.ok(!Object.values(ledger).some((entry) => entry.parentKey?.startsWith('fc-gps-guinea')), 'no horizon window for an unextractable metric');
+  });
+
+  // One market that drops out of the feed for a run: pass, fail, pass.
+  function flipFlopSnapshots() {
+    const H = 60 * 60 * 1000;
+    const healthy = { mode: 'enforce', downgrade: true, reason: 'judged_lane_healthy' };
+    return [0, 1, 2].map((run) => {
+      const at = T0 + run * H;
+      const forecasts = attachResolutionSpecs([forecast({ id: 'fc-pm', generatedAt: at, domain: 'conflict', region: 'Sudan', title: 'Will the Sudan ceasefire hold?', signals: [{ type: 'prediction_market', value: 'Polymarket: 40%', weight: 0.8 }] })], {}, at);
+      const verdicts = run === 1 ? evaluateExtractionShadow(forecasts, { [PM_FEED]: { geopolitical: [] } }) : [];
+      applyExtractionGate(forecasts, verdicts, at, healthy);
+      return buildHistorySnapshot({ generatedAt: at, predictions: forecasts });
+    });
+  }
+  const liveParents = (ledger) => Object.values(ledger).filter((entry) => !entry.parentKey && !entry.duplicateOf);
+
+  it('a forecast whose extraction flips pass, fail, pass keeps the one window it opened first', () => {
+    const snapshots = flipFlopSnapshots();
+    assert.equal(snapshots[1].predictions[0].resolution.specOrigin, 'hard_downgraded_unextractable');
+    const ledger = ingestHistory({}, snapshots, T0 + 3 * 60 * 60 * 1000);
+    const live = liveParents(ledger);
+    assert.deepEqual(live.map((entry) => [entry.spec.kind, entry.specOrigin]), [['hard', 'hard']]);
+    // The downgraded run counts as a sighting of the hard window.
+    assert.equal(live[0].lastSeenAt, T0 + 2 * 60 * 60 * 1000);
+    // And the reverse: a window opened by the downgrade absorbs the hard re-emissions.
+    const reversed = liveParents(ingestHistory({}, snapshots.slice(1), T0 + 3 * 60 * 60 * 1000));
+    assert.deepEqual(reversed.map((entry) => [entry.spec.kind, entry.specOrigin]), [['judged', 'hard_downgraded_unextractable']]);
+  });
+
+  it('a ledger already holding both twins converges to the first as a duplicate_window', () => {
+    const [hardRun, downgradedRun] = flipFlopSnapshots();
+    const nowMs = T0 + 3 * 60 * 60 * 1000;
+    const both = { ...ingestHistory({}, [hardRun], nowMs), ...ingestHistory({}, [downgradedRun], nowMs) };
+    assert.equal(liveParents(both).length, 2, 'fixture holds both windows');
+    const converged = ingestHistory(both, [], nowMs);
+    assert.deepEqual(liveParents(converged).map((entry) => entry.spec.kind), ['hard']);
+    const twin = Object.values(converged).find((entry) => entry.specOrigin === 'hard_downgraded_unextractable');
+    assert.deepEqual([twin.outcome, twin.evidence.reason, twin.duplicateOf], ['VOID', 'duplicate_window', liveParents(converged)[0].key]);
+  });
+
+  it('two downgrades of one forecast share a window when the title drifts: fail(A), pass, fail(B)', () => {
+    const H = 60 * 60 * 1000;
+    const healthy = { mode: 'enforce', downgrade: true, reason: 'judged_lane_healthy' };
+    const snapshots = [['Escalation risk: Mali', false], ['Escalation risk: Mali', true], ['Escalation surge: Mali', false]].map(([title, pass], run) => {
+      const at = T0 + run * H;
+      const forecasts = attachResolutionSpecs([forecast({ id: 'fc-mali', generatedAt: at, domain: 'conflict', region: 'Mali', title, signals: [{ type: 'ucdp', value: '14 UCDP conflict events', weight: 0.5 }] })], {}, at, { conflictCountFeedAvailable: true });
+      // Count specs never fail the dry run; force the verdict to exercise a
+      // judged downgrade whose question embeds the title.
+      const verdicts = pass ? [] : [{ id: 'fc-mali', outcome: 'fail', family: 'ucdp_zone', reason: 'metric_not_found' }];
+      applyExtractionGate(forecasts, verdicts, at, healthy);
+      return buildHistorySnapshot({ generatedAt: at, predictions: forecasts });
+    });
+    const [first, , third] = snapshots.map((snapshot) => snapshot.predictions[0].resolution);
+    assert.notEqual(first.question, third.question, 'fixture: the judged questions differ');
+    assert.equal(first.originalMetricKey, third.originalMetricKey);
+    const live = liveParents(ingestHistory({}, snapshots, T0 + 3 * H));
+    assert.deepEqual(live.map((entry) => [entry.spec.kind, entry.specOrigin]), [['judged', 'hard_downgraded_unextractable']]);
+    const converged = ingestHistory({ ...ingestHistory({}, [snapshots[0]], T0 + 3 * H), ...ingestHistory({}, [snapshots[2]], T0 + 3 * H) }, [], T0 + 3 * H);
+    assert.equal(liveParents(converged).length, 1);
+  });
+
+  it('a hard emission absorbed by its downgrade\'s judged window registers no horizon windows', () => {
+    const H = 60 * 60 * 1000;
+    const healthy = { mode: 'enforce', downgrade: true, reason: 'judged_lane_healthy' };
+    const run = (at, pass) => {
+      const forecasts = attachResolutionSpecs([forecast({ id: 'fc-gps', generatedAt: at, timeHorizon: '30d', domain: 'supply_chain', region: 'Persian Gulf', title: 'GPS jamming: Persian Gulf', projections: { h24: 0.5, d7: 0.6, d30: 0.6 }, signals: [{ type: 'gps_jamming', value: '12 jamming hexes in Persian Gulf', weight: 0.5 }] })], {}, at);
+      // A GPS downgrade is withheld today (supply_chain has only the generic
+      // question); a conflict domain stands in for a family that gains a
+      // specific question while keeping hard horizons.
+      forecasts[0].domain = 'conflict';
+      applyExtractionGate(forecasts, pass ? [] : [{ id: 'fc-gps', outcome: 'fail', family: 'gps', reason: 'metric_not_found' }], at, healthy);
+      return buildHistorySnapshot({ generatedAt: at, predictions: forecasts });
+    };
+    const control = ingestHistory({}, [run(T0, true)], T0 + H);
+    assert.ok(Object.values(control).some((entry) => entry.parentKey), 'control: a hard parent registers horizon windows');
+    const ledger = ingestHistory({}, [run(T0, false), run(T0 + H, true)], T0 + 2 * H);
+    assert.deepEqual(liveParents(ledger).map((entry) => entry.spec.kind), ['judged']);
+    assert.ok(!Object.values(ledger).some((entry) => entry.parentKey), 'no hard horizon hangs off the judged parent');
+  });
+
+  it('counts a withheld forecast once across hourly re-emissions, and again after its window closes', () => {
+    const H = 60 * 60 * 1000;
+    const emit = (at) => {
+      const forecasts = attachResolutionSpecs([forecast({ id: 'fc-mil', generatedAt: at, domain: 'military', region: 'Baltic', title: 'Naval posture shift: Baltic', signals: [] })], {}, at);
+      applyExtractionGate(forecasts, [], at, { mode: 'enforce', downgrade: false, reason: 'judged_lane_backlogged' });
+      return buildHistorySnapshot({ generatedAt: at, predictions: forecasts });
+    };
+    assert.deepEqual(summarizeWithheldEmissions([emit(T0 + H), emit(T0)]), { forecasts: 1, since: T0, byReason: { generic_judged_question: { military: 1 } } });
+    assert.equal(summarizeWithheldEmissions([emit(T0), emit(T0 + H), emit(T0 + HORIZON_MS['7d'])]).forecasts, 2);
+  });
+
+  it('counts published-but-withheld forecasts into the stored scorecard by reason and family', async () => {
+    const forecasts = emitted();
+    const store = { ...FEEDS, [SCORECARD_KEY_LITERAL]: { generatedAt: T0, judgedLane: { pendingJudge: 3, instrumentedResolved: 9, scoredWithinSlaRate: 0.6 } } };
+    await run(forecasts, store, { enforced: true, nowMs: T0 });
+    const snapshot = buildHistorySnapshot({ generatedAt: T0, predictions: forecasts });
+    const withheld = summarizeWithheldEmissions([snapshot, snapshot]);
+    assert.deepEqual(withheld, { forecasts: 2, since: T0, byReason: { generic_judged_question: { gps: 1, military: 1 } } });
+    const scorecard = buildScorecardForRun(ingestHistory({}, [snapshot], T0), { nowMs: T0, map: null, publication: null, withheldAtEmission: withheld });
+    assert.deepEqual(scorecard.withheldAtEmission, withheld);
+    assert.equal(summarizeWithheldEmissions([buildHistorySnapshot({ generatedAt: T0, predictions: emitted() })]).forecasts, 0);
+  });
+
+  it('a backlogged lane keeps unextractable specs hard', async () => {
+    const forecasts = emitted();
+    const store = { ...FEEDS, [SCORECARD_KEY_LITERAL]: { generatedAt: T0, judgedLane: { pendingJudge: 88, instrumentedResolved: 9, scoredWithinSlaRate: 0.6 } } };
+    const { result } = await run(forecasts, store, { enforced: true, nowMs: T0 });
+    assert.equal(result.decision.reason, 'judged_lane_backlogged');
+    assert.equal(forecasts.find((f) => f.id === 'fc-pm').resolution.kind, 'hard');
+  });
+});
+
 describe('projection horizon windows (#7075)', () => {
   const H = 60 * 60 * 1000;
   const HORMUZ = (riskScore) => ({ 'supply_chain:chokepoints:v4': { chokepoints: [{ route: 'Strait of Hormuz', riskScore }] } });
@@ -3404,6 +3881,43 @@ describe('projection horizon windows (#7075)', () => {
       const row = ledger[`${PARENT}@${horizon}`];
       assert.equal(row.projectionCurvesVersion, 1, horizon);
       assert.equal(row.lastSeenAt, later, `${horizon} saw the re-emission`);
+    }
+  });
+
+  it('links each window to the run that opened it, frozen at first registration (#9058)', () => {
+    const SHA_A = 'a'.repeat(64);
+    const SHA_B = 'b'.repeat(64);
+    const run = (generatedAt, runId, snapshotSha256, overrides = {}) => ({
+      ...snapshot(generatedAt, [projected({ generatedAt, ...overrides })]),
+      runId,
+      snapshotSha256,
+    });
+    const first = processResolutionCycle({}, [run(T0, '1700-a', SHA_A)], HORMUZ(40), T0);
+    for (const key of [PARENT, ...horizonKeys(first.ledger)]) {
+      assert.equal(first.ledger[key].runId, '1700-a', key);
+      assert.equal(first.ledger[key].snapshotSha256, SHA_A, key);
+    }
+
+    const later = T0 + 60 * 60 * 1000;
+    const second = processResolutionCycle(first.ledger, [run(T0, '1700-a', SHA_A), run(later, '1800-b', SHA_B, { probability: 0.7 })], HORMUZ(40), later);
+    assert.equal(second.ledger[PARENT].lastSeenProbability, 0.7, 'the later run is a sighting of the same window');
+    assert.equal(second.ledger[PARENT].runId, '1700-a', 'a sighting does not move the link');
+    assert.equal(second.ledger[PARENT].snapshotSha256, SHA_A);
+
+    const legacy = processResolutionCycle({}, [snapshot(T0, [projected()])], HORMUZ(40), T0);
+    assert.ok(!('runId' in legacy.ledger[PARENT]) && !('snapshotSha256' in legacy.ledger[PARENT]), 'history from before #9058 links nothing');
+    const malformed = processResolutionCycle({}, [run(T0, '1700-a', 'not-a-digest')], HORMUZ(40), T0);
+    assert.equal(malformed.ledger[PARENT].runId, '1700-a');
+    assert.ok(!('snapshotSha256' in malformed.ledger[PARENT]), 'a malformed digest is not copied');
+  });
+
+  it('holds a horizon window to its sample tolerance plus one resolver cycle, and keeps the commit (#7072)', () => {
+    const { ledger } = processResolutionCycle({}, [{ ...snapshot(T0, [projected()]), codeVersion: 'abc123' }], HORMUZ(40), T0);
+    const windows = horizonKeys(ledger).map((key) => ledger[key]);
+    assert.ok(windows.length > 0);
+    for (const window of windows) {
+      assert.deepEqual(window.sla, { lane: 'hard', ms: window.spec.sampleToleranceMs + DAY_MS + 60 * 60 * 1000 });
+      assert.equal(window.codeVersion, 'abc123');
     }
   });
 
@@ -3668,5 +4182,200 @@ describe('GPS rows after the hexCount shaper (#8990)', () => {
     const second = processResolutionCycle(first.ledger, [], zone(deadlineDate, 2), deadline + 2 * DAY_MS);
     assert.equal(second.ledger[pending.key].outcome, 'NO');
     assert.equal(second.ledger[pending.key].evidence.metricValue, 2);
+  });
+});
+
+describe('judged questions rendered from live state (#9067)', () => {
+  const HOUR_MS = 60 * 60 * 1000;
+  // One cyber forecast emitted hourly; its threat tally, and so the count its
+  // judged question renders, moves on every run.
+  function cyberEmission(hour, tally) {
+    const generatedAt = T0 + hour * HOUR_MS;
+    const [emitted] = attachResolutionSpecs([{
+      id: 'fc-cyber-us',
+      domain: 'cyber',
+      region: 'United States',
+      title: 'Cyber threat concentration: United States',
+      probability: 0.4,
+      confidence: 0.6,
+      timeHorizon: '7d',
+      generationOrigin: 'legacy_detector',
+      generatedAt,
+      signals: [{ type: 'cyber', value: `${tally} threats (malware)`, weight: 0.5 }],
+    }], {}, generatedAt);
+    return snapshot(generatedAt, [emitted]);
+  }
+  const TALLIES = [104, 165, 98, 130, 71, 140];
+  const history = TALLIES.map((tally, hour) => cyberEmission(hour, tally));
+  const judgedRows = (ledger) => Object.values(ledger).filter((entry) => entry.spec?.kind === 'judged');
+
+  it('fixture: each run renders a different question', () => {
+    assert.equal(new Set(history.map((snap) => snap.predictions[0].resolution.question)).size, TALLIES.length);
+  });
+
+  it('opens exactly one judged window and judges the first emission\'s question', () => {
+    const ledger = ingestHistory({}, history, T0);
+    const rows = judgedRows(ledger);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].status, 'pending-judge');
+    assert.equal(rows[0].spec.question, history[0].predictions[0].resolution.question);
+    assert.equal(rows[0].lastSeenAt, T0 + (TALLIES.length - 1) * HOUR_MS);
+  });
+
+  it('stays one window across hourly runs', () => {
+    let ledger = {};
+    for (let hour = 0; hour < history.length; hour += 1) ledger = ingestHistory(ledger, history.slice(0, hour + 1), T0 + hour * HOUR_MS);
+    assert.equal(judgedRows(ledger).length, 1);
+  });
+
+  it('a different region is still a different question', () => {
+    const other = cyberEmission(1, 104);
+    other.predictions[0] = { ...other.predictions[0], region: 'China', resolution: { ...other.predictions[0].resolution, question: other.predictions[0].resolution.question.replace('United States', 'China') } };
+    const ledger = ingestHistory({}, [history[0], other], T0);
+    assert.equal(judgedRows(ledger).length, 2);
+  });
+
+  it('a migrated hard cyber count and a later count question of the same forecast are one window', () => {
+    const hard = cyberEmission(0, 104);
+    hard.predictions[0] = {
+      ...hard.predictions[0],
+      resolution: {
+        kind: 'hard',
+        metricKey: `${CYBER_COUNT_SOURCE_FEED}|count(country==United States)`,
+        sourceFeed: CYBER_COUNT_SOURCE_FEED,
+        operator: '>=',
+        threshold: 39,
+        window: 'within-horizon',
+        deadline: T0 + 7 * DAY_MS,
+      },
+    };
+    const ledger = ingestHistory({}, [hard, ...history.slice(1)], T0);
+    const rows = Object.values(ledger);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].status, 'pending-judge');
+    assert.match(rows[0].spec.question, /materially elevated malicious cyber activity/);
+  });
+
+  // One theater forecast; its title follows the live surge type and the
+  // dominant operator country, while its id is the theater.
+  function militaryEmission(hour, title, { id = 'fc-military-iran', region = 'Middle East' } = {}) {
+    const generatedAt = T0 + hour * HOUR_MS;
+    const [emitted] = attachResolutionSpecs([{
+      id, domain: 'military', region, title, probability: 0.3, confidence: 0.5, timeHorizon: '7d',
+      generationOrigin: 'legacy_detector', generatedAt, signals: [],
+    }], {}, generatedAt);
+    return snapshot(generatedAt, [emitted]);
+  }
+  const MILITARY_TITLES = [
+    'Military posture escalation: Middle East',
+    'Elevated military air activity near Iran Theater',
+    'USA-linked airlift surge near Iran Theater',
+    'Qatar-linked airlift surge near Iran Theater',
+    'USA-linked fighter surge near Iran Theater',
+    'Unknown-linked fighter surge near Iran Theater',
+    'airlift surge near Iran Theater',
+  ];
+
+  it('a military theater forecast whose title changes with the surge opens one judged window', () => {
+    const runs = MILITARY_TITLES.map((title, hour) => militaryEmission(hour, title));
+    assert.equal(new Set(runs.map((snap) => snap.predictions[0].resolution.question)).size, MILITARY_TITLES.length, 'fixture: each run renders a different question');
+    const rows = judgedRows(ingestHistory({}, runs, T0));
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].spec.question, runs[0].predictions[0].resolution.question);
+  });
+
+  it('a different theater stays a different forecast, and other judged domains still key on the question', () => {
+    const korea = militaryEmission(1, 'Military posture escalation: Korean Peninsula', { id: 'fc-military-korea', region: 'Korean Peninsula' });
+    assert.equal(judgedRows(ingestHistory({}, [militaryEmission(0, MILITARY_TITLES[0]), korea], T0)).length, 2);
+    const conflict = (hour, title) => {
+      const generatedAt = T0 + hour * HOUR_MS;
+      const [emitted] = attachResolutionSpecs([{ id: 'fc-conflict-x', domain: 'conflict', region: 'Sudan', title, probability: 0.5, confidence: 0.5, timeHorizon: '7d', generationOrigin: 'state_derived', generatedAt, signals: [] }], {}, generatedAt);
+      return snapshot(generatedAt, [emitted]);
+    };
+    assert.equal(judgedRows(ingestHistory({}, [conflict(0, 'Escalation in Darfur'), conflict(1, 'Escalation in Khartoum')], T0)).length, 2);
+  });
+
+  it('merges military windows the old key multiplied, keeping the earliest', () => {
+    const multiplied = {};
+    for (const [hour, title] of MILITARY_TITLES.entries()) {
+      const [row] = Object.values(ingestHistory({}, [militaryEmission(hour, title)], T0 + hour * HOUR_MS));
+      multiplied[`${row.id}@${row.deadline}`] = row;
+    }
+    const ledger = ingestHistory(multiplied, [], T0 + 8 * HOUR_MS);
+    const [keeperKey, ...duplicateKeys] = Object.keys(multiplied).sort((a, b) => multiplied[a].generatedAt - multiplied[b].generatedAt);
+    assert.equal(ledger[keeperKey].status, 'pending-judge');
+    for (const key of duplicateKeys) assert.deepEqual([ledger[key].evidence.reason, ledger[key].duplicateOf], ['duplicate_window', keeperKey], key);
+  });
+
+  it('different horizons of one cyber or military forecast stay separate windows', () => {
+    const horizon = (snap, timeHorizon) => ({ ...snap, predictions: [{ ...snap.predictions[0], timeHorizon }] });
+    assert.equal(judgedRows(ingestHistory({}, [history[0], horizon(history[1], '30d')], T0)).length, 2);
+    const military = [militaryEmission(0, MILITARY_TITLES[0]), horizon(militaryEmission(1, MILITARY_TITLES[1]), '30d')];
+    assert.equal(judgedRows(ingestHistory({}, military, T0)).length, 2);
+  });
+
+  it('re-points a duplicate whose window became a duplicate, and re-archives its receipt', () => {
+    // Old key: A and B are different questions; C, emitted after A's
+    // deadline, was sealed as a duplicate of B and its receipt archived.
+    const runA = militaryEmission(0, MILITARY_TITLES[0]);
+    const runB = militaryEmission(24, MILITARY_TITLES[2]);
+    const runC = militaryEmission(7 * 24 + 1, MILITARY_TITLES[2]);
+    const row = (snap) => Object.values(ingestHistory({}, [snap], snap.generatedAt))[0];
+    const [a, b, c] = [row(runA), row(runB), row(runC)];
+    const [keyA, keyB, keyC] = [a, b, c].map((entry) => `${entry.id}@${entry.deadline}`);
+    const sealedAt = runC.generatedAt + HOUR_MS;
+    const stored = {
+      [keyA]: a,
+      [keyB]: b,
+      [keyC]: { ...c, status: 'resolved', outcome: 'VOID', resolvedAt: sealedAt, sealedAt, duplicateOf: keyB, receiptArchivedAt: sealedAt, evidence: { reason: 'duplicate_window', duplicateOf: keyB, supersededStatus: 'pending-judge', voidedAt: sealedAt } },
+    };
+    const NOW = sealedAt + HOUR_MS;
+    const chained = (ledger) => Object.entries(ledger).filter(([, entry]) => typeof entry.duplicateOf === 'string' && typeof ledger[entry.duplicateOf]?.duplicateOf === 'string');
+
+    // With C's emission in the history read, a new window opens for it and C
+    // names that window.
+    const ledger = ingestHistory(stored, [runA, runB, runC], NOW);
+    assert.equal(ledger[keyB].duplicateOf, keyA);
+    const live = Object.keys(ledger).find((key) => key.startsWith(`${keyC}~`));
+    assert.ok(live, 'a window opens for C\'s emission beside the sealed row');
+    assert.deepEqual([ledger[keyC].duplicateOf, ledger[keyC].evidence.duplicateOf], [live, live]);
+    assert.deepEqual(chained(ledger), []);
+    assert.ok(collectUnarchivedReceipts(ledger).some((receipt) => receipt.key === keyC));
+    assert.deepEqual(ingestHistory(ledger, [runA, runB, runC], NOW + HOUR_MS), ledger, 'a second run changes nothing');
+
+    // Without history, C follows the chain to the window that kept B.
+    const bare = ingestHistory(stored, [], NOW);
+    assert.equal(bare[keyC].duplicateOf, keyA);
+    assert.deepEqual(chained(bare), []);
+  });
+
+  it('merges windows the old key multiplied: keeps the earliest and voids the rest as duplicate_window', () => {
+    // The ledger the old key wrote: one window per rendered question.
+    const multiplied = {};
+    for (const [hour, snap] of history.entries()) {
+      const [row] = Object.values(ingestHistory({}, [snap], T0 + hour * HOUR_MS));
+      multiplied[`${row.id}@${row.deadline}`] = row;
+    }
+    assert.equal(Object.keys(multiplied).length, TALLIES.length, 'fixture: one window per rendered question');
+    // A voided duplicate that already had its receipt archived gets it
+    // re-archived with the correction.
+    const resolvedKey = Object.keys(multiplied)[2];
+    Object.assign(multiplied[resolvedKey], { status: 'resolved', outcome: 'NO', resolvedAt: T0 + 3 * HOUR_MS, sealedAt: T0 + 3 * HOUR_MS, receiptArchivedAt: T0 + 3 * HOUR_MS, evidence: { reason: 'judged' } });
+
+    const NOW = T0 + 8 * HOUR_MS;
+    const ledger = ingestHistory(multiplied, [], NOW);
+    const [keeperKey, ...duplicateKeys] = Object.keys(multiplied).sort((a, b) => multiplied[a].generatedAt - multiplied[b].generatedAt);
+    assert.equal(ledger[keeperKey].status, 'pending-judge');
+    assert.equal(ledger[keeperKey].duplicateOf, undefined);
+    for (const key of duplicateKeys) {
+      assert.equal(ledger[key].outcome, 'VOID', key);
+      assert.equal(ledger[key].evidence.reason, 'duplicate_window', key);
+      assert.equal(ledger[key].duplicateOf, keeperKey, key);
+    }
+    assert.equal(ledger[resolvedKey].evidence.supersededOutcome, 'NO');
+    assert.ok(collectUnarchivedReceipts(ledger).some((receipt) => receipt.key === resolvedKey));
+
+    const again = ingestHistory(ledger, [], NOW + HOUR_MS);
+    assert.deepEqual(again, ledger, 'a second run changes nothing');
   });
 });

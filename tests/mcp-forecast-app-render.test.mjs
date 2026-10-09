@@ -54,6 +54,85 @@ function hostReply(win, id, result, source = win.eval('window.parent')) {
 function enableTools(win) { hostReply(win, 1, { hostCapabilities: { serverTools: {} } }); }
 function theaterReply(win, request, source = theaterResponse) { hostReply(win, request.id, { structuredContent: { data: { forecastTheaters: source } } }); }
 
+describe('forecast public request errors', () => {
+  const publicErrors = [
+    [-32602, 'Invalid panel request.'],
+    [-32602, 'Panel request expired. Open or refresh the panel.', 'This panel request was not accepted. Open a new forecasts panel.'],
+    [-32602, 'Open a forecast panel before reading original evidence.'],
+    [-32602, 'Panel request only covers bounded forecast lists, original cases and latest theater summaries.'],
+    [-32029, 'This panel reached its read budget. Refresh to start another request.'],
+    [-32029, 'Too many requests'],
+    [-32603, 'Service temporarily unavailable, retry in a moment.'],
+    [-32603, 'Service temporarily unavailable'],
+    [-32603, 'Internal error: data fetch failed'],
+    [-32003, 'Required data inputs are unavailable'],
+  ];
+  for (const kind of ['case', 'theater']) {
+    async function start() {
+      const state = await mount({ ...payload([{ ...forecast, caseFile: undefined, hasCaseFile: true }]), panelRequest: { panel: 'forecasts', token: 'controlled-forecast-receipt' } });
+      enableTools(state.win);
+      if (kind === 'case') {
+        const details = state.doc.querySelector('#list details');
+        details.open = true; details.dispatchEvent(new state.win.Event('toggle'));
+      } else state.doc.getElementById('load-theaters').click();
+      return { ...state, target: kind === 'case' ? state.doc.querySelector('#list details') : state.doc.getElementById('theaters'), request: state.messages.find(m => m.method === 'tools/call') };
+    }
+    it('preserves allowlisted public ' + kind + ' errors without exposing response data or making another call', async () => {
+      for (const [code, message, notice = message] of publicErrors) {
+        const { win, doc, target, request, messages } = await start();
+        const error = { code, message, data: { token: 'private-token-sentinel', account: 'private-account-sentinel', message: '<img src=x onerror=alert(1)>' } };
+        const reply = id => win.dispatchEvent(new win.MessageEvent('message', { source: win.eval('window.parent'), data: { jsonrpc: '2.0', id, error } }));
+        reply('unrelated-request'); assert.match(target.textContent, /Loading/);
+        reply(request.id);
+        assert.ok(target.textContent.includes(notice), target.textContent);
+        assert.doesNotMatch(target.textContent, /Panel request expired/);
+        assert.ok(target.textContent.includes(String(code)), target.textContent);
+        assert.doesNotMatch(doc.getElementById('root').textContent, /private-token-sentinel|private-account-sentinel|onerror/);
+        assert.equal(doc.querySelector('img'), null);
+        assert.equal(messages.filter(m => m.method === 'tools/call').length, 1);
+        assert.match(target.textContent, /Retry/);
+      }
+    });
+    it('keeps the generic ' + kind + ' fallback for unclassified or mismatched errors', async () => {
+      for (const envelope of [
+        { error: { code: -32602, message: 'private-token-sentinel <img src=x>' } },
+        { error: { code: -32603, message: publicErrors[1][1] } },
+        { error: { code: '-32602', message: publicErrors[1][1] } },
+        { result: { isError: true, content: [{ type: 'text', text: 'private-token-sentinel <img src=x>' }] } },
+        { result: { isError: true, structuredContent: { error: 'private-token-sentinel' } } },
+        { result: { structuredContent: { error: 'private-token-sentinel https://private.invalid/token' } } },
+        { result: { content: [{ type: 'text', text: JSON.stringify({ error: 'private-token-sentinel' }) }] } },
+        { result: { isError: true, structuredContent: { unknown: true }, content: [{ type: 'text', text: JSON.stringify({ _budget_exceeded: true }) }] } },
+        { result: { isError: true, structuredContent: { _budget_exceeded: 'true', _jmespath_error: {} } } },
+      ]) {
+        const { win, doc, target, request, messages } = await start();
+        win.dispatchEvent(new win.MessageEvent('message', { source: win.eval('window.parent'), data: { jsonrpc: '2.0', id: request.id, ...envelope } }));
+        assert.match(target.textContent, new RegExp('Original ' + kind + ' request failed\\.'));
+        assert.doesNotMatch(doc.getElementById('root').textContent, /private-token-sentinel|Panel request expired/);
+        assert.equal(doc.querySelector('img'), null);
+        assert.equal(messages.filter(m => m.method === 'tools/call').length, 1);
+      }
+    });
+    it('preserves safe budget and projection notices in ' + kind + ' tool errors and soft results', async () => {
+      for (const isError of [true, false]) {
+        for (const [sentinel, expected] of [[{ _budget_exceeded: true }, /too large/], [{ _jmespath_error: 'invalid_expression: private-token-sentinel' }, /projection could not be applied/]]) {
+          for (const structured of [true, false]) {
+            const { win, doc, target, request, messages } = await start();
+            const payload = { ...sentinel, error: 'private-token-sentinel', token: 'private-token-sentinel', account: 'private-account-sentinel' };
+            const result = structured ? { isError, structuredContent: payload, content: [{ type: 'text', text: 'private-token-sentinel' }] } : { isError, content: [{ type: 'text', text: JSON.stringify(payload) }] };
+            hostReply(win, request.id, result, null); assert.match(target.textContent, /Loading/);
+            hostReply(win, request.id, result);
+            assert.match(target.textContent, expected);
+            assert.doesNotMatch(doc.getElementById('root').textContent, /private-token-sentinel|private-account-sentinel/);
+            assert.equal(messages.filter(m => m.method === 'tools/call').length, 1);
+            assert.match(target.textContent, /Retry/);
+          }
+        }
+      }
+    });
+  }
+});
+
 describe('public forecast scored horizons render', () => {
   const gradingNote = JSON.parse(readFileSync(new URL('../src/locales/en.json', import.meta.url))).components.forecast.horizons.hint;
   const history = [{ forecastId: forecast.id, outcome: 'VOID', voidReason: 'judge_disagreement' }];

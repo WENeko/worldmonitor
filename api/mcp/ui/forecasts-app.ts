@@ -99,6 +99,7 @@ const RENDER = `
       late_read: "The feed was not read close enough to the deadline",
       feed_unavailable: "The data feed was unavailable after the deadline",
       resolver_could_not_read_feed: "Our resolver could not read this feed correctly",
+      base_rate_placeholder: "Opened on a base-rate placeholder, not a model forecast",
       other: "Could not be resolved"
     };
     function indexHistory(rows) {
@@ -243,6 +244,29 @@ const RENDER = `
       }
       reportSize();
     }
+    function publicRequestError(error) {
+      if (!error || typeof error !== "object" || Array.isArray(error)) return "";
+      var allowed = [
+        [-32602, "Invalid panel request."],
+        [-32602, "Panel request expired. Open or refresh the panel.", "This panel request was not accepted. Open a new forecasts panel."],
+        [-32602, "Open a forecast panel before reading original evidence."],
+        [-32602, "Panel request only covers bounded forecast lists, original cases and latest theater summaries."],
+        [-32029, "This panel reached its read budget. Refresh to start another request."],
+        [-32029, "Too many requests"],
+        [-32603, "Service temporarily unavailable, retry in a moment."],
+        [-32603, "Service temporarily unavailable"],
+        [-32603, "Internal error: data fetch failed"],
+        [-32003, "Required data inputs are unavailable"]
+      ];
+      var match = allowed.find(function (entry) { return error.code === entry[0] && error.message === entry[1]; });
+      return match ? (match[2] || match[1]) + " (Error " + match[0] + ")" : "";
+    }
+    function publicToolError(payload) {
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "";
+      if (payload._budget_exceeded === true) return softError({ _budget_exceeded: true });
+      if (typeof payload._jmespath_error === "string" && payload._jmespath_error) return softError({ _jmespath_error: true });
+      return "";
+    }
     function loadTheaters() {
       if (theaterState.pending) return;
       if (!hostCapabilities.serverTools || typeof hostCapabilities.serverTools !== "object") {
@@ -260,10 +284,11 @@ const RENDER = `
         if (event.source !== parentWin || theaterState.key !== theaterKey) return;
         var message = event.data;
         if (!message || message.jsonrpc !== "2.0" || message.id !== id) return;
-        if (message.error || message.result && message.result.isError) { failure("Original theater request failed. Retry manually or refresh forecasts if the panel expired."); return; }
+        if (message.error) { failure(publicRequestError(message.error) || "Original theater request failed. Retry manually or refresh forecasts if the panel expired."); return; }
         var payload = extractToolData(message.result);
-        var error = softError(payload);
-        if (error) { failure(error); return; }
+        if (message.result && message.result.isError || softError(payload)) {
+          failure(publicToolError(payload) || "Original theater request failed. Retry manually or refresh forecasts if the panel expired."); return;
+        }
         var envelope = object(payload);
         if (Object.prototype.hasOwnProperty.call(envelope, "projection")) envelope = object(envelope.projection);
         var value = object(object(envelope.data).forecastTheaters);
@@ -343,12 +368,10 @@ const RENDER = `
         if (event.source !== parentWin) return;
         var message = event.data;
         if (!message || message.jsonrpc !== "2.0" || message.id !== requestId) return;
-        if (message.error) { failure("Original case request failed."); return; }
+        if (message.error) { failure(publicRequestError(message.error) || "Original case request failed."); return; }
         var result = message.result;
         var payload = extractToolData(result);
-        var error = softError(payload);
-        if (result && result.isError) { failure("Original case request failed."); return; }
-        if (error) { failure(error); return; }
+        if (result && result.isError || softError(payload)) { failure(publicToolError(payload) || "Original case request failed."); return; }
         var envelope = object(payload);
         if (Object.prototype.hasOwnProperty.call(envelope, "projection")) envelope = object(envelope.projection);
         var detail = object(object(envelope.data).forecastCase);

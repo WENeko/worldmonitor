@@ -166,6 +166,9 @@ describe('getForecastScorecard backend status', () => {
           // Operator observability written by the resolutions seeder. It is not
           // in the proto, so it must not ride out on this typed response.
           judgedLane: { pendingJudge: 3, attemptClasses: { archive_incomplete: 9 }, scoredWithinSlaRate: 0.5 },
+          // The go-forward VOID-share cohort (#4930) reaches the public only
+          // through the methodology sentence.
+          goForward: { since: '2026-10-08', resolved: 4, void: 1, voidShare: 0.25, voidByReason: { all_judges_void: 1 } },
         },
       }),
     }), { status: 200 })) as typeof fetch;
@@ -175,6 +178,8 @@ describe('getForecastScorecard backend status', () => {
     assert.equal(res.totals?.entries, 1, 'declared fields still pass through');
     assert.equal(JSON.stringify(res).includes('judgedLane'), false);
     assert.equal(JSON.stringify(res).includes('archive_incomplete'), false);
+    assert.equal(JSON.stringify(res).includes('goForward'), false);
+    assert.equal(JSON.stringify(res).includes('all_judges_void'), false);
   });
 
   it('the public RPC serializes only declared top-level cache fields', async () => {
@@ -314,6 +319,28 @@ describe('getForecastScorecard backend status', () => {
       assert.ok(!Object.hasOwn(skill ?? {}, 'preLineageAnchorCount'));
     }
     assert.ok(!Object.hasOwn((selectDeclaredScorecardFields(data) as { skill?: object }).skill ?? {}, 'preLineageAnchorCount'));
+  });
+
+  // The corpus block is internal until the public contract has room (#7072).
+  it('keeps the internal corpus block off REST, MCP and the /accuracy/ capture', () => {
+    const data = { totals: { entries: 1 }, corpus: { publishedCount: 4, resolvedWithinSlaCount: 1, voidByReason: { feed_unavailable: 1 } } };
+    assert.equal('corpus' in selectScorecardFields(data), false);
+    assert.equal('corpus' in selectScorecardFields(data, { extended: true }), false);
+    assert.equal('corpus' in (selectDeclaredScorecardFields(data) ?? {}), false);
+  });
+
+  it('keeps the internal uncertainty intervals off REST, MCP and the /accuracy/ capture (#7072)', () => {
+    const internal = ['overallLogScore', 'skillLogScore', 'byDomain', 'byGenerationOrigin', 'vsMarket'];
+    const uncertainty = { method: 'm', overallBrier: null, skillBrier: null, ...Object.fromEntries(internal.map((name) => [name, { count: 1 }])) };
+    const outputs = [
+      selectScorecardFields({ uncertainty }).uncertainty,
+      selectScorecardFields({ uncertainty }, { extended: true }).uncertainty,
+      (selectDeclaredScorecardFields({ uncertainty }) as { uncertainty?: object }).uncertainty,
+    ];
+    for (const output of outputs) {
+      assert.equal((output as { method?: string })?.method, 'm');
+      for (const name of internal) assert.ok(!Object.hasOwn(output ?? {}, name), name);
+    }
   });
 
   it('filters the interval and funnel blocks with the same member lists the /accuracy/ page uses', () => {

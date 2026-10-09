@@ -702,6 +702,17 @@ function buildQuestion(pred) {
   const region = pred.region || 'unspecified region';
   const domain = pred.domain || 'unspecified domain';
   const horizon = pred.timeHorizon || 'unspecified horizon';
+  return specificJudgedQuestion(pred) ?? `Will "${title}" (${domain}, ${region}) resolve YES within its ${horizon} horizon?`;
+}
+
+// The domain's own judged question, or null when the forecast would get only
+// the generic "resolve YES" template, which the extraction gate withholds
+// from the judged lane (#7067, carried over from #5234).
+function specificJudgedQuestion(pred) {
+  const title = pred.title || '(untitled forecast)';
+  const region = pred.region || 'unspecified region';
+  const domain = pred.domain || 'unspecified domain';
+  const horizon = pred.timeHorizon || 'unspecified horizon';
   // Conflict (#5136) and unrest/political (#5091) forecasts are now judged. A
   // sharper, escalation-framed question resolves more reliably against the news
   // archive than the generic "resolve YES" phrasing.
@@ -717,8 +728,17 @@ function buildQuestion(pred) {
       return `Within the ${horizon} horizon after this forecast, did public threat-intelligence sources report at least ${metrics.threshold} new malicious cyber threat indicators (malware hosts, command-and-control servers, phishing or scanning IPs) attributed to ${region}?`;
     }
   }
-  return `Will "${title}" (${domain}, ${region}) resolve YES within its ${horizon} horizon?`;
+  return null;
 }
+
+// Judged domains whose question text is rendered from live state, so it can
+// change between hourly runs of one forecast: the cyber question names a count
+// derived from the live threat tally, and a migrated cyber count asks a
+// different template (#9067); a military theater forecast's title follows the
+// live dominant operator country and surge type, while its id is the theater.
+// The resolver keys their judged windows on the forecast (id, region, horizon)
+// rather than the text, so the first emission's question is the one judged.
+export const FROZEN_JUDGED_QUESTION_DOMAINS = new Set(['cyber', 'military']);
 
 function buildJudgedSpec(pred, generatedAt) {
   return {
@@ -979,4 +999,109 @@ export function summarizeExtractionShadow(verdicts) {
     bump(summary.byDomain[domain] ??= {}, outcome);
   }
   return summary;
+}
+
+// ── Emission-time extraction gate, enforcement (#7067) ──────────────────
+//
+// The activation switch. While false, the gate stays in shadow and emission
+// is unchanged. Flip it only after the shadow cohort from 7 daily runs is
+// posted on #7067 and the judged lane has held below the pending-judge bar
+// without growing for 7 runs. The runtime check below covers only the
+// current reading of that bar.
+export const EXTRACTION_GATE_ENFORCED = false;
+
+// Downgrades wait while the judged lane holds this many pending entries or
+// more, so a hard VOID is never traded for a judged backlog (#7067 section 3).
+export const EXTRACTION_GATE_MAX_PENDING_JUDGE = 20;
+
+export const SPEC_ORIGIN_HARD = 'hard';
+export const SPEC_ORIGIN_JUDGED = 'judged';
+export const SPEC_ORIGIN_HARD_DOWNGRADED = 'hard_downgraded_unextractable';
+export const GENERIC_JUDGED_QUESTION_REASON = 'generic_judged_question';
+export const PARENT_UNEXTRACTABLE_HORIZON_REASON = 'parent_unextractable';
+
+// The judged lane must score most of what it resolves on time before it takes
+// downgrades. #7067 forbids moving failures into a broken lane and counts a
+// downgrade as a success only if it raises scored-within-SLA yield; below half,
+// a downgraded row is more likely to end VOID or late than scored on time,
+// which is the hard-path failure moved to another lane.
+export const EXTRACTION_GATE_MIN_SCORED_WITHIN_SLA_RATE = 0.5;
+
+// The scorecard is written by the daily resolver. Same bar as the calibration
+// gate on the same key (CALIBRATION_GATE_MAX_AGE_MS): 2 missed runs and a
+// reading no longer describes the lane.
+export const EXTRACTION_GATE_SCORECARD_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+
+// Pure. `scorecard` is the stored forecast:scorecard:v1 value, or null when it
+// could not be read. Enforcement without a healthy lane still stamps
+// specOrigin and withholds generic questions; only downgrades wait.
+export function decideExtractionGateMode(scorecard, { enforced = EXTRACTION_GATE_ENFORCED, nowMs = NaN } = {}) {
+  if (!enforced) return { mode: 'shadow', downgrade: false, reason: 'disabled' };
+  const hold = (reason) => ({ mode: 'enforce', downgrade: false, reason });
+  const judgedLane = scorecard?.judgedLane;
+  const pendingJudge = judgedLane?.pendingJudge;
+  if (!judgedLane || typeof pendingJudge !== 'number' || !Number.isFinite(pendingJudge)) return hold('judged_lane_unreadable');
+  if (!(nowMs - Number(scorecard.generatedAt) <= EXTRACTION_GATE_SCORECARD_MAX_AGE_MS)) return hold('judged_lane_stale');
+  if (pendingJudge >= EXTRACTION_GATE_MAX_PENDING_JUDGE) return hold('judged_lane_backlogged');
+  // The issue requires first-attempt and within-SLA figures to be measurable;
+  // with no instrumented resolution they read 0 and prove nothing.
+  const rate = judgedLane.scoredWithinSlaRate;
+  if (!(Number(judgedLane.instrumentedResolved) > 0) || typeof rate !== 'number' || !Number.isFinite(rate)) {
+    return hold('judged_lane_unmeasured');
+  }
+  if (rate < EXTRACTION_GATE_MIN_SCORED_WITHIN_SLA_RATE) return hold('judged_lane_below_sla');
+  return { mode: 'enforce', downgrade: true, reason: 'judged_lane_healthy' };
+}
+
+// Applies an enforcing decision to published forecasts in place. Every spec
+// gets a specOrigin, so ledger rows emitted under the gate separate from
+// legacy rows. A failed extraction becomes a judged spec that keeps the
+// original family, metric and reason, and its hard horizon contracts (same
+// metric) become unscored. A judged spec whose only question is the generic
+// template becomes unscored with a stated reason and never reaches the
+// judged lane. Pure apart from the in-place writes; returns per-family counts.
+export function applyExtractionGate(predictions, verdicts, generatedAt, decision) {
+  const counts = { downgraded: {}, withheld: {} };
+  if (decision?.mode !== 'enforce') return counts;
+  const bump = (bucket, key) => { bucket[key] = (bucket[key] || 0) + 1; };
+  const failures = new Map(verdicts.filter((v) => v.outcome === 'fail').map((v) => [v.id, v]));
+  for (const pred of predictions) {
+    const spec = pred.resolution;
+    if (spec?.kind !== 'hard' && spec?.kind !== 'judged') continue;
+    const failure = spec.kind === 'hard' ? failures.get(pred.id) : null;
+    let next;
+    if (failure && decision.downgrade) {
+      next = {
+        ...buildJudgedSpec(pred, generatedAt),
+        specOrigin: SPEC_ORIGIN_HARD_DOWNGRADED,
+        originalFamily: failure.family,
+        originalMetricKey: spec.metricKey,
+        originalSourceFeed: spec.sourceFeed,
+        downgradeReason: failure.reason,
+      };
+      bump(counts.downgraded, failure.family);
+      pred.horizonResolutions = unscoreHardHorizons(pred.horizonResolutions);
+    } else {
+      next = spec.kind === 'hard'
+        ? { ...spec, specOrigin: SPEC_ORIGIN_HARD, specFamily: hardFamilyFor(pred) || 'unknown' }
+        : { ...spec, specOrigin: SPEC_ORIGIN_JUDGED };
+    }
+    if (next.kind === 'judged' && specificJudgedQuestion(pred) == null) {
+      const { question: _generic, ...kept } = next;
+      next = { ...kept, kind: 'unscored', reason: GENERIC_JUDGED_QUESTION_REASON };
+      bump(counts.withheld, pred.domain || 'unknown');
+    }
+    pred.resolution = next;
+  }
+  return counts;
+}
+
+function unscoreHardHorizons(horizonResolutions) {
+  if (!horizonResolutions || typeof horizonResolutions !== 'object') return horizonResolutions;
+  return Object.fromEntries(Object.entries(horizonResolutions).map(([horizon, spec]) => [
+    horizon,
+    spec?.kind === 'hard'
+      ? { horizon: spec.horizon, timeHorizon: spec.timeHorizon, kind: 'unscored', reason: PARENT_UNEXTRACTABLE_HORIZON_REASON }
+      : spec,
+  ]));
 }

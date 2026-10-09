@@ -135,6 +135,24 @@ export function sourceProbability(entry) {
   return value === undefined ? NaN : Math.max(0, Math.min(1, value));
 }
 
+// The forecaster's own value before the #7071 market blend, frozen with the
+// window's opening calibration. A window that opened without an anchor was
+// never blended, so its pre-blend value is the post-blend one. NaN when the
+// opening anchor or its lineage is unknown: an anchor recorded without
+// `internalProbability`, or any rescore not restored from the first emission,
+// since the old overwrite could have dropped an opening anchor without a trace.
+export function preBlendProbability(entry) {
+  const calibration = entry?.calibration;
+  const anchored = Number.isFinite(Number(calibration?.marketPrice)) || Number.isFinite(calibration?.marketBlendedProbability);
+  if (anchored) {
+    const value = calibration.internalProbability;
+    return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : NaN;
+  }
+  const rescore = entry?.rescore;
+  if (rescore && !rescore.restoredFromHistory) return NaN;
+  return sourceProbability(entry);
+}
+
 function domainOf(entry) {
   return entry?.domain || 'unknown';
 }
@@ -500,7 +518,7 @@ export function resolveCalibrationMapForRun(existing, ledger, nowMs, options = {
   }
   const { triggers, carry } = refitTrigger(parsed, ledger, nowMs, options);
   if (!triggers.length) return { map: parsed, action: 'kept' };
-  const shadow = evaluateCalibrationShadow(ledger, parsed, nowMs);
+  const shadow = evaluateCalibrationShadow(ledger, parsed, nowMs, { preBlendStage: false });
   const trigger = triggers.find((candidate) => !holdsRefit(candidate, shadow));
   if (!trigger) return { map: parsed, action: 'kept', held: triggers[0] };
   const map = fitCalibrationMap(ledger, nowMs, { ...options, codeVersion, dataVersion: parsed.dataVersion + 1, refitReason: trigger.reason, carry });
@@ -531,7 +549,7 @@ export function evaluateCalibrationCohort(entries, map, context = {}, options = 
     .map((entry) => {
       const domain = domainOf(entry);
       const raw = sourceProbability(entry);
-      return { domain, family: familyKey(entry), y: entry.outcome === 'YES' ? 1 : 0, raw, calibrated: applyCalibration(map, domain, raw) };
+      return { domain, family: familyKey(entry), y: entry.outcome === 'YES' ? 1 : 0, internal: preBlendProbability(entry), raw, calibrated: applyCalibration(map, domain, raw) };
     });
   const modeByDomain = modeByDomainOf(map);
   const forward = summarizeCalibrationShadow(rows, modeByDomain, options);
@@ -662,6 +680,27 @@ export function recordCalibrationPublication(previous, decision, nowMs) {
     ? { at: nowMs, from: previousMode, to: decision.mode, reason: decision.reason, gate: decision.gate }
     : previous?.lastFlip ?? null;
   return { flipped, record: { ...decision, decidedAt: nowMs, lastFlip } };
+}
+
+/**
+ * The decision and map a run scored with, for its archived input snapshot
+ * (#9058), so a replay applies the same calibration. Per-domain fit inputs
+ * (one fingerprint per ledger row) are dropped: applying a map reads only
+ * each domain's mode and knots.
+ */
+export function archiveCalibrationPublication(publication, decidedAt) {
+  const { map, decision } = publication ?? {};
+  if (!decision) return null;
+  const domains = map?.domains && typeof map.domains === 'object'
+    ? Object.fromEntries(Object.entries(map.domains).map(([domain, { inputs: _inputs, ...fit }]) => [domain, fit]))
+    : null;
+  return {
+    mode: decision.mode,
+    reason: decision.reason,
+    mapVersion: decision.mapVersion ?? null,
+    decidedAt,
+    map: map ? { ...map, domains } : null,
+  };
 }
 
 /**

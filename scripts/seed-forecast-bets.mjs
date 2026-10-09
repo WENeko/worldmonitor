@@ -9,11 +9,13 @@
 // It NEVER writes the user-facing canonical (forecast:predictions:v2) — shadow
 // bets are invisible to users but ingested by the resolver so they score into
 // the scorecard's byGenerationOrigin='bet_engine' slice (the Gate-1 evidence).
+// Only a bet carrying an ensemble probability opens a scored window; the base
+// rate is a placeholder and the recorded baseline (#8990).
 // Railway cron; mirrors the seed-forecast-resolutions service.
 
 import {
   loadEnvFile, getRedisCredentials, CHROME_UA, writeFreshnessMetadata,
-  GRACEFUL_FETCH_FAILURE_EXIT_CODE,
+  GRACEFUL_FETCH_FAILURE_EXIT_CODE, getDeployRevision,
 } from './_seed-utils.mjs';
 import { generateBets } from './_bet-templates.mjs';
 import { ENERGY_BET_TEMPLATES, EIA_PETROLEUM_FEED } from './_bet-templates-energy.mjs';
@@ -21,10 +23,11 @@ import { COMMODITY_BET_TEMPLATES, COMMODITY_FEED } from './_bet-templates-commod
 import { MARKET_BET_TEMPLATES, MARKET_FEED, MARKET_SLOT_COUNT } from './_bet-templates-markets.mjs';
 import { MARKET_GEO_BET_TEMPLATES, MARKET_GEO_SLOT_COUNT } from './_bet-templates-markets-geo.mjs';
 import { MACRO_BET_TEMPLATES, FRED_FEED_KEYS } from './_bet-templates-macro.mjs';
-import { ensembleProbability } from './_forecast-ensemble.mjs';
+import { ensembleProbability, ENSEMBLE_PROMPT_DIGEST } from './_forecast-ensemble.mjs';
 import { baseRateProbability } from './_bet-baserate.mjs';
 import { parseMetricKey } from './_forecast-resolution-eval.mjs';
-import { BETS_HISTORY_KEY } from './_forecast-bets-keys.mjs';
+import { BETS_HISTORY_KEY, buildBetsInputSnapshotKey, buildBetsRunId } from './_forecast-bets-keys.mjs';
+import { putR2JsonBody, resolveR2StorageConfig, serializeR2JsonBody, withSettleTimeout } from './_r2-storage.mjs';
 
 const DIRECT_RUN = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'));
 if (DIRECT_RUN) loadEnvFile(import.meta.url);
@@ -165,6 +168,14 @@ export function buildBetsSnapshot(feedsByKey, nowMs, priorSeries = {}) {
   return { generatedAt: nowMs, predictions: bets };
 }
 
+// The resolver stamps each bet window it opens with this commit (#7072), the
+// same revision the forecast seeder writes on its history snapshots.
+export function stampCodeVersion(snapshot, env = process.env) {
+  const codeVersion = getDeployRevision(env);
+  if (codeVersion) snapshot.codeVersion = codeVersion;
+  return snapshot;
+}
+
 // Phase-2 ensemble stage (#5525 U13). Ranks the snapshot's bets by
 // userValueScore, runs the 3-pass ensemble on up to top-K *new* attempts, and
 // replaces their probability (source 'ensemble') while keeping
@@ -196,7 +207,7 @@ export async function attachEnsembleProbabilities(snapshot, options = {}) {
   let skipped = 0;
   for (const bet of ranked) {
     if (questionKeyOf && openQuestions.has(openQuestionToken(bet.id, questionKeyOf({ ...bet, spec: bet.resolution })))) { skipped += 1; continue; }
-    if (attempted >= topK) break; // K new attempts filled; remaining keep base-rate
+    if (attempted >= topK) break; // K new attempts filled; the rest keep the placeholder and open no window
     if (Date.now() >= deadlineMs) break; // remaining bets keep the base-rate
     attempted += 1;
     try {
@@ -225,9 +236,10 @@ export async function attachEnsembleProbabilities(snapshot, options = {}) {
 // Questions with an open ledger window whose dates cover nowMs, the emission
 // time of this run's bets. A window keeps the probability it opened with
 // (#8990), so a re-run of a covered question, whether it opened on a full
-// ensemble, a partial one or the base rate, would be wasted spend. A pending
-// window past its deadline (an unsettled feed) does not cover this run's
-// emission, which opens its own window and needs its own ensemble.
+// ensemble or a partial one, would be wasted spend. A placeholder emission
+// opens no window, so its question stays open to the next run's ensemble. A
+// pending window past its deadline (an unsettled feed) does not cover this
+// run's emission, which opens its own window and needs its own ensemble.
 // `questionKeyOf` is the resolver's windowQuestionKey.
 export function collectOpenQuestions(ledger, questionKeyOf, nowMs) {
   const entries = ledger && typeof ledger === 'object'
@@ -242,6 +254,55 @@ export function collectOpenQuestions(ledger, questionKeyOf, nowMs) {
 
 function openQuestionToken(id, questionKey) {
   return `${id}\n${questionKey}`;
+}
+
+// Everything one run read, for offline replay (#9058): the fresh feeds,
+// the rolling series before this run's update, and the ensemble context.
+// Feeding `feedsByKey`, `generatedAt` and `priorSeries` to buildBetsSnapshot
+// reproduces every baselineProbability. Ensemble probabilities come from an
+// LLM and are recorded outputs, kept with their passes and the calls made.
+export function buildBetsInputSnapshot({
+  runId, generatedAt, feedsByKey, priorSeries, predictions = [], ensemble = null, deployRevision = '',
+}) {
+  return {
+    version: 1,
+    runId,
+    generatedAt,
+    generatedAtIso: new Date(generatedAt).toISOString(),
+    deployRevision,
+    feedsByKey: filterFreshFeeds(feedsByKey, generatedAt),
+    priorSeries: priorSeries || {},
+    ensemble: ensemble || { enabled: false },
+    predictions: predictions.map((bet) => ({
+      id: bet.id,
+      probability: bet.probability,
+      baselineProbability: bet.baselineProbability,
+      probabilitySource: bet.probabilitySource,
+      ...(Array.isArray(bet.passes) ? { passes: bet.passes } : {}),
+    })),
+  };
+}
+
+// The whole write, retries included, gets this long. The R2 helper retries 3
+// times at a 30 s timeout, which could hold the history append for about
+// 92 s; past the budget the run goes on unlinked.
+export const BETS_INPUT_SNAPSHOT_BUDGET_MS = 20_000;
+
+// Writes the input snapshot to the private trace bucket. Returns null when
+// R2 is not configured; a write error or an overrun budget propagates to
+// the caller.
+export async function writeBetsInputSnapshot(payload, {
+  storageConfig = resolveR2StorageConfig(),
+  putBody = putR2JsonBody,
+  budgetMs = BETS_INPUT_SNAPSHOT_BUDGET_MS,
+} = {}) {
+  if (!storageConfig || !payload?.runId) return null;
+  const key = buildBetsInputSnapshotKey(payload.runId, payload.generatedAt, storageConfig.basePrefix);
+  const written = await withSettleTimeout(putBody(storageConfig, key, serializeR2JsonBody(payload), {
+    runid: String(payload.runId),
+    kind: 'bets_input_snapshot',
+  }), budgetMs, 'bets input snapshot write');
+  return { key, snapshotSha256: written.sha256 };
 }
 
 async function redisPipeline(command) {
@@ -274,9 +335,12 @@ async function main() {
 
   const priorSeries = (await readRedisJson(BETS_SERIES_KEY).catch(() => null)) || {};
   const nowMs = Date.now();
+  const runId = buildBetsRunId(nowMs);
   const snapshot = buildBetsSnapshot(feedsByKey, nowMs, priorSeries);
+  stampCodeVersion(snapshot);
   const nextSeries = computeNextSeries(feedsByKey, priorSeries);
   const count = snapshot.predictions.length;
+  let ensembleRecord = { enabled: ENSEMBLE_ENABLED };
 
   // Stage B (#5525 U15): the LLM ensemble replaces the base-rate for top-K
   // bets. Dynamic imports keep Stage A (flag off) light — the seeder never
@@ -297,17 +361,58 @@ async function main() {
       } catch (err) {
         console.warn(`  [bets] news archive unavailable for ensemble evidence: ${err instanceof Error ? err.message : String(err)}`);
       }
+      const llmCalls = [];
+      ensembleRecord = {
+        enabled: true,
+        topK: ENSEMBLE_TOP_K,
+        budgetMs: ENSEMBLE_BUDGET_MS,
+        promptDigest: ENSEMBLE_PROMPT_DIGEST,
+        openQuestions: [...openQuestions],
+        news,
+        llmCalls,
+      };
+      const recordingCallLLM = async (system, user, llmOptions) => {
+        try {
+          const result = await callForecastLLM(system, user, llmOptions);
+          llmCalls.push({ stage: llmOptions?.stage || '', provider: result?.provider || null, model: result?.model || null, ok: Boolean(result?.text) });
+          return result;
+        } catch (err) {
+          llmCalls.push({ stage: llmOptions?.stage || '', provider: null, model: null, ok: false });
+          throw err;
+        }
+      };
       const stats = await attachEnsembleProbabilities(snapshot, {
-        callLLM: callForecastLLM,
+        callLLM: recordingCallLLM,
         openQuestions,
         questionKeyOf: resolutions.windowQuestionKey,
         news,
         topK: ENSEMBLE_TOP_K,
         deadlineMs: Date.now() + ENSEMBLE_BUDGET_MS,
       });
+      ensembleRecord.stats = stats;
       console.log(`  [bets] ensemble: attempted=${stats.attempted} ensembled=${stats.ensembled} partial=${stats.partial} skipped-open=${stats.skipped} (K=${ENSEMBLE_TOP_K})`);
     } catch (err) {
       console.warn(`  [bets] ensemble stage failed (bets keep base-rate): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // The input snapshot goes to R2 before the history append, so the history
+  // entry carries the digest of an object that exists (#9058). Best-effort:
+  // a failed write leaves the run unlinked, never unpublished.
+  if (count > 0) {
+    try {
+      const written = await writeBetsInputSnapshot(buildBetsInputSnapshot({
+        runId, generatedAt: nowMs, feedsByKey, priorSeries, predictions: snapshot.predictions, ensemble: ensembleRecord, deployRevision: getDeployRevision(),
+      }));
+      snapshot.runId = runId;
+      if (written) {
+        snapshot.snapshotSha256 = written.snapshotSha256;
+        console.log(`  [bets] input snapshot archived (sha256 ${written.snapshotSha256.slice(0, 12)})`);
+      } else {
+        console.log('  [bets] input snapshot skipped: R2 storage not configured');
+      }
+    } catch (err) {
+      console.warn(`  [bets] input snapshot write failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
